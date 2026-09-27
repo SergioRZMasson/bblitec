@@ -1,0 +1,47 @@
+SDL_image 3.4.4 allocates INDEX8 for a 16-bit grayscale PNG, while
+libpng writes two bytes per sample into that surface. This overruns its
+rows and allocation. Expand grayscale16 to RGB before selecting the
+surface format, preserving every sample in SDL's RGB48 representation.
+
+PNG stores 16-bit samples in network order. The existing conversion
+swaps RGBA64 only; RGB48 also needs native byte order. Walk each row so
+RGB48's padding at odd widths is neither treated as samples nor allowed
+to shift the next row's conversion.
+
+This patch self-retires when upstream handles grayscale16 allocation and
+both RGB48 and RGBA64 byte order correctly.
+
+diff --git a/src/IMG_libpng.c b/src/IMG_libpng.c
+--- a/src/IMG_libpng.c
++++ b/src/IMG_libpng.c
+@@ -410,8 +410,10 @@
+     }
+ 
+     /* SDL doesn't currently support this format, so we convert to RGB for now. */
+-    if (vars->color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
++    if (vars->color_type == PNG_COLOR_TYPE_GRAY_ALPHA ||
++        (vars->color_type == PNG_COLOR_TYPE_GRAY && vars->bit_depth == 16)) {
+         lib.png_set_gray_to_rgb(vars->png_ptr);
++        vars->color_type |= PNG_COLOR_MASK_COLOR;
+     }
+ 
+     if (vars->color_type == PNG_COLOR_TYPE_PALETTE ||
+@@ -504,11 +506,13 @@
+     lib.png_read_image(vars->png_ptr, vars->row_pointers);
+ 
+ #if SDL_BYTEORDER != SDL_BIG_ENDIAN
+-    if (vars->format == SDL_PIXELFORMAT_RGBA64) {
+-        Uint16 *pixels = (Uint16 *)vars->surface->pixels;
+-        int num_pixels = vars->width * vars->height * 4;
+-        for (int i = 0; i < num_pixels; i++) {
+-            pixels[i] = SDL_Swap16(pixels[i]);
++    if (vars->format == SDL_PIXELFORMAT_RGB48 || vars->format == SDL_PIXELFORMAT_RGBA64) {
++        const size_t num_samples = (size_t)vars->width * (vars->format == SDL_PIXELFORMAT_RGB48 ? 3 : 4);
++        for (png_uint_32 y = 0; y < vars->height; ++y) {
++            Uint16 *pixels = (Uint16 *)vars->row_pointers[y];
++            for (size_t i = 0; i < num_samples; ++i) {
++                pixels[i] = SDL_Swap16(pixels[i]);
++            }
+         }
+     }
+ #endif

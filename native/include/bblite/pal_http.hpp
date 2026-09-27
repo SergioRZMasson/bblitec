@@ -1,7 +1,7 @@
 #pragma once
 
 #include <bblite/pal_fetch_response.hpp>
-#include <stop_token>
+#include <bblite/joining_thread.hpp>
 
 namespace bbl::pal {
 
@@ -11,8 +11,7 @@ struct HttpRequest {
     std::optional<std::string> body;
 };
 
-HttpResponseData perform_http_request(const std::string& url, HttpRequest request,
-                                      std::stop_token stop);
+HttpResponseData perform_http_request(const std::string& url, HttpRequest request, StopToken stop);
 
 inline js::Promise<HttpResponse> fetch_http(std::string url, HttpRequest request) {
     struct Completion final : CompletionEvent {
@@ -22,7 +21,7 @@ inline js::Promise<HttpResponse> fetch_http(std::string url, HttpRequest request
     };
     js::Promise<HttpResponse> result;
     auto& loop = EventLoop::current();
-    auto job = std::make_shared<std::jthread>();
+    auto job = std::make_shared<JoiningThread>();
     const auto id = loop.register_completion(
         [result, job](std::unique_ptr<ExternalEvent> event) {
             auto* completion = dynamic_cast<Completion*>(event.get());
@@ -35,8 +34,8 @@ inline js::Promise<HttpResponse> fetch_http(std::string url, HttpRequest request
         },
         [job] { job->request_stop(); });
     try {
-        *job = std::jthread([inbox = loop.inbox(), id, url = std::move(url),
-                             request = std::move(request)](std::stop_token stop) mutable {
+        *job = JoiningThread([inbox = loop.inbox(), id, url = std::move(url),
+                              request = std::move(request)](StopToken stop) mutable {
             auto completion = std::make_unique<Completion>(id);
             try {
                 completion->response = perform_http_request(url, std::move(request), stop);

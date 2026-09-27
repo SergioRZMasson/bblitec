@@ -10,6 +10,8 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { androidCaptureSettings } from "../src/android-capture.js";
+import { scenes } from "../src/scene-registry.js";
 import { jsonObject } from "./json.js";
 import { discoverDevelopmentTools } from "../src/development-tools.js";
 import { runPatchIdentity } from "../src/patch-inventory.js";
@@ -22,6 +24,36 @@ import {
 } from "./native-fixture.js";
 
 const tools = discoverDevelopmentTools();
+
+test("Android debug intents transport every registered capture environment key", () => {
+    const activity = readFileSync(
+        "native/android/app/src/main/java/org/bblite/prototype/MainActivity.java",
+        "utf8",
+    );
+    const allowList = /for \(String key : new String\[\] \{([^}]+)\}\)/.exec(
+        activity,
+    );
+    assert.ok(
+        allowList,
+        "The Android debug environment allow-list is missing.",
+    );
+    const accepted = new Set(
+        [...allowList[1]!.matchAll(/"(BBLITE_[A-Z_]+)"/g)].map(
+            (match) => match[1],
+        ),
+    );
+    for (const backend of ["sdl_gpu", "dawn"] as const) {
+        for (const scene of scenes) {
+            const { captureEnvironment } = androidCaptureSettings(scene, {
+                backend,
+                canvasOnly: true,
+            });
+            for (const key of Object.keys(captureEnvironment)) {
+                assert.ok(accepted.has(key), `${scene.id}/${backend}: ${key}`);
+            }
+        }
+    }
+});
 
 /**
  * `run_window_flags` reads the selected backend's window flags from the

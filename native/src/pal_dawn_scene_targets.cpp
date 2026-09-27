@@ -2,6 +2,7 @@
 // transmission grab, depth copies and the diagnostic readbacks. SDL_GPU's
 // twin is pal_sdl_gpu_scene_targets.cpp.
 #include "pal_gpu_common.hpp"
+#include "pal_gpu_canvas_targets.hpp"
 #include "pal_gpu_images.hpp"
 #include "pal_gpu_surface.hpp"
 #include "pal_gpu_targets.hpp"
@@ -50,6 +51,7 @@ void create_frame_graph_textures(DawnState& state, const Engine& engine, std::ui
     state.shadow_refresh.invalidate_rendered_maps();
 #endif
     state.render_targets.resize(engine.render_targets.size());
+    const auto canvas_resolves = canvas_resolve_targets(engine);
     for (std::size_t index = 0; index < target_plans.size(); ++index) {
         const RenderTargetRecord record = engine.render_targets[index];
         if (record.retired)
@@ -78,6 +80,14 @@ void create_frame_graph_textures(DawnState& state, const Engine& engine, std::ui
         const auto samples = task_sample_count(state, record.samples);
         const auto color_format = planned.color_format;
         if (record.has_color) {
+            const auto canvas_storage =
+                canvas_resolve_uses_storage(
+                    canvas_resolves[index],
+                    color_format == WGPUTextureFormat_RGBA8Unorm ||
+                        (color_format == WGPUTextureFormat_BGRA8Unorm &&
+                         wgpuDeviceHasFeature(state.device, WGPUFeatureName_BGRA8UnormStorage)))
+                    ? WGPUTextureUsage_StorageBinding
+                    : WGPUTextureUsage_None;
             target.color = create_frame_texture(
                 state, color_format, samples, target.width, target.height,
                 samples == 1
@@ -86,7 +96,7 @@ void create_frame_graph_textures(DawnState& state, const Engine& engine, std::ui
                     // colour target of another, so both ends of that
                     // copy are the same kind of texture.
                     ? WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_TextureBinding |
-                          WGPUTextureUsage_CopySrc | WGPUTextureUsage_CopyDst
+                          WGPUTextureUsage_CopySrc | WGPUTextureUsage_CopyDst | canvas_storage
                     : WGPUTextureUsage_RenderAttachment);
             target.color_view = create_dawn_texture_view(target.color, nullptr,
                                                          "wgpuTextureCreateView frame graph color");

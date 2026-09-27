@@ -11,19 +11,12 @@ Internal work, qualification, performance and refusal defects. Capability gaps a
 
 ## Qualification
 
-- [ ] Qualify `playroom` startup parity and declared controls on both backends without changing its source, references or gates.
-- [ ] Qualify retained data-mesh CPU aliases and GPU-only attribute writes across device recovery.
+- [ ] Qualify `playroom` startup parity on both backends without changing its source, references or gates.
 - [ ] Move mixed mesh/billboard ordering into a generated draw plan after retaining source deferred-build completion order and prior stable binding order; keep equal-order/depth and camera-less refusals until those inputs and ordering-neutrality coverage exist.
-- [ ] One captured-spawn variant beside `runChecked` for `package-demo.ts`, `package-output.ts`, `shipping-profile.ts` and `patch-inventory.ts`.
-- [ ] Move the scene180 uniform plugin onto `webgpu-recorder.init.js` and share one `observedState` helper in `checks/plugins/support.mjs`.
-- [ ] Read `test/native-fixture.ts` unit lists from the `pal_*_scene_all.cpp` includes and share one camera test fixture.
-- [ ] Give sliced PAL code standalone concern headers that harness fixtures include (`pinned-velocity-history` and the other `cppFunction` slices).
-- [ ] Prune `artifacts/native-cache` `headers/`, `sources/` and `pch/` by age in `clean`.
-- [ ] Compile each backend family file on its own in native lint (`src/code-quality.ts`): they build only inside `pal_{sdl_gpu,dawn}_scene_all.cpp`, so a missing include is hidden by the files before it.
-- [ ] Replace ts-prune in `lint:exports` with a checker-based scan: it misses exports reached through inferred types and `typeof import()`, and misnames `as const satisfies` exports.
-- [ ] Android: full registry through `android:sweep` on an emulator and a physical device; fix the emulator rendering corruption of `offscreen`.
-- [ ] iOS: qualify device bundles on hardware; extend lifecycle/interaction smoke coverage (`tools/ios-smoke.mjs`).
-- [ ] Linux/Vulkan: every registered scene within its thresholds against same-host browser references, including scene75 and scene187.
+- [ ] Give remaining sliced PAL code standalone concern headers that harness fixtures include.
+- [ ] Android: resolve same-device emulator visual gaps and qualify the full registry on a physical device.
+- [ ] iOS: qualify device bundles on hardware.
+- [ ] Linux/Vulkan: every registered scene within its thresholds against same-host browser references.
 - [ ] macOS/Metal: every registered scene within its thresholds against same-host browser references, fonts included, on an Apple Silicon host.
 
 ## Performance

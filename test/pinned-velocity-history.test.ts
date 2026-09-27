@@ -5,7 +5,6 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import {
     cppFunction,
-    cppRecord,
     optionalNativeFixtureTools,
     runNativeFixtureCompiler,
     sceneBackendSource,
@@ -22,23 +21,50 @@ test("a geometry task's Standard renderables keep the pin's previous world and s
     }
     const output = resolve("artifacts/pinned-velocity-history");
     mkdirSync(output, { recursive: true });
-    const source = shared();
+    const includes = join(output, "bblite/upstream");
+    mkdirSync(includes, { recursive: true });
+    // The generated interface varies by geometry output; the PAL header is
+    // compiled intact against both shapes and the real runtime records.
     writeFileSync(
-        join(output, "velocity.hpp"),
-        [
-            cppRecord(source, "struct PinnedVelocityHistory {"),
-            cppRecord(
-                source,
-                "template <typename Block>\nconcept PinnedVelocityBlock",
-            ),
-            cppFunction(source, "void begin_pinned_velocity_frame("),
-            cppFunction(
-                source,
-                "const PinnedVelocityHistory::Renderable& update_pinned_velocity(",
-            ),
-            cppFunction(source, "void write_pinned_velocity_tail("),
-            cppFunction(source, "void update_pinned_velocity_frame("),
-        ].join("\n\n"),
+        join(includes, "render_capabilities.hpp"),
+        `#pragma once
+#define BBLITE_PINNED_MATERIALS 1
+#define BBLITE_PINNED_MATERIAL_VARIANTS 1
+#define BBLITE_PBR_VARIANTS 0
+#define BBLITE_STANDARD_VARIANTS 1
+#define BBLITE_NODE_VARIANTS 0
+#define BBLITE_FLOATING_ORIGIN 0
+`,
+    );
+    writeFileSync(
+        join(includes, "standard_variants.hpp"),
+        `#pragma once
+#include <array>
+namespace bbl::upstream {
+struct MeshUniforms {
+    std::array<float, 16> world{};
+#if FIXTURE_VELOCITY
+    std::array<float, 16> previousWorld{};
+    float velocityEnabled = -1.0f;
+#endif
+};
+}
+`,
+    );
+    writeFileSync(
+        join(includes, "renderer_plan.hpp"),
+        `#pragma once
+#include <bblite/runtime.hpp>
+namespace bbl::upstream {
+enum class RenderMaterialKind { standard, pbr };
+struct RenderItem {
+    MeshHandle mesh;
+    int material = 0;
+    RenderMaterialKind material_kind = RenderMaterialKind::standard;
+};
+inline RenderItem bind_render_item(RenderItem item, const Engine&, int) { return item; }
+}
+`,
     );
     const executable = join(output, "check.exe");
     for (const velocity of [0, 1]) {
@@ -50,6 +76,9 @@ test("a geometry task's Standard renderables keep the pin's previous world and s
             "/EHsc",
             "/O2",
             `/DFIXTURE_VELOCITY=${velocity}`,
+            "/DBBLITE_HAS_PBR_RENDERER=1",
+            "/Inative/include",
+            "/Inative/src",
             `/Fo:${output}/`,
             `/Fe:${executable}`,
             "/I",

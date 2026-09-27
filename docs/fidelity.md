@@ -48,6 +48,11 @@ Artifact paths are relative to `generated/<id>/`.
 | Thin-instance culling | Admitted paths may use the pin's all-active fallback |
 | Splats | Synchronous render-thread sorting; draw/sort/picking share cloud identity |
 
+Drawn atlas pixels depend on the producing browser's Canvas2D rasterizer. Host Chromium is the default;
+an explicit [Android atlas bundle](development.md#android) uses the target browser's authored factory output.
+Its pin, source closure, producer, device/browser/GPU identity and PNG digest accompany each manifest asset.
+Missing or stale bundle entries refuse; other bake families retain their host behavior.
+
 Live dataset readback and recovery hooks remain represented; write-only instrumentation can erase.
 Native drawCallCount includes transport draws.
 
@@ -66,6 +71,9 @@ each renderable's previous world and writes velocity disabled on its first frame
 skinned Standard mesh in a LINEAR_VELOCITY task refuses, having no previous bone texture.
 SDL single-sample image processing samples texel centers. Single-sample transmission replaces
 MSAA averaging with mip-zero loads while retaining the source bilinear filter.
+Linux Vulkan surfaces and canvas-emulation resolve targets request storage-capable allocations when
+image-format and surface capabilities permit, matching Chromium's canvas MSAA rounding. SDL's private
+allocation opt-in preserves its public storage-binding restrictions and authored render-target usage.
 
 ### Numeric width
 
@@ -120,6 +128,8 @@ Native Euler/quaternion storage differs from the pin's rotation proxy; mixed wri
 
 Mips, encoding, orientation and samplers follow their source producer. invertY may use UV transforms.
 Configured KTX2/Draco JS/WASM runs during packaging; resulting pixels/geometry enter native output.
+KTX2 transcoding restricts the pinned loader to native BC/ASTC families; a browser with ETC2 can select
+different compressed bytes.
 Decoder bytes key caches and local decoder files participate in input tracking.
 
 ### Animation and hierarchy

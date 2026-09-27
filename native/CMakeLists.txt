@@ -469,13 +469,13 @@ endif()
 
 if(BBLITE_GENERATED_SHADER_FILES)
     # The runtime reads only its compiled renderers' shader formats: SDL_GPU
-    # the platform's offline binary plus the `.slots` sidecars naming each
-    # pinned variant's register order, Dawn the `.native.wgsl` text it
-    # compiles in-process. HLSL, reflection dumps, WGSL sources and tool
+    # the platform's offline binary, Dawn the `.native.wgsl` text it
+    # compiles in-process. Both read `.slots` binding sidecars.
+    # HLSL, reflection dumps, WGSL sources and tool
     # manifests stay in the generated tree as development artifacts.
     # The cache records the table for the deployment check
     # (`executableDeployedShaderSuffixes`, src/build-stamp.ts).
-    set(BBLITE_DEPLOYED_SHADER_SUFFIXES "")
+    set(BBLITE_DEPLOYED_SHADER_SUFFIXES ".slots")
     if(BBLITE_BACKEND_SDL_GPU)
         if(WIN32)
             list(APPEND BBLITE_DEPLOYED_SHADER_SUFFIXES ".dxil")
@@ -484,7 +484,6 @@ if(BBLITE_GENERATED_SHADER_FILES)
         else()
             list(APPEND BBLITE_DEPLOYED_SHADER_SUFFIXES ".spv")
         endif()
-        list(APPEND BBLITE_DEPLOYED_SHADER_SUFFIXES ".slots")
     endif()
     if(BBLITE_BACKEND_DAWN)
         list(APPEND BBLITE_DEPLOYED_SHADER_SUFFIXES ".native.wgsl")

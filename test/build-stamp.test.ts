@@ -292,13 +292,26 @@ test("deploys the shader files the build's CMake cache records", (t) => {
     );
     writeFileSync(
         resolve(build, "CMakeCache.txt"),
-        "BBLITE_BACKEND:STRING=DAWN\nBBLITE_DEPLOYED_SHADER_SUFFIXES:INTERNAL=.native.wgsl\n",
+        "BBLITE_BACKEND:STRING=DAWN\nBBLITE_DEPLOYED_SHADER_SUFFIXES:INTERNAL=.native.wgsl;.slots\n",
     );
     writeFileSync(
         resolve(build, "shaders/pbr.frag.native.wgsl"),
         "pbr.frag.native.wgsl",
     );
+    assert.notDeepEqual(comparePayload(shaderPayload()), []);
+    writeFileSync(resolve(build, "shaders/pbr.frag.slots"), "pbr.frag.slots");
     assert.deepEqual(comparePayload(shaderPayload()), []);
+    // Staged bundles retain the originating build's deployment contract.
+    const bundle = resolve(root, "staged/app");
+    mkdirSync(resolve(bundle, "shaders"), { recursive: true });
+    for (const name of ["pbr.frag.native.wgsl", "pbr.frag.slots"])
+        writeFileSync(resolve(bundle, "shaders", name), name);
+    const staged = deployedPayloads(bundle, generated, build)[0]!;
+    assert.deepEqual(comparePayload(staged), []);
+    writeFileSync(resolve(bundle, "shaders/pbr.frag.slots"), "stale");
+    assert.deepEqual(comparePayload(staged), [
+        { path: "pbr.frag.slots", reason: "changed" },
+    ]);
     // An SDL_GPU binary left beside a Dawn-only executable is an orphan.
     writeFileSync(resolve(build, "shaders/pbr.frag.dxil"), "pbr.frag.dxil");
     assert.deepEqual(payloadOrphans(shaderPayload()), ["pbr.frag.dxil"]);

@@ -108,6 +108,39 @@ test("the public directory answers before the public URL", (t) => {
     );
 });
 
+test("resolved absolute files retain their identity through asset registration", (t) => {
+    const directory = mkdtempSync(join(tmpdir(), "bblitec-resolved-asset-"));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const publicDir = join(directory, "public");
+    const entry = join(directory, "entry.ts");
+    mkdirSync(publicDir);
+    const source = join(publicDir, "payload.json");
+    writeFileSync(source, '{"value":1}');
+    const publicUrl = "https://cdn.example.invalid/public/";
+    assert.equal(
+        resolveBundledAsset("/payload.json", entry, { publicDir, publicUrl }),
+        source,
+    );
+    for (const deployment of [{ publicDir, publicUrl }, { publicUrl }]) {
+        assert.equal(resolveBundledAsset(source, entry, deployment), source);
+        assert.equal(
+            assetRecord(source, "binary", new Map(), {
+                entryFileName: entry,
+                deployment,
+            }).source,
+            source,
+        );
+    }
+    assert.equal(
+        resolveBundledAsset("/payload.json", entry, { publicUrl }),
+        `${publicUrl}payload.json`,
+    );
+    assert.equal(
+        resolveBundledAsset("/missing.json", entry, { publicDir, publicUrl }),
+        join(publicDir, "missing.json"),
+    );
+});
+
 test("registry scenes load root-relative assets from the pinned lab public files", () => {
     assert.match(
         pinnedLabPublicUrl(),

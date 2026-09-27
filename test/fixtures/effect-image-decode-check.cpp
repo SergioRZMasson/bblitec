@@ -10,6 +10,23 @@ std::string environment_variable(const char*) { return {}; }
 int main() {
     const bbl::js::ArrayBuffer input(png_bytes);
 #if BBLITE_HAS_IMAGE_DECODER
+    for (const auto& fixture : png16_cases) {
+        SDL_Surface* surface =
+            IMG_Load_IO(SDL_IOFromConstMem(fixture.bytes.data(), fixture.bytes.size()), true);
+        assert(surface && surface->w == 3 && surface->h == 2);
+        assert(surface->format == (fixture.alpha ? SDL_PIXELFORMAT_RGBA64 : SDL_PIXELFORMAT_RGB48));
+        const std::size_t row_samples = fixture.alpha ? 12 : 9;
+        // Three RGB48 pixels leave row padding; sample checks must cross it.
+        assert(fixture.alpha || surface->pitch > static_cast<int>(row_samples * sizeof(Uint16)));
+        for (int y = 0; y < surface->h; ++y) {
+            const auto* row = reinterpret_cast<const Uint16*>(
+                static_cast<const Uint8*>(surface->pixels) + y * surface->pitch);
+            assert(std::equal(row, row + row_samples, fixture.samples.begin() + y * row_samples));
+        }
+        SDL_DestroySurface(surface);
+        const auto image = bbl::pal::decode_image(std::span<const std::uint8_t>{fixture.bytes});
+        assert(image.width == 3 && image.height == 2 && image.rgba == fixture.rgba);
+    }
     std::vector<std::future<bbl::pal::DecodedImage>> native_decodes;
     for (int index = 0; index < 8; ++index)
         native_decodes.push_back(std::async(std::launch::async, [] {

@@ -5,47 +5,18 @@
 #include <stdexcept>
 #include <vector>
 
-namespace bbl {
-struct MeshHandle {
-    std::uint32_t value = 0xffffffffu;
-    std::uint32_t generation = 0;
-    [[nodiscard]] bool operator==(const MeshHandle&) const = default;
-};
-struct Scene {
-    std::uint64_t render_topology_version = 0;
-};
-struct Engine {
-    std::vector<std::array<float, 16>> meshes;
-};
-const auto& handle_at(const auto& meshes, MeshHandle mesh) { return meshes.at(mesh.value); }
-namespace upstream {
-enum class RenderMaterialKind { standard, pbr };
-struct RenderItem {
-    MeshHandle mesh;
-    int material = 0;
-    RenderMaterialKind material_kind = RenderMaterialKind::standard;
-};
-RenderItem bind_render_item(RenderItem item, const Engine&, int) { return item; }
-// The Standard geometry output's mesh block: the world, then the velocity
-// tail its `~geometry-params` fragment appends.
-struct MeshUniforms {
-    std::array<float, 16> world{};
-#if FIXTURE_VELOCITY
-    std::array<float, 16> previousWorld{};
-    float velocityEnabled = -1.0f;
-#endif
-};
-} // namespace upstream
-namespace pal {
+#include "pal_gpu_velocity.hpp"
+
+namespace bbl::pal {
 int world_compositions = 0;
-std::array<float, 16> mesh_block_world(const Scene&, const Engine&,
-                                       const std::array<float, 16>& world) {
+std::array<float, 16> mesh_block_world(const Scene&, const Engine&, const MeshRecord& mesh) {
     ++world_compositions;
+    std::array<float, 16> world{};
+    world[0] = world[5] = world[10] = world[15] = 1.0f;
+    world[12] = static_cast<float>(mesh.position.x);
     return world;
 }
-#include "velocity.hpp"
-} // namespace pal
-} // namespace bbl
+} // namespace bbl::pal
 
 namespace {
 void check(bool condition, const char* what) {
@@ -78,7 +49,8 @@ int main() {
     const MeshHandle mesh{2, 1};
     Engine engine;
     engine.meshes.resize(3);
-    engine.meshes[2] = world_at(1.0f);
+    engine.meshes[2].position.x = 1.0;
+    engine.meshes[2].generation = mesh.generation;
     const std::vector<upstream::RenderItem> items{{mesh}, {mesh}};
     update_pinned_velocity_frame(history, scene, engine, items);
 #if !FIXTURE_VELOCITY

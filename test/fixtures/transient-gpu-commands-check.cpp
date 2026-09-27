@@ -1,6 +1,6 @@
 #include <bblite/runtime.hpp>
 #include "pal_sdl_gpu_resources.hpp"
-#include "pal_sdl_gpu_writes.hpp"
+#include "pal_sdl_gpu_buffers.hpp"
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -90,10 +90,7 @@ extern "C" void SDLCALL SDL_UploadToGPUBuffer(SDL_GPUCopyPass* pass,
                                               const SDL_GPUBufferRegion*, bool) {
     assert(pass && !pass->ended && !source->transfer_buffer->released);
 }
-namespace bbl::pal {
-[[noreturn]] void gpu_error(const char* operation) { throw std::runtime_error(operation); }
-#include "upload-buffer.hpp"
-} // namespace bbl::pal
+extern "C" const char* SDLCALL SDL_GetError() { return "fixture SDL error"; }
 
 extern "C" bool SDLCALL SDL_WaitAndAcquireGPUSwapchainTexture(SDL_GPUCommandBuffer* command,
                                                               SDL_Window*, SDL_GPUTexture** output,

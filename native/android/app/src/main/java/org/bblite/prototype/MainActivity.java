@@ -25,6 +25,10 @@ import java.nio.file.StandardCopyOption;
 public final class MainActivity extends SDLActivity {
     private CappedSurface surface;
 
+    public boolean prefersReducedMotion() {
+        return MotionPreferences.reducedMotion(getContentResolver());
+    }
+
     public int[] rasterizeEmoji(byte[] utf8, String path, int index, int size, float spacing) {
         return EmojiRaster.render(utf8, path, index, size, spacing);
     }
@@ -133,13 +137,16 @@ public final class MainActivity extends SDLActivity {
             }
             nativeSetenv("BBLITE_GPU_BACKEND", "");
             if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
-                for (String key : new String[] { "BBLITE_RUN_ID", "BBLITE_GPU_BACKEND", "BBLITE_MAX_FRAMES", "BBLITE_RUNTIME_TRACE", "BBLITE_FRAME_DELTA_MS", "BBLITE_ANIMATION_SEEK_SECONDS", "BBLITE_TEST_PASS", "BBLITE_INPUT_REPLAY", "BBLITE_CAPTURE_ENGINE_FRAME", "BBLITE_CAPTURE_UI", "BBLITE_GPU_DEBUG", "BBLITE_MSAA" }) {
+                for (String key : new String[] { "BBLITE_RUN_ID", "BBLITE_GPU_BACKEND", "BBLITE_MAX_FRAMES", "BBLITE_RUNTIME_TRACE", "BBLITE_FRAME_DELTA_MS", "BBLITE_ANIMATION_SEEK_SECONDS", "BBLITE_LOCATION_SEARCH", "BBLITE_TEST_PASS", "BBLITE_INPUT_REPLAY", "BBLITE_CAPTURE_ENGINE_FRAME", "BBLITE_CAPTURE_UI", "BBLITE_GPU_DEBUG", "BBLITE_MSAA" }) {
                     String value = getIntent().getStringExtra(key);
                     if (value != null) nativeSetenv(key, value);
                 }
                 if (getIntent().getBooleanExtra("capture", false)) {
                     nativeSetenv("BBLITE_SCREENSHOT", new File(getFilesDir(), "capture.png").getAbsolutePath());
                     nativeSetenv("BBLITE_SCREENSHOT_FRAME", getIntent().getStringExtra("captureFrame") == null ? "5" : getIntent().getStringExtra("captureFrame"));
+                }
+                if (getIntent().getBooleanExtra("renderState", false)) {
+                    nativeSetenv("BBLITE_RENDER_CAPTURE", new File(getFilesDir(), "render.json").getAbsolutePath());
                 }
             }
             return new String[0];

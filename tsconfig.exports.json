@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "tools/**/*.mjs",
+    "checks/plugins/*.mjs",
+    "checks/plugins/*.js",
+    "checks/plugins/*.d.ts",
+    "*.mjs"
+  ],
+  "exclude": ["test/fixtures"]
+}

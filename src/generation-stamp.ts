@@ -43,6 +43,7 @@
 //     miss.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
+import { createRequire } from "node:module";
 import { browserIdentity } from "./bake-cache.js";
 import {
     buildStampHeader,
@@ -61,6 +62,20 @@ import {
     writeJsonRecord,
 } from "./tooling/records.js";
 import { artifactDirectory } from "./tooling/artifacts.js";
+import { isRecord } from "./json-fields.js";
+
+const requireModule = createRequire(import.meta.url);
+function configuredAtlas(
+    repositoryRoot: string,
+): ReturnType<
+    typeof import("./sprite-atlas-bundle.js").configuredSpriteAtlasBundle
+> {
+    if (process.env.BBLITE_SPRITE_ATLAS_BUNDLE === undefined) return undefined;
+    const { configuredSpriteAtlasBundle } = requireModule(
+        "./sprite-atlas-bundle.js",
+    ) as typeof import("./sprite-atlas-bundle.js");
+    return configuredSpriteAtlasBundle(repositoryRoot);
+}
 
 interface GenerationStamp {
     version: 2;
@@ -164,9 +179,13 @@ function generationInputFingerprint(
 ): string | undefined {
     const shared = sharedGenerationInputs(repositoryRoot);
     if (shared === undefined) return undefined;
+    // Outside sharedInputsByRoot: switches/edits must invalidate in this process
+    // too. Generation children inherit the same explicit bundle selection.
+    const atlas = configuredAtlas(repositoryRoot);
     return hashEntries([
         "generation-stamp v3",
         `shared ${shared}`,
+        ...(atlas ? [`sprite-atlas-bundle ${atlas.identity}`] : []),
         `arguments ${JSON.stringify(compilerArguments)}`,
         ...[...inputs]
             .sort()
@@ -291,19 +310,6 @@ export function refreshBuildStamp(
     return wroteHeader || wroteListing;
 }
 
-/** The reached-file list the generation just written recorded in its manifest. */
-function manifestInputs(outputDirectory: string): string[] | undefined {
-    const manifestPath = resolve(outputDirectory, "manifest.json");
-    if (!existsSync(manifestPath)) return undefined;
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-        inputs?: unknown;
-    };
-    return Array.isArray(manifest.inputs) &&
-        manifest.inputs.every((entry) => typeof entry === "string")
-        ? manifest.inputs
-        : undefined;
-}
-
 /**
  * Record a generation that just completed, unless one of its inputs was
  * written while it ran -- a file edited mid-generation may or may not be
@@ -320,8 +326,33 @@ export function recordGeneration(
 ): boolean {
     const repositoryRoot = options.repositoryRoot ?? process.cwd();
     const output = resolve(scene.output);
-    const inputs = manifestInputs(output);
-    if (inputs === undefined) return false;
+    const manifestPath = resolve(output, "manifest.json");
+    if (!existsSync(manifestPath)) return false;
+    const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
+    if (
+        !isRecord(manifest) ||
+        !Array.isArray(manifest.inputs) ||
+        !manifest.inputs.every(
+            (entry): entry is string => typeof entry === "string",
+        )
+    )
+        return false;
+    const inputs = manifest.inputs;
+    // A valid bundle replaced while the child ran must not stamp the old PNG
+    // with the new identity. The manifest records the bytes actually consumed.
+    const atlas = configuredAtlas(repositoryRoot);
+    if (
+        Array.isArray(manifest.assets) &&
+        manifest.assets.some(
+            (asset) =>
+                isRecord(asset) &&
+                asset.kind === "sprite-atlas" &&
+                (isRecord(asset.spriteAtlasProducer)
+                    ? asset.spriteAtlasProducer.bundleSha256
+                    : undefined) !== atlas?.identity,
+        )
+    )
+        return false;
     const editedDuringRun = inputs.some((input) => {
         const path = resolve(repositoryRoot, input);
         return existsSync(path) && statSync(path).mtimeMs >= startedAt;

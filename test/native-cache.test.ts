@@ -5,10 +5,13 @@ import {
     mkdtempSync,
     readdirSync,
     readFileSync,
+    statSync,
+    utimesSync,
     writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { listFiles } from "../src/tooling/records.js";
 import {
     discoverDevelopmentTools,
     discoverWindowsBuildTools,
@@ -298,7 +301,29 @@ bblite_shared_pch(NAME check_pch TARGETS check HEADERS <bblite/shared.hpp> <vect
         "cache_miss",
     ]);
     // The PCH, a unit using it and the module are each one entry.
+    const supportFiles = ["headers", "sources", "pch"].flatMap((family) =>
+        listFiles(join(root, "cache", family)),
+    );
+    const inputTimes = new Map(
+        supportFiles
+            .filter((path) => !path.endsWith(".lock"))
+            .map((path) => [path, statSync(path).mtimeMs]),
+    );
+    const oldUse = new Date(Date.now() - 60 * 86_400_000);
+    for (const path of supportFiles.filter((path) => path.endsWith(".lock")))
+        utimesSync(path, oldUse, oldUse);
     const second = build(checkoutA, "second");
+    for (const [path, timestamp] of inputTimes)
+        assert.equal(
+            statSync(path).mtimeMs,
+            timestamp,
+            "reuse must not invalidate compiler inputs",
+        );
+    for (const path of supportFiles.filter((path) => path.endsWith(".lock")))
+        assert.ok(
+            statSync(path).mtimeMs > oldUse.getTime(),
+            "configure records reuse for age-based cleanup",
+        );
     assert.deepEqual(compiles(second.log), [
         "direct_cache_hit",
         "direct_cache_hit",

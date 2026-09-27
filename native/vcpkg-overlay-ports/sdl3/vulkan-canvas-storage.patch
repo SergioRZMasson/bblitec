@@ -1,0 +1,72 @@
+Opt-in storage-capable Vulkan canvas allocation matches browser resolve targets.
+Actual image-format and surface capabilities gate the extra allocation usage;
+SDL public usage flags, storage binding restrictions and default allocation
+remain unchanged. The PAL opts in only for Linux canvas surfaces and resolves.
+
+diff --git a/src/gpu/vulkan/SDL_gpu_vulkan.c b/src/gpu/vulkan/SDL_gpu_vulkan.c
+--- a/src/gpu/vulkan/SDL_gpu_vulkan.c
++++ b/src/gpu/vulkan/SDL_gpu_vulkan.c
+@@ -4640,6 +4640,24 @@
+  */
+ #define VULKAN_INTERNAL_TRY_AGAIN 2
+ 
++/* Allocation capability only: this does not expose additional SDL storage bindings. */
++static bool VULKAN_INTERNAL_CanvasStorageSupported(
++    VulkanRenderer *renderer,
++    VkFormat format,
++    VkImageUsageFlags usage,
++    Uint32 width,
++    Uint32 height)
++{
++    VkImageFormatProperties properties;
++    const VkResult result = renderer->vkGetPhysicalDeviceImageFormatProperties(
++        renderer->physicalDevice, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
++        usage | VK_IMAGE_USAGE_STORAGE_BIT, 0, &properties);
++    return result == VK_SUCCESS &&
++        width <= properties.maxExtent.width && height <= properties.maxExtent.height &&
++        properties.maxExtent.depth >= 1 && properties.maxMipLevels >= 1 &&
++        properties.maxArrayLayers >= 1 && (properties.sampleCounts & VK_SAMPLE_COUNT_1_BIT);
++}
++
+ static Uint32 VULKAN_INTERNAL_CreateSwapchain(
+     VulkanRenderer *renderer,
+     WindowData *windowData)
+@@ -4787,6 +4805,14 @@
+     swapchainCreateInfo.imageUsage =
+         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+         VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++    if (SDL_GetBooleanProperty(SDL_GetWindowProperties(windowData->window),
++                               "bblite.gpu.swapchain.canvas_storage", false) &&
++        (swapchainSupportDetails.capabilities.supportedUsageFlags & VK_IMAGE_USAGE_STORAGE_BIT) &&
++        VULKAN_INTERNAL_CanvasStorageSupported(renderer, windowData->format,
++                                              swapchainCreateInfo.imageUsage,
++                                              windowData->width, windowData->height)) {
++        swapchainCreateInfo.imageUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
++    }
+     swapchainCreateInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+     swapchainCreateInfo.queueFamilyIndexCount = 0;
+     swapchainCreateInfo.pQueueFamilyIndices = NULL;
+@@ -5820,6 +5846,15 @@
+     imageCreateInfo.samples = SDLToVK_SampleCount[createinfo->sample_count];
+     imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+     imageCreateInfo.usage = vkUsageFlags;
++    if (SDL_GetBooleanProperty(createinfo->props, "bblite.gpu.texture.canvas_storage", false) &&
++        createinfo->type == SDL_GPU_TEXTURETYPE_2D && layerCount == 1 &&
++        createinfo->num_levels == 1 && createinfo->sample_count == SDL_GPU_SAMPLECOUNT_1 &&
++        (createinfo->usage & SDL_GPU_TEXTUREUSAGE_COLOR_TARGET) &&
++        VULKAN_INTERNAL_CanvasStorageSupported(renderer, imageCreateInfo.format,
++                                              imageCreateInfo.usage,
++                                              createinfo->width, createinfo->height)) {
++        imageCreateInfo.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
++    }
+     imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+     imageCreateInfo.queueFamilyIndexCount = 0;
+     imageCreateInfo.pQueueFamilyIndices = NULL;
+@@ -12969,6 +13004,7 @@
+     result->driverData = (SDL_GPURenderer *)renderer;
+     result->shader_formats = SDL_GPU_SHADERFORMAT_SPIRV;
+     SDL_SetBooleanProperty(renderer->props, "bblite.gpu.storage_texture_array", true);
++    SDL_SetBooleanProperty(renderer->props, "bblite.gpu.canvas_storage_allocation", true);
+ 
+     /*
+      * Create initial swapchain array

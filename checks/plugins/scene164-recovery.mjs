@@ -11,11 +11,11 @@ import {
     observedImage,
     observedStep,
     requireObservations,
+    observedState,
 } from "./support.mjs";
 
 /**
  * @import { PluginContext, PluginOutcome } from "../../dist/src/tooling/check-run.js"
- * @import { ObservedStep } from "./support.mjs"
  */
 
 /**
@@ -24,12 +24,6 @@ import {
  *     viewport: { width: number, height: number },
  * }} RecoveryState the check's `observe.state` record
  */
-
-/** @param {ObservedStep} step */
-function observedState(step) {
-    assert(step.state, `the observed step '${step.id}' recorded no state`);
-    return /** @type {RecoveryState} */ (step.state);
-}
 
 const FLAGS = [
     "deviceLost",
@@ -54,7 +48,7 @@ export function check(context) {
     const resized = observedStep(observations, "resized");
     const input = observedStep(observations, "input");
     const disposed = observedStep(observations, "disposed");
-    const afterState = observedState(after);
+    const afterState = /** @type {RecoveryState} */ (observedState(after));
     for (const flag of FLAGS)
         assert.equal(afterState.dataset[flag], "true", `browser: ${flag}`);
     assert.ok(
@@ -71,7 +65,7 @@ export function check(context) {
     ).mad;
     assert.equal(recoveryMad, 0, "browser: the canvas changed across recovery");
     assert.deepEqual(
-        observedState(resized).viewport,
+        /** @type {RecoveryState} */ (observedState(resized)).viewport,
         { width: 960, height: 540 },
         "browser: resized viewport",
     );
@@ -81,7 +75,7 @@ export function check(context) {
     ).mad;
     assert.ok(inputMad > 0.1, "browser: wheel input did not change the image");
     assert.equal(
-        observedState(disposed).dataset.disposed,
+        /** @type {RecoveryState} */ (observedState(disposed)).dataset.disposed,
         "true",
         "browser: dispose",
     );

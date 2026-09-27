@@ -53,6 +53,7 @@ import {
 } from "./tooling/backends.js";
 import { flagNumber, isMainModule, parseFlags } from "./tooling/flags.js";
 import { readCompiledAssetSources } from "./tooling/generated-readers.js";
+import { runCaptured } from "./tooling/logged-process.js";
 import { asObject } from "./json-fields.js";
 
 export type ShippingPlatform = "win32" | "linux" | "darwin";
@@ -180,22 +181,6 @@ function host(platform: ShippingPlatform): Host {
                 newline: "\n",
             };
     }
-}
-
-/** Runs a host tool that must succeed, returning its standard output. */
-function checked(
-    command: string,
-    args: readonly string[],
-    failure: string,
-): string {
-    const result = spawnSync(command, [...args], {
-        encoding: "utf8",
-        windowsHide: true,
-    });
-    if (result.error) throw result.error;
-    if (result.status !== 0)
-        throw new Error(`${failure}: ${result.stdout}${result.stderr}`.trim());
-    return result.stdout;
 }
 
 const samePath = (left: string, right: string, platform: ShippingPlatform) =>
@@ -437,14 +422,15 @@ function unixRuntimeLibraries(
         const environment: NodeJS.ProcessEnv = { ...process.env, LC_ALL: "C" };
         delete environment.LD_LIBRARY_PATH;
         delete environment.LD_PRELOAD;
-        const result = spawnSync("ldd", [executable], {
-            encoding: "utf8",
-            env: environment,
-        });
-        const lines = `${result.stdout}${result.stderr}`
+        const lines = runCaptured(
+            "ldd",
+            [executable],
+            "Unresolved Linux dependencies",
+            { env: environment },
+        )
             .split(/\r?\n/)
             .filter(Boolean);
-        if (result.status !== 0 || lines.some((line) => /not found/.test(line)))
+        if (lines.some((line) => /not found/.test(line)))
             throw new Error(
                 `Unresolved Linux dependencies: ${lines.join("\n")}`,
             );
@@ -460,7 +446,7 @@ function unixRuntimeLibraries(
         return lines;
     }
     return target.architectures.flatMap((architecture) => {
-        const lines = checked(
+        const lines = runCaptured(
             "otool",
             ["-arch", architecture, "-L", executable],
             "Unable to inspect Mach-O dependencies",
@@ -592,7 +578,7 @@ export function desktopShaderSuffixes(
     backend: CompiledNativeBackend,
     platform: ShippingPlatform,
 ): string[] {
-    if (backend === "DAWN") return [".native.wgsl"];
+    if (backend === "DAWN") return [".native.wgsl", ".slots"];
     return [
         platform === "win32"
             ? ".dxil"
@@ -611,7 +597,7 @@ export function desktopShaderSuffixes(
 export function validateDesktopBuilds(
     options: DesktopPackageOptions,
     architectureOf: (executable: string) => string = (executable) =>
-        checked(
+        runCaptured(
             "lipo",
             ["-archs", executable],
             `Unable to read the architectures of ${executable}`,
@@ -687,7 +673,7 @@ export function packageDesktopDemo(
     mkdirSync(join(packageDirectory, "assets"), { recursive: true });
 
     if (target.platform === "darwin") {
-        checked(
+        runCaptured(
             "lipo",
             [
                 "-create",
@@ -697,7 +683,7 @@ export function packageDesktopDemo(
             ],
             "Unable to combine the macOS executable slices",
         );
-        checked(
+        runCaptured(
             "lipo",
             [staged, "-verify_arch", "x86_64", "arm64"],
             "The staged executable is not universal",
@@ -709,19 +695,19 @@ export function packageDesktopDemo(
         const strip = first.cache.CMAKE_STRIP;
         if (!strip || !existsSync(strip))
             throw new Error("CMAKE_STRIP must name the native strip tool.");
-        checked(
+        runCaptured(
             strip,
             [target.platform === "darwin" ? "-x" : "--strip-unneeded", staged],
             "Unable to strip the staged executable",
         );
         chmodSync(staged, 0o755);
         if (target.platform === "darwin") {
-            checked(
+            runCaptured(
                 "codesign",
                 ["--force", "--sign", "-", staged],
                 "Unable to ad-hoc sign the staged executable",
             );
-            checked(
+            runCaptured(
                 "codesign",
                 ["--verify", "--strict", "--all-architectures", staged],
                 "Unable to verify both signed executable slices",

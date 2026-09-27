@@ -2,6 +2,7 @@
 // textures and the geometry id readback. Dawn's twin is
 // pal_dawn_scene_targets.cpp.
 #include "pal_gpu_common.hpp"
+#include "pal_gpu_canvas_targets.hpp"
 #include "pal_gpu_surface.hpp"
 #include "pal_gpu_targets.hpp"
 #include "pal_gpu_pipeline.hpp"
@@ -76,22 +77,13 @@ void create_msaa_color(GpuState& state, SDL_GPUTextureFormat format, std::uint32
 }
 
 void create_color(GpuState& state, SDL_GPUTextureFormat format, std::uint32_t width,
-                  std::uint32_t height) {
+                  std::uint32_t height, bool canvas) {
     if (state.color && state.color_width == width && state.color_height == height)
         return;
     release_sized_texture(state, state.color, state.color_width, state.color_height);
-    SDL_GPUTextureCreateInfo info{};
-    info.type = SDL_GPU_TEXTURETYPE_2D;
-    info.format = format;
-    info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    info.width = width;
-    info.height = height;
-    info.layer_count_or_depth = 1;
-    info.num_levels = 1;
-    info.sample_count = SDL_GPU_SAMPLECOUNT_1;
-    state.color = SDL_CreateGPUTexture(state.device, &info);
-    if (!state.color)
-        gpu_error("SDL_CreateGPUTexture color");
+    state.color = create_frame_texture(
+        state.device, format, SDL_GPU_SAMPLECOUNT_1, width, height,
+        SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, 1, canvas);
     state.color_width = width;
     state.color_height = height;
 }
@@ -106,19 +98,9 @@ void create_processed_color(GpuState& state, SDL_GPUTextureFormat format, std::u
     }
     release_sized_texture(state, state.processed_color, state.processed_color_width,
                           state.processed_color_height);
-    SDL_GPUTextureCreateInfo info{};
-    info.type = SDL_GPU_TEXTURETYPE_2D;
-    info.format = format;
-    info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    info.width = width;
-    info.height = height;
-    info.layer_count_or_depth = 1;
-    info.num_levels = 1;
-    info.sample_count = SDL_GPU_SAMPLECOUNT_1;
-    state.processed_color = SDL_CreateGPUTexture(state.device, &info);
-    if (!state.processed_color) {
-        gpu_error("SDL_CreateGPUTexture processed color");
-    }
+    state.processed_color = create_frame_texture(
+        state.device, format, SDL_GPU_SAMPLECOUNT_1, width, height,
+        SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, 1, true);
     state.processed_color_width = width;
     state.processed_color_height = height;
 }
@@ -328,6 +310,7 @@ void create_frame_graph_textures(GpuState& state, const Engine& engine,
     state.shadow_refresh.invalidate_rendered_maps();
 #endif
     state.render_targets.resize(engine.render_targets.size());
+    const auto canvas_resolves = canvas_resolve_targets(engine);
     for (std::size_t index = 0; index < target_plans.size(); ++index) {
         const RenderTargetRecord record = engine.render_targets[index];
         if (record.retired)
@@ -368,10 +351,13 @@ void create_frame_graph_textures(GpuState& state, const Engine& engine,
         const auto samples = task_sample_count(state, record.samples);
         const auto color_format = planned.color_format;
         if (record.has_color) {
-            target.color = create_frame_texture(
-                state.device, color_format, samples, target.width, target.height,
-                SDL_GPU_TEXTUREUSAGE_COLOR_TARGET |
-                    (samples == SDL_GPU_SAMPLECOUNT_1 ? SDL_GPU_TEXTUREUSAGE_SAMPLER : 0));
+            auto color_usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+            if (samples == SDL_GPU_SAMPLECOUNT_1) {
+                color_usage |= SDL_GPU_TEXTUREUSAGE_SAMPLER;
+            }
+            target.color =
+                create_frame_texture(state.device, color_format, samples, target.width,
+                                     target.height, color_usage, 1, canvas_resolves[index]);
             target.sampled_color =
                 samples == SDL_GPU_SAMPLECOUNT_1
                     ? target.color

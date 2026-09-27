@@ -13,6 +13,9 @@
 #include <cstdint>
 #include <string>
 #include "pal_record_sync.hpp"
+#if BBLITE_HAS_SPRITES
+#include "pal_gpu_billboard_upload.hpp"
+#endif
 
 namespace bbl::pal {
 
@@ -198,36 +201,6 @@ struct BillboardDrawPlan {
 
 BillboardDrawPlan billboard_draw_plan(const BillboardSystemRecord& system);
 
-/**
- * What a billboard pass last uploaded, so an unchanged frame re-uploads
- * nothing. The sorted order depends on both the view and the packed instance
- * rows. Dynamic systems may clear and refill the same count, so the record's
- * explicit version — not count — identifies the contents of the GPU buffer.
- */
-struct BillboardUploadStamp {
-    std::array<float, 16> view{};
-    std::uint32_t count = 0;
-    std::uint64_t instance_version = 0;
-    bool uploaded = false;
-#if BBLITE_FLOATING_ORIGIN
-    /** The eye the anchors in the buffer were made relative to. */
-    Vec3d fo_offset{};
-#endif
-};
-
-/**
- * Whether the sorted instance buffer must be rebuilt and re-uploaded this
- * frame — the one gating rule, stated once for both backends. Only the
- * sort+upload is gated; the small per-frame UBO rebuilds beside it are
- * not. A cutout system is not sorted (it writes depth, so the GPU
- * resolves overlap and the pin uploads in logical insertion order), so
- * its buffer never depends on the view and uploads once per count.
- */
-bool billboard_needs_upload(const BillboardSystemRecord& system, const BillboardUploadStamp& stamp,
-                            const std::array<float, 16>& view, [[maybe_unused]] Vec3d fo_offset);
-
-void stamp_billboard_upload(BillboardUploadStamp& stamp, const BillboardSystemRecord& system,
-                            const std::array<float, 16>& view, [[maybe_unused]] Vec3d fo_offset);
 #endif
 
 } // namespace bbl::pal

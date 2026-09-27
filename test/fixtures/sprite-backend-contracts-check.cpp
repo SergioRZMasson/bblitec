@@ -1,5 +1,5 @@
 #define BBLITE_FLOATING_ORIGIN 0
-#include <bblite/runtime.hpp>
+#include "pal_gpu_billboard_upload.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstring>

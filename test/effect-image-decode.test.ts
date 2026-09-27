@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { PNG } from "pngjs";
+import { PNG, type ColorType } from "pngjs";
 import {
     nativeFixtureVcpkgRoot,
     optionalNativeFixtureTools,
@@ -24,10 +24,44 @@ test("standalone effect builds decode RGBA images and refuse unavailable or malf
     const raster = new PNG({ width: 3, height: 2 });
     raster.data = pixels;
     const png = PNG.sync.write(raster);
+    const png16Cases = ([0, 2, 4, 6] satisfies ColorType[]).map((colorType) => {
+        const gray = colorType === 0 || colorType === 4;
+        const alpha = colorType === 4 || colorType === 6;
+        const samples: number[] = [];
+        const expanded: number[] = [];
+        const rgba: number[] = [];
+        for (let pixel = 0; pixel < 6; ++pixel) {
+            const red = [0, 0x1234, 0x80ff, 0xffff, 0xff00, 0x0102][pixel]!;
+            const green = gray ? red : 0x3456;
+            const blue = gray ? red : 0x789a;
+            const opacity = alpha ? 0xabcd : 0xffff;
+            samples.push(
+                red,
+                ...(gray ? [] : [green, blue]),
+                ...(alpha ? [opacity] : []),
+            );
+            expanded.push(red, green, blue, ...(alpha ? [opacity] : []));
+            rgba.push(
+                ...[red, green, blue, opacity].map((value) =>
+                    Math.round(value / 257),
+                ),
+            );
+        }
+        const image = new PNG({ width: 3, height: 2 });
+        image.data = Buffer.from(new Uint16Array(samples).buffer);
+        const encoded = PNG.sync.write(image, {
+            bitDepth: 16,
+            colorType,
+            inputColorType: colorType,
+        });
+        return `{${alpha ? "true" : "false"}, {${[...encoded].join(",")}}, {${expanded.join(",")}}, {${rgba.join(",")}}}`;
+    });
     writeFileSync(
         join(directory, "image.hpp"),
         `const std::vector<std::uint8_t> png_bytes{${[...png].join(",")}};\n` +
-            `const std::vector<std::uint8_t> expected_pixels{${[...pixels].join(",")}};\n`,
+            `const std::vector<std::uint8_t> expected_pixels{${[...pixels].join(",")}};\n` +
+            "struct Png16Case { bool alpha; std::vector<std::uint8_t> bytes; std::vector<std::uint16_t> samples; std::vector<std::uint8_t> rgba; };\n" +
+            `const std::vector<Png16Case> png16_cases{${png16Cases.join(",")}};\n`,
     );
     for (const decoder of [0, 1]) {
         const executable = join(directory, `decoder-${decoder}.exe`);

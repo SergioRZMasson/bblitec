@@ -4,11 +4,15 @@
 
 #include "pal_sdl_gpu_device.hpp"
 #include "pal_sdl_gpu_writes.hpp"
+#include "pal_sdl_gpu_buffers.hpp"
+#include "pal_sdl_gpu_error.hpp"
 #include "pal_sdl_gpu_resources.hpp"
 #include "pal_owned_gpu_record.hpp"
 #include "pal_device_options.hpp"
 #include "pal_gpu_common.hpp"
 #include "pal_sdl_gpu_formats.hpp"
+#include "pal_sdl_gpu_texture_ops.hpp"
+#include "pal_sdl_gpu_canvas.hpp"
 
 // SDL_GPU mechanics shared by the renderers that draw through it.
 //
@@ -46,32 +50,6 @@
 #endif
 
 namespace bbl::pal {
-
-[[noreturn]] inline void gpu_error(const char* operation) {
-    throw GpuTransportError(std::string(operation) + ": " + SDL_GetError());
-}
-
-inline SDL_GPUTexture* create_frame_texture(SDL_GPUDevice* device, SDL_GPUTextureFormat format,
-                                            SDL_GPUSampleCount samples, std::uint32_t width,
-                                            std::uint32_t height, SDL_GPUTextureUsageFlags usage,
-                                            std::uint32_t layers = 1) {
-    SDL_GPUTextureCreateInfo info{};
-    // A layered attachment is an ARRAY texture: the cascaded shadow map is
-    // the reached one, and its receiver declares `texture_depth_2d_array`,
-    // so the texture type is what SDL_GPU resolves that register against.
-    info.type = layers > 1 ? SDL_GPU_TEXTURETYPE_2D_ARRAY : SDL_GPU_TEXTURETYPE_2D;
-    info.format = format;
-    info.usage = usage;
-    info.width = width;
-    info.height = height;
-    info.layer_count_or_depth = layers;
-    info.num_levels = 1;
-    info.sample_count = samples;
-    SDL_GPUTexture* texture = SDL_CreateGPUTexture(device, &info);
-    if (!texture)
-        gpu_error("SDL_CreateGPUTexture frame graph");
-    return texture;
-}
 
 #if BBLITE_VISUAL_CAPTURE
 inline void save_texture_png(SDL_GPUDevice* device, SdlGpuCommand& command,
@@ -503,6 +481,7 @@ inline void create_sdl_gpu_device(const EngineOptions& engine_options, const Dev
         state.device = create_compiled_shader_device(options.gpu_debug);
     if (!state.device)
         gpu_error("SDL_CreateGPUDevice");
+    configure_sdl_canvas_window(state.device, state.window);
     if (!SDL_ClaimWindowForGPUDevice(state.device, state.window)) {
         gpu_error("SDL_ClaimWindowForGPUDevice");
     }
@@ -622,51 +601,6 @@ inline PinnedStage load_pinned_stage(SDL_GPUDevice* device, const std::string& s
     return {std::move(shader), std::move(slots)};
 }
 
-inline SDL_FColor gpu_clear_color(SDL_GPUDevice* device, SDL_GPUTextureFormat format,
-                                  SDL_FColor color) {
-    if ((format == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM ||
-         format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM) &&
-        std::strcmp(SDL_GetGPUDeviceDriver(device), "metal") == 0) {
-        // Metal fast clears can truncate fractional UNORM values.
-        const auto channel = [](float value) {
-            return std::nearbyint(std::clamp(value, 0.0f, 1.0f) * 255.0f) / 255.0f;
-        };
-        return {channel(color.r), channel(color.g), channel(color.b), channel(color.a)};
-    }
-    return color;
-}
-
-inline void generate_texture_mipmaps(SDL_GPUDevice* device, SDL_GPUCommandBuffer* command,
-                                     SDL_GPUTexture* texture, std::uint32_t width,
-                                     std::uint32_t height, std::uint32_t mip_levels,
-                                     std::uint32_t layers = 1) {
-    if (mip_levels <= 1)
-        return;
-    if (std::strcmp(SDL_GetGPUDeviceDriver(device), "metal") != 0) {
-        SDL_GenerateMipmapsForGPUTexture(command, texture);
-        return;
-    }
-    // Metal's built-in mip generator averages encoded sRGB. The pinned
-    // recordMipmaps samples each preceding level through an sRGB-aware blit.
-    for (std::uint32_t layer = 0; layer < layers; ++layer) {
-        for (std::uint32_t mip = 1; mip < mip_levels; ++mip) {
-            SDL_GPUBlitInfo blit{};
-            blit.source = {texture,
-                           mip - 1,
-                           layer,
-                           0,
-                           0,
-                           std::max(1u, width >> (mip - 1)),
-                           std::max(1u, height >> (mip - 1))};
-            blit.destination = {
-                texture, mip, layer, 0, 0, std::max(1u, width >> mip), std::max(1u, height >> mip)};
-            blit.load_op = SDL_GPU_LOADOP_DONT_CARE;
-            blit.filter = SDL_GPU_FILTER_LINEAR;
-            SDL_BlitGPUTexture(command, &blit);
-        }
-    }
-}
-
 /**
  * Copy bytes into a texture that already exists.
  *
@@ -674,40 +608,6 @@ inline void generate_texture_mipmaps(SDL_GPUDevice* device, SDL_GPUCommandBuffer
  * that changes per frame -- the clustered light field's three data textures --
  * needs the copy without a second allocation.
  */
-inline void write_sdl_gpu_buffer(SDL_GPUDevice* device, SDL_GPUBuffer* buffer, std::size_t offset,
-                                 std::span<const std::uint8_t> bytes, bool cycle) {
-    if (!device || !buffer)
-        throw std::runtime_error("SDL buffer write has no resource.");
-    const auto count = gpu_u32(bytes.size()), start = gpu_u32(offset);
-    if (count > std::numeric_limits<Uint32>::max() - start)
-        throw std::runtime_error("SDL buffer write exceeds the native API size range.");
-    if (bytes.empty())
-        return;
-    SDL_GPUTransferBufferCreateInfo info{};
-    info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-    info.size = count;
-    OwnedSdlTransfer transfer{SDL_CreateGPUTransferBuffer(device, &info), {device}};
-    if (!transfer)
-        gpu_error("SDL_CreateGPUTransferBuffer buffer write");
-    void* mapped = SDL_MapGPUTransferBuffer(device, transfer.get(), false);
-    if (!mapped)
-        gpu_error("SDL_MapGPUTransferBuffer buffer write");
-    std::memcpy(mapped, bytes.data(), bytes.size());
-    SDL_UnmapGPUTransferBuffer(device, transfer.get());
-    SdlGpuCommand command{SDL_AcquireGPUCommandBuffer(device)};
-    if (!command)
-        gpu_error("SDL_AcquireGPUCommandBuffer buffer write");
-    SdlCopyPass copy{SDL_BeginGPUCopyPass(command)};
-    if (!copy)
-        gpu_error("SDL_BeginGPUCopyPass buffer write");
-    const SDL_GPUTransferBufferLocation source{transfer.get(), 0};
-    const SDL_GPUBufferRegion destination{buffer, start, count};
-    SDL_UploadToGPUBuffer(copy, &source, &destination, cycle);
-    copy.end();
-    if (!command.submit())
-        gpu_error("SDL_SubmitGPUCommandBuffer buffer write");
-}
-
 inline void write_sdl_gpu_texture(SDL_GPUDevice* device, SDL_GPUTexture* texture,
                                   std::span<const std::uint8_t> bytes,
                                   const GpuTextureWriteLayout& layout, const GpuWriteExtent& extent,
@@ -1003,30 +903,6 @@ private:
     std::size_t bytes_size_ = 0;
     std::size_t bytes_capacity_ = 0;
 };
-
-inline SDL_GPUBuffer* upload_buffer(SDL_GPUDevice* device, SDL_GPUBufferUsageFlags usage,
-                                    const void* data, std::size_t size) {
-    SDL_GPUBufferCreateInfo info{};
-    info.usage = usage;
-    info.size = gpu_u32(size);
-    OwnedSdlBuffer buffer{SDL_CreateGPUBuffer(device, &info), {device}};
-    if (!buffer)
-        gpu_error("SDL_CreateGPUBuffer");
-    if (!data && size)
-        throw std::runtime_error("SDL buffer write has no source bytes.");
-    SdlBufferDestination destination{device, buffer.get(), false};
-    SdlGpuWriteDevice{device}.write_buffer(destination, 0,
-                                           {static_cast<const std::uint8_t*>(data), size});
-    return buffer.release();
-}
-inline void update_buffer(SDL_GPUDevice* device, SDL_GPUBuffer* buffer, const void* data,
-                          std::size_t size) {
-    if (!data && size)
-        throw std::runtime_error("SDL buffer write has no source bytes.");
-    SdlBufferDestination destination{device, buffer, true};
-    SdlGpuWriteDevice{device}.write_buffer(destination, 0,
-                                           {static_cast<const std::uint8_t*>(data), size});
-}
 
 inline SDL_GPUSampler* create_texture_sampler(SDL_GPUDevice* device,
                                               const TextureSamplerState& sampler) {

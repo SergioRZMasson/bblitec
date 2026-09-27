@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { ESLint } from "eslint";
@@ -10,6 +11,7 @@ import {
     nativeFormatFiles,
     newerPrecompiledHeaderInput,
     precompiledHeaderOutputs,
+    standaloneSceneCommands,
 } from "../src/code-quality.js";
 import { createJavaScriptFunction } from "../src/typescript-transpile.js";
 import {
@@ -248,6 +250,14 @@ test("native lint refuses malformed compilation databases rather than skipping e
         [null],
         [{ file: "pal.cpp" }],
         [{ file: "pal.cpp", directory: root, arguments: ["clang++", 7] }],
+        [
+            {
+                file: "pal.cpp",
+                directory: root,
+                command: "clang++",
+                arguments: [7],
+            },
+        ],
         [{ file: "", directory: root, command: "clang++" }],
     ]) {
         assert.throws(
@@ -258,6 +268,91 @@ test("native lint refuses malformed compilation databases rather than skipping e
             /compilation database entry|must contain an array/,
         );
     }
+});
+
+test("native lint gives each included scene unit its aggregate's command and include paths", (t) => {
+    mkdirSync("artifacts", { recursive: true });
+    const root = mkdtempSync(resolve("artifacts/quality-scene-units-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const aggregate = join(root, "pal_dawn_scene_all.cpp");
+    writeFileSync(
+        aggregate,
+        '#include "pal_dawn_scene_meshes.cpp"\n#include "pal_dawn.cpp"\n',
+    );
+    const flags = [
+        "clang++",
+        "-Igenerated headers",
+        "-DNAME=pal_dawn_scene_all.cpp",
+        "-o",
+        "pal_dawn_scene_all.cpp.o",
+        "-c",
+    ];
+    for (const command of [
+        {
+            command: `clang++ -I"generated headers" -DNAME=pal_dawn_scene_all.cpp -o pal_dawn_scene_all.cpp.o -c "${aggregate}"`,
+        },
+        { arguments: [...flags, aggregate] },
+    ]) {
+        const entry = { directory: root, file: aggregate, ...command };
+        const expanded = standaloneSceneCommands([entry], root);
+        assert.deepEqual(expanded[0], entry);
+        assert.deepEqual(
+            expanded.slice(1).map(({ file }) => file),
+            [
+                join(root, "pal_dawn_scene_meshes.cpp"),
+                join(root, "pal_dawn.cpp"),
+            ],
+        );
+        for (const [index, name] of [
+            "pal_dawn_scene_meshes.cpp",
+            "pal_dawn.cpp",
+        ].entries()) {
+            const unit = expanded[index + 1]!;
+            assert.equal(unit.directory, root);
+            if ("command" in command)
+                assert.equal(
+                    unit.command,
+                    command.command.replace(aggregate, join(root, name)),
+                );
+            else assert.deepEqual(unit.arguments, [...flags, join(root, name)]);
+        }
+    }
+    const relativeEntry = {
+        directory: "..",
+        file: basename(aggregate),
+        arguments: [...flags, basename(aggregate)],
+    };
+    const relocated = standaloneSceneCommands(
+        [relativeEntry],
+        join(root, "build"),
+    );
+    assert.equal(relocated[0]!.directory, root);
+    assert.deepEqual(relocated[1]!.arguments, [
+        ...flags,
+        "pal_dawn_scene_meshes.cpp",
+    ]);
+    assert.throws(
+        () =>
+            standaloneSceneCommands(
+                [{ ...relativeEntry, arguments: ["clang++", "other.cpp"] }],
+                join(root, "build"),
+            ),
+        /does not name its source/,
+    );
+    assert.throws(
+        () =>
+            standaloneSceneCommands(
+                [
+                    {
+                        directory: root,
+                        file: aggregate,
+                        arguments: ["clang++", 1],
+                    },
+                ],
+                root,
+            ),
+        /Invalid compilation database/,
+    );
 });
 
 test("native lint finds each precompiled header a build creates and its stale inputs", () => {

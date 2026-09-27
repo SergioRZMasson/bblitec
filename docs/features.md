@@ -258,7 +258,7 @@ One-shot completion waits for submitted GPU work and preserves rearming/disposal
 Storage readback validates byte ranges, coalesces identical requests and serializes differing ranges.
 Compute outputs can feed sampled material slots and storage-backed geometry. Mipmap tasks preserve
 source execution gates and command order. Six-layer storage views with cube sampling are qualified
-on Dawn and patched SDL D3D12; other SDL drivers refuse this combination.
+on Dawn and patched SDL D3D12/Vulkan; other SDL drivers refuse this combination.
 
 ## Cameras and input
 
@@ -275,8 +275,7 @@ RmlUi, LabSound/SDL audio and worker canvases sharing one native window are enab
 Authored maxDevicePixelRatio caps the render buffer independently of the full-screen view.
 Apps use landscape orientation and immersive fullscreen. Reveal navigation with a bottom-edge swipe;
 system Back exits the activity. Multi-touch supports simultaneous UI controls and camera gestures.
-Multiple native windows remain unsupported. Full corpus and
-physical-device performance qualification remain open.
+Multiple native windows remain unsupported.
 [Commands](development.md#android).
 
 ## iOS
@@ -313,7 +312,8 @@ topology/colors/dashes and dynamic draw counts remain limited.
 Owned data meshes support geometry resizing and shared-family rebinding; omitted clones retain their
 existing geometry. Unshared, tightly packed meshes support GPU-only position and UV range uploads; imported
 geometry updates and resizing refuse. Data meshes retain their input CPU array aliases.
-Clones share those owners; resizing replaces them for the selected meshes.
+Clones share those owners; resizing replaces them for the selected meshes. Device recovery uploads
+the retained arrays' current contents and discards GPU-only writes.
 `getMeshGeometry` and `getMeshTriangles` return independent CPU stream copies. Authored glTF tangents
 are retained when `enableGltfCpuTangents` precedes loading.
 

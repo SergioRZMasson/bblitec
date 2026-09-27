@@ -102,6 +102,7 @@ export function resolveNativeExecutable(
 export function verifyDeployedPayload(
     executable: string,
     generatedDirectory: string,
+    buildDirectory?: string,
 ): void {
     // BBLITE_ASSET_DIR and BBLITE_GPU_SHADER_DIR redirect the runtime
     // lookup, so the deployment beside the executable is only the payload
@@ -114,6 +115,7 @@ export function verifyDeployedPayload(
     const payloads = deployedPayloads(
         executableDirectory,
         generatedDirectory,
+        buildDirectory,
     ).filter((payload) => !overridden[payload.label]);
     for (const payload of payloads) {
         const { label, source } = payload;
@@ -337,6 +339,9 @@ export function measuredRunEnvironment(
               }
             : {
                   BBLITE_SCREENSHOT_FRAME: String(options.frame),
+                  ...(environment.BBLITE_CAPTURE_ENGINE_FRAME === undefined
+                      ? {}
+                      : { BBLITE_CAPTURE_ENGINE_FRAME: String(options.frame) }),
                   BBLITE_MAX_FRAMES: String(
                       Math.max(options.frame + 1, options.maxFrames ?? 0),
                   ),

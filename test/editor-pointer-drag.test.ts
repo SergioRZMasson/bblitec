@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { compileSource } from "../src/compiler.js";
-import { CameraLowerer } from "../src/lowering/camera-lowerer.js";
+import { cameraSources } from "./camera-fixture.js";
 import { LoweringContext } from "../src/lowering/context.js";
 import { GizmoLowerer } from "../src/lowering/gizmo-lowerer.js";
 import { PickingLowerer } from "../src/lowering/picking-lowerer.js";
@@ -200,13 +199,7 @@ test(
     { skip: !nativeTools },
     () => {
         const output = resolve("artifacts/editor-pointer-check");
-        const headers = join(output, "include/bblite/upstream");
-        mkdirSync(headers, { recursive: true });
-        const controls = new CameraLowerer(
-            new LoweringContext(),
-        ).lowerControls();
-        writeFileSync(join(headers, "camera_controls.hpp"), controls.header);
-        writeFileSync(join(output, "controls.cpp"), controls.source);
+        const sources = cameraSources(output);
         const executable = join(output, "editor-pointer-check.exe");
         runNativeFixtureCompiler(nativeTools!, [
             "/nologo",
@@ -226,7 +219,7 @@ test(
             "/I",
             join(nativeFixtureVcpkgRoot, "include"),
             "test/fixtures/js-callback/editor-pointer-check.cpp",
-            join(output, "controls.cpp"),
+            ...sources,
         ]);
         assert.match(
             execFileSync(executable, [], { encoding: "utf8" }),

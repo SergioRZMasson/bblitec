@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import {
-    cppFunction,
     nativeFixtureVcpkgRoot,
     optionalNativeFixtureTools,
     runNativeFixtureCompiler,
@@ -18,19 +17,6 @@ test(
     () => {
         const output = resolve("artifacts/transient-gpu-commands-check");
         mkdirSync(output, { recursive: true });
-        const source = readFileSync(
-            "native/src/pal_sdl_gpu_shared.hpp",
-            "utf8",
-        );
-        writeFileSync(
-            join(output, "upload-buffer.hpp"),
-            [
-                "inline void write_sdl_gpu_buffer(",
-                "inline SDL_GPUBuffer* upload_buffer(",
-            ]
-                .map((signature) => cppFunction(source, signature))
-                .join("\n"),
-        );
         const executable = join(output, "check.exe");
         runNativeFixtureCompiler(tools!, [
             "/nologo",

@@ -7,10 +7,8 @@ import { LoweringContext } from "../src/lowering/context.js";
 import { SpriteLowerer } from "../src/lowering/sprite-lowerer.js";
 import {
     cppFunction,
-    cppRecord,
     optionalNativeFixtureTools,
     runNativeFixtureCompiler,
-    sharedGpuSource,
 } from "./native-fixture.js";
 
 const tools = optionalNativeFixtureTools(false);
@@ -24,7 +22,6 @@ test(
         const context = new LoweringContext();
         const core = new BillboardLowerer(context).lowerCore();
         const sprite = new SpriteLowerer(context).lowerCore();
-        const shared = sharedGpuSource().replaceAll("\r\n", "\n");
         const file = join(output, "check.cpp"),
             executable = join(output, "check.exe");
         const anchorFloats = core.header.match(
@@ -61,7 +58,7 @@ test(
         writeFileSync(
             file,
             `
-        #include <bblite/runtime.hpp>
+        #include "pal_gpu_billboard_upload.hpp"
         #include <bblite/js_data.hpp>
         #include <algorithm>
         #include <cmath>
@@ -74,9 +71,6 @@ test(
         }
         namespace bbl {
             ${definitions}
-            ${cppRecord(shared, "struct BillboardUploadStamp {")}
-            ${cppFunction(shared, "bool billboard_needs_upload(")}
-            ${cppFunction(shared, "void stamp_billboard_upload(")}
         }
         int main() {
             bbl::Engine engine;
@@ -90,11 +84,11 @@ test(
             options.capacity = 1;
             const auto handle = bbl::create_billboard_system(engine, {0}, bbl::BillboardOrientation::facing, {}, options);
             auto& system = engine.billboard_systems[handle.value];
-            bbl::BillboardUploadStamp stamp;
+            bbl::pal::BillboardUploadStamp stamp;
             std::array<float, 16> view{};
             bbl::Vec3d eye{};
-            const auto dirty = [&] { return bbl::billboard_needs_upload(system, stamp, view, eye); };
-            const auto uploaded = [&] { bbl::stamp_billboard_upload(stamp, system, view, eye); assert(!dirty()); };
+            const auto dirty = [&] { return bbl::pal::billboard_needs_upload(system, stamp, view, eye); };
+            const auto uploaded = [&] { bbl::pal::stamp_billboard_upload(stamp, system, view, eye); assert(!dirty()); };
             assert(!dirty());
             bbl::BillboardSpriteProps props;
             props.has_position = true;
@@ -185,6 +179,8 @@ test(
                 `/Fe:${executable}`,
                 "/I",
                 "native/include",
+                "/I",
+                "native/src",
                 file,
             ]);
             execFileSync(executable, { stdio: "pipe" });

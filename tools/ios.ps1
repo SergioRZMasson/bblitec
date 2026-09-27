@@ -54,14 +54,13 @@ try {
     $id = $resolved.id
     if (-not $id -or $id -notmatch '^[a-zA-Z0-9_-]+$') { throw 'iOS requires a registered scene ID.' }
     if (-not $SkipGenerate) { Invoke-Checked 'node' @('dist/src/scene-command.js', 'compile', $id) }
-    if ($Backend -ne 'DAWN' -and -not $SkipGenerate) {
-        Invoke-Checked 'node' @('dist/src/compile-shaders.js', '--scene', $id, '--target', 'metal')
+    if (-not $SkipGenerate) {
+        $shaderTarget = if ($Backend -eq 'DAWN') { 'reflection' } else { 'metal' }
+        Invoke-Checked 'node' @('dist/src/compile-shaders.js', '--scene', $id, '--target', $shaderTarget)
     }
     $generated = Join-Path $root $resolved.output
-    if ($SkipGenerate -or $Backend -ne 'DAWN') {
-        Invoke-Checked 'node' @('--input-type=module', '-e',
-            'import { refreshBuildStamp } from "./dist/src/generation-stamp.js"; refreshBuildStamp(process.argv[1], { generatedInputsChanged: true });', $generated)
-    }
+    Invoke-Checked 'node' @('--input-type=module', '-e',
+        'import { refreshBuildStamp } from "./dist/src/generation-stamp.js"; refreshBuildStamp(process.argv[1], { generatedInputsChanged: true });', $generated)
     $features = (Get-Content "$generated/manifest.json" -Raw | ConvertFrom-Json).features
     if ($SweepGeneratedDirectoriesFile) {
         $features = @(Get-Content $SweepGeneratedDirectoriesFile | ForEach-Object {
@@ -181,6 +180,7 @@ try {
     if ($Smoke) {
         Invoke-Checked 'node' @('tools/ios-smoke.mjs', '--scene', $id, '--device', $Device,
             '--bundle', $bundle, '--app', $ApplicationId, '--backend', $backendToken,
+            '--build-directory', $build,
             '--output', "$staging/smoke-$backendToken")
     } elseif ($Install) {
         Invoke-Checked 'xcrun' @('simctl', 'bootstatus', $Device, '-b')

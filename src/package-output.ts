@@ -7,7 +7,6 @@
  * call the command line below for the same staging, archive, receipt and
  * publication.
  */
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
     existsSync,
@@ -23,6 +22,7 @@ import {
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { discoverDevelopmentTools } from "./development-tools.js";
 import { isMainModule, parseFlags } from "./tooling/flags.js";
+import { runCaptured } from "./tooling/logged-process.js";
 import { contentDigest, writeJsonRecord } from "./tooling/records.js";
 
 interface PackageOutput {
@@ -131,16 +131,12 @@ export function packageFiles(directory: string): string[] {
  */
 export function archivePackage(plan: PackageOutput, cmake: string): string {
     const archive = join(plan.staging, `${plan.name}.zip`);
-    const result = spawnSync(
+    runCaptured(
         cmake,
         ["-E", "tar", "cf", archive, "--format=zip", "--", plan.name],
-        { cwd: plan.staging, encoding: "utf8", windowsHide: true },
+        "Package archive creation failed",
+        { cwd: plan.staging },
     );
-    if (result.error) throw result.error;
-    if (result.status !== 0)
-        throw new Error(
-            `Package archive creation failed: ${result.stdout}${result.stderr}`,
-        );
     return archive;
 }
 

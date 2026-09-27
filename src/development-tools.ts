@@ -153,7 +153,7 @@ function discoverVisualStudioRoot(
             "-property",
             "installationPath",
         ],
-        { encoding: "utf8" },
+        { encoding: "utf8", windowsHide: true },
     );
     const root = result.status === 0 ? result.stdout.trim() : "";
     return root && existsSync(join(root, "VC", "Tools", "MSVC"))

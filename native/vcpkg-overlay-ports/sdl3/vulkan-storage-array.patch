@@ -1,0 +1,173 @@
+Opt-in whole-array Vulkan compute storage views. Layer zero of a mip binds
+all array layers and transitions each covered subresource at pass boundaries.
+Readonly array aliases preserve the sampled view shape; ordinary layer views
+and unrelated mips retain their existing behavior.
+
+diff --git a/src/gpu/vulkan/SDL_gpu_vulkan.c b/src/gpu/vulkan/SDL_gpu_vulkan.c
+--- a/src/gpu/vulkan/SDL_gpu_vulkan.c
++++ b/src/gpu/vulkan/SDL_gpu_vulkan.c
+@@ -599,6 +599,7 @@
+ 
+     VkImage image;
+     VkImageView fullView; // used for samplers and storage reads
++    VkImageView computeReadView; // optional whole-array alias, preserving the sampler view
+     VkComponentMapping swizzle;
+     VkImageAspectFlags aspectFlags;
+     Uint32 depth; // used for cleanup only
+@@ -607,6 +608,7 @@
+     Uint32 levelCount;
+     Uint32 layerCount;
+     SDL_GPUTextureType type;
++    bool storageArray;
+ 
+     // FIXME: It'd be nice if we didn't have to have this on the texture...
+     SDL_GPUTextureUsageFlags usage; // used for defrag transitions only.
+@@ -3147,6 +3149,13 @@
+ 
+     SDL_free(texture->subresources);
+ 
++    if (texture->computeReadView) {
++        renderer->vkDestroyImageView(
++            renderer->logicalDevice,
++            texture->computeReadView,
++            NULL);
++    }
++
+     if (texture->fullView) {
+         renderer->vkDestroyImageView(
+             renderer->logicalDevice,
+@@ -4434,6 +4443,7 @@
+     VulkanTexture *texture,
+     Uint32 layer,
+     Uint32 level,
++    bool storageArray,
+     VkComponentMapping swizzle,
+     VkImageView *pView)
+ {
+@@ -4451,8 +4461,9 @@
+     imageViewCreateInfo.subresourceRange.baseMipLevel = level;
+     imageViewCreateInfo.subresourceRange.levelCount = 1;
+     imageViewCreateInfo.subresourceRange.baseArrayLayer = layer;
+-    imageViewCreateInfo.subresourceRange.layerCount = 1;
+-    imageViewCreateInfo.viewType = (createinfo->type == SDL_GPU_TEXTURETYPE_3D) ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
++    imageViewCreateInfo.subresourceRange.layerCount = storageArray && layer == 0 ? texture->layerCount : 1;
++    imageViewCreateInfo.viewType = storageArray && layer == 0 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY :
++        (createinfo->type == SDL_GPU_TEXTURETYPE_3D) ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
+ 
+     vulkanResult = renderer->vkCreateImageView(
+         renderer->logicalDevice,
+@@ -5748,6 +5759,11 @@
+     VkImageUsageFlags vkUsageFlags = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+     Uint32 layerCount = (createinfo->type == SDL_GPU_TEXTURETYPE_3D) ? 1 : createinfo->layer_count_or_depth;
+     Uint32 depth = (createinfo->type == SDL_GPU_TEXTURETYPE_3D) ? createinfo->layer_count_or_depth : 1;
++    const bool storageArray = SDL_GetBooleanProperty(createinfo->props, "bblite.gpu.texture.storage_array", false);
++
++    if (storageArray && createinfo->type == SDL_GPU_TEXTURETYPE_3D) {
++        SET_STRING_ERROR_AND_RETURN("Whole-array compute storage views require a 2D texture", NULL);
++    }
+ 
+     VulkanTexture *texture = SDL_calloc(1, sizeof(VulkanTexture));
+     texture->swizzle = SwizzleForSDLFormat(createinfo->format);
+@@ -5756,6 +5772,7 @@
+     texture->levelCount = createinfo->num_levels;
+     texture->layerCount = (createinfo->type == SDL_GPU_TEXTURETYPE_3D) ? 1 : createinfo->layer_count_or_depth;
+     texture->type = createinfo->type;
++    texture->storageArray = storageArray;
+     SDL_SetAtomicInt(&texture->referenceCount, 0);
+ 
+     if (IsDepthFormat(createinfo->format)) {
+@@ -5871,6 +5888,22 @@
+         if (vulkanResult != VK_SUCCESS) {
+             VULKAN_INTERNAL_DestroyTexture(renderer, texture);
+             CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, "vkCreateImageView", NULL);
++        }
++
++        // Compute storage arrays may alias a sampled 2D or cube texture.
++        // Keep its sampler view intact and supply the declared storage shape.
++        if (storageArray && (createinfo->usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ) &&
++            imageViewCreateInfo.viewType != VK_IMAGE_VIEW_TYPE_2D_ARRAY) {
++            imageViewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
++            vulkanResult = renderer->vkCreateImageView(
++                renderer->logicalDevice,
++                &imageViewCreateInfo,
++                NULL,
++                &texture->computeReadView);
++            if (vulkanResult != VK_SUCCESS) {
++                VULKAN_INTERNAL_DestroyTexture(renderer, texture);
++                CHECK_VULKAN_ERROR_AND_RETURN(vulkanResult, "vkCreateImageView", NULL);
++            }
+         }
+     }
+ 
+@@ -5927,6 +5960,7 @@
+                     texture,
+                     i,
+                     j,
++                    storageArray,
+                     texture->swizzle,
+                     &texture->subresources[subresourceIndex].computeWriteView)) {
+                     VULKAN_INTERNAL_DestroyTexture(renderer, texture);
+@@ -5941,6 +5975,7 @@
+                     texture,
+                     i,
+                     j,
++                    false,
+                     texture->swizzle,
+                     &texture->subresources[subresourceIndex].depthStencilView)) {
+                     VULKAN_INTERNAL_DestroyTexture(renderer, texture);
+@@ -8303,6 +8338,16 @@
+             storageTextureBindings[i].cycle,
+             VULKAN_TEXTURE_USAGE_MODE_COMPUTE_STORAGE_READ_WRITE);
+ 
++        // Layer zero's opted-in view covers every layer of this mip.
++        if (subresource->layer == 0 && subresource->parent->storageArray) {
++            for (Uint32 layer = 1; layer < subresource->parent->layerCount; ++layer) {
++                Uint32 index = VULKAN_INTERNAL_GetTextureSubresourceIndex(subresource->level, layer, subresource->parent->levelCount);
++                VULKAN_INTERNAL_TextureSubresourceTransitionFromDefaultUsage(
++                    renderer, vulkanCommandBuffer, VULKAN_TEXTURE_USAGE_MODE_COMPUTE_STORAGE_READ_WRITE,
++                    &subresource->parent->subresources[index]);
++            }
++        }
++
+         vulkanCommandBuffer->readWriteComputeStorageTextureSubresources[i] = subresource;
+         vulkanCommandBuffer->readWriteComputeStorageTextureViewBindings[i] = subresource->computeWriteView;
+ 
+@@ -8427,7 +8472,8 @@
+                 textureContainer->activeTexture);
+ 
+             vulkanCommandBuffer->readOnlyComputeStorageTextures[firstSlot + i] = textureContainer->activeTexture;
+-            vulkanCommandBuffer->readOnlyComputeStorageTextureViewBindings[firstSlot + i] = textureContainer->activeTexture->fullView;
++            vulkanCommandBuffer->readOnlyComputeStorageTextureViewBindings[firstSlot + i] =
++                textureContainer->activeTexture->computeReadView ? textureContainer->activeTexture->computeReadView : textureContainer->activeTexture->fullView;
+             vulkanCommandBuffer->needNewComputeReadOnlyDescriptorSet = true;
+         }
+     }
+@@ -8767,11 +8813,20 @@
+     Uint32 i;
+ 
+     for (i = 0; i < vulkanCommandBuffer->readWriteComputeStorageTextureSubresourceCount; i += 1) {
++        VulkanTextureSubresource *subresource = vulkanCommandBuffer->readWriteComputeStorageTextureSubresources[i];
+         VULKAN_INTERNAL_TextureSubresourceTransitionToDefaultUsage(
+             vulkanCommandBuffer->renderer,
+             vulkanCommandBuffer,
+             VULKAN_TEXTURE_USAGE_MODE_COMPUTE_STORAGE_READ_WRITE,
+             vulkanCommandBuffer->readWriteComputeStorageTextureSubresources[i]);
++        if (subresource->layer == 0 && subresource->parent->storageArray) {
++            for (Uint32 layer = 1; layer < subresource->parent->layerCount; ++layer) {
++                Uint32 index = VULKAN_INTERNAL_GetTextureSubresourceIndex(subresource->level, layer, subresource->parent->levelCount);
++                VULKAN_INTERNAL_TextureSubresourceTransitionToDefaultUsage(
++                    vulkanCommandBuffer->renderer, vulkanCommandBuffer, VULKAN_TEXTURE_USAGE_MODE_COMPUTE_STORAGE_READ_WRITE,
++                    &subresource->parent->subresources[index]);
++            }
++        }
+         vulkanCommandBuffer->readWriteComputeStorageTextureSubresources[i] = NULL;
+     }
+     vulkanCommandBuffer->readWriteComputeStorageTextureSubresourceCount = 0;
+@@ -12913,6 +12968,7 @@
+ 
+     result->driverData = (SDL_GPURenderer *)renderer;
+     result->shader_formats = SDL_GPU_SHADERFORMAT_SPIRV;
++    SDL_SetBooleanProperty(renderer->props, "bblite.gpu.storage_texture_array", true);
+ 
+     /*
+      * Create initial swapchain array

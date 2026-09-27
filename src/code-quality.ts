@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
     canonicalCompiledBackend,
     compiledBuildDirectory,
@@ -19,6 +19,7 @@ import {
 import { holdDistLock } from "./dist-lock.js";
 import { findRepositoryRoot } from "./repository-root.js";
 import { runConcurrently } from "./run-concurrently.js";
+import { sceneAggregateSources } from "./native-scene-sources.js";
 import { scenes } from "./scene-registry.js";
 import { flagNumber, isMainModule, parseFlags } from "./tooling/flags.js";
 import { runLoggedProcess } from "./tooling/logged-process.js";
@@ -26,12 +27,130 @@ import { writeJsonRecord } from "./tooling/records.js";
 
 interface LintUnit {
     build: string;
+    database: string;
     file: string;
     headerFilter: string;
     scene: string | undefined;
     log: string;
     fixes: string;
     exitCode: number | undefined;
+}
+
+interface CompilationCommand {
+    directory: string;
+    file: string;
+    command?: string;
+    arguments?: string[];
+}
+
+function compilationCommands(database: unknown): CompilationCommand[] {
+    if (!Array.isArray(database))
+        throw new Error("compile_commands.json must contain an array.");
+    const entries: readonly unknown[] = database;
+    return entries.map((entry, index) => {
+        const invalid = (): never => {
+            throw new Error(`Invalid compilation database entry ${index}.`);
+        };
+        if (
+            entry === null ||
+            typeof entry !== "object" ||
+            !("directory" in entry) ||
+            typeof entry.directory !== "string" ||
+            entry.directory === "" ||
+            !("file" in entry) ||
+            typeof entry.file !== "string" ||
+            entry.file === ""
+        )
+            return invalid();
+        const command = "command" in entry ? entry.command : undefined;
+        const args = "arguments" in entry ? entry.arguments : undefined;
+        if (
+            command !== undefined &&
+            (typeof command !== "string" || command === "")
+        )
+            return invalid();
+        if (
+            args !== undefined &&
+            (!Array.isArray(args) ||
+                args.length === 0 ||
+                !args.every(
+                    (argument: unknown) => typeof argument === "string",
+                ))
+        )
+            return invalid();
+        if (command === undefined && args === undefined) return invalid();
+        return {
+            directory: entry.directory,
+            file: entry.file,
+            ...(command === undefined ? {} : { command }),
+            ...(args === undefined ? {} : { arguments: args }),
+        };
+    });
+}
+
+const commandTokens = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
+
+/** Keep the build's flags while compiling each scene implementation independently. */
+export function standaloneSceneCommands(
+    database: unknown,
+    build: string,
+): CompilationCommand[] {
+    const commands: CompilationCommand[] = [];
+    for (const entry of compilationCommands(database)) {
+        const original: CompilationCommand = {
+            ...entry,
+            directory: resolve(build, entry.directory),
+        };
+        commands.push(original);
+        const file = resolve(original.directory, original.file);
+        if (!/^pal_(?:sdl_gpu|dawn)_scene_all\.cpp$/.test(basename(file)))
+            continue;
+        for (const source of sceneAggregateSources(file)) {
+            let matched = false;
+            const replace = (argument: string): string => {
+                if (!sameCachePath(resolve(original.directory, argument), file))
+                    return argument;
+                matched = true;
+                return (
+                    argument.slice(0, -basename(file).length) +
+                    relative(dirname(file), source).split(sep).join("/")
+                );
+            };
+            const requireInput = (): void => {
+                if (!matched)
+                    throw new Error(
+                        `Compilation command does not name its source: ${file}.`,
+                    );
+                matched = false;
+            };
+            let command = original.command;
+            if (command !== undefined) {
+                // Replace only the input token, retaining quoting, output paths and flags.
+                for (const match of [
+                    ...command.matchAll(commandTokens),
+                ].reverse()) {
+                    const argument = match[1] ?? match[2] ?? match[3]!;
+                    const replacement = replace(argument);
+                    if (replacement === argument) continue;
+                    const token = match[0].replace(argument, replacement);
+                    command =
+                        command.slice(0, match.index) +
+                        token +
+                        command.slice(match.index + match[0].length);
+                }
+                requireInput();
+            }
+            const args = original.arguments?.map(replace);
+            if (args !== undefined) requireInput();
+            commands.push({
+                directory: original.directory,
+                file: source,
+                ...(command === undefined ? {} : { command }),
+                ...(args === undefined ? {} : { arguments: args }),
+            });
+        }
+    }
+    return commands;
 }
 
 export function nativeFormatFiles(paths: readonly string[]): string[] {
@@ -51,9 +170,6 @@ export function nativeCompilationFiles(
     ownedFiles: readonly string[],
     generatedRoots: readonly string[] = [],
 ): string[] {
-    if (!Array.isArray(database)) {
-        throw new Error("compile_commands.json must contain an array.");
-    }
     const owned = new Set(
         ownedFiles
             .filter((path) => /^native\/src\/.*\.(?:cpp|m|mm)$/.test(path))
@@ -63,31 +179,7 @@ export function nativeCompilationFiles(
     const generatedPrefixes = generatedRoots.map(
         (directory) => `${pathKey(directory)}${sep}`,
     );
-    const entries: readonly unknown[] = database;
-    for (const [index, entry] of entries.entries()) {
-        if (
-            entry === null ||
-            typeof entry !== "object" ||
-            !("directory" in entry) ||
-            typeof entry.directory !== "string" ||
-            !("file" in entry) ||
-            typeof entry.file !== "string" ||
-            entry.directory === "" ||
-            entry.file === "" ||
-            !(
-                ("command" in entry &&
-                    typeof entry.command === "string" &&
-                    entry.command !== "") ||
-                ("arguments" in entry &&
-                    Array.isArray(entry.arguments) &&
-                    entry.arguments.length > 0 &&
-                    entry.arguments.every(
-                        (argument: unknown) => typeof argument === "string",
-                    ))
-            )
-        ) {
-            throw new Error(`Invalid compilation database entry ${index}.`);
-        }
+    for (const entry of compilationCommands(database)) {
         const file = resolve(buildDirectory, entry.directory, entry.file);
         if (
             owned.has(pathKey(file)) ||
@@ -106,14 +198,10 @@ export function nativeCompilationFiles(
 const ninjaPath = (path: string): string => path.split(sep).join("/");
 
 /** A compilation database entry's arguments, from `arguments` or its quoted `command`. */
-function commandArguments(entry: object): string[] {
-    if ("arguments" in entry && Array.isArray(entry.arguments))
-        return entry.arguments.filter(
-            (argument): argument is string => typeof argument === "string",
-        );
-    if (!("command" in entry) || typeof entry.command !== "string") return [];
-    return [...entry.command.matchAll(/"((?:[^"\\]|\\.)*)"|(\S+)/g)].map(
-        (match) => match[1] ?? match[2]!,
+function commandArguments(entry: CompilationCommand): string[] {
+    if (entry.arguments !== undefined) return entry.arguments;
+    return [...entry.command!.matchAll(commandTokens)].map(
+        (match) => match[1] ?? match[2] ?? match[3]!,
     );
 }
 
@@ -128,17 +216,9 @@ export function precompiledHeaderOutputs(
     database: unknown,
     buildDirectory: string,
 ): { target: string; header: string }[] {
-    if (!Array.isArray(database)) {
-        throw new Error("compile_commands.json must contain an array.");
-    }
     const outputs: { target: string; header: string }[] = [];
-    const entries: readonly unknown[] = database;
-    for (const entry of entries) {
-        if (entry === null || typeof entry !== "object") continue;
-        const directory =
-            "directory" in entry && typeof entry.directory === "string"
-                ? resolve(buildDirectory, entry.directory)
-                : buildDirectory;
+    for (const entry of compilationCommands(database)) {
+        const directory = resolve(buildDirectory, entry.directory);
         const argumentsList = commandArguments(entry);
         const flag = (prefix: string): string | undefined =>
             argumentsList
@@ -243,7 +323,10 @@ function clangTool(command: "clang-format" | "clang-tidy"): string {
             `${command} was not found. Install LLVM ${clangToolsMajor} or set ${override} to its executable.`,
         );
     }
-    const version = execFileSync(tool, ["--version"], { encoding: "utf8" });
+    const version = execFileSync(tool, ["--version"], {
+        encoding: "utf8",
+        windowsHide: true,
+    });
     if (!new RegExp(`\\bversion ${clangToolsMajor}\\.`, "i").test(version)) {
         throw new Error(
             `${command} requires LLVM ${clangToolsMajor} for reproducible checks; set ${override}. Found: ${version.trim()}`,
@@ -267,7 +350,7 @@ function trackedNativeFiles(root: string): string[] {
                 "native/include",
                 "test/fixtures",
             ],
-            { cwd: root, encoding: "utf8" },
+            { cwd: root, encoding: "utf8", windowsHide: true },
         ).split("\0"),
     );
 }
@@ -380,7 +463,13 @@ async function lintCommand(args: readonly string[]): Promise<void> {
               (target) => scenes.find((scene) => scene.id === target) ?? target,
           );
     const includeGenerated = parsed.flags.has("--generated");
-    const batches = targets.map((target) => {
+    const logs = join(
+        root,
+        "artifacts",
+        "code-quality",
+        `${Date.now()}-${process.pid}`,
+    );
+    const batches = targets.map((target, batch) => {
         const directory =
             typeof target === "string"
                 ? target
@@ -428,6 +517,9 @@ async function lintCommand(args: readonly string[]): Promise<void> {
             database,
             cache?.CMAKE_MAKE_PROGRAM,
         );
+        const commands = standaloneSceneCommands(database, build);
+        const lintDatabase = join(logs, String(batch));
+        writeJsonRecord(join(lintDatabase, "compile_commands.json"), commands);
         const nativeCache = resolve(
             cache?.BBLITE_NATIVE_CACHE_DIR ??
                 join(root, "artifacts", "native-cache"),
@@ -435,7 +527,7 @@ async function lintCommand(args: readonly string[]): Promise<void> {
         // Under the object cache the lowered modules compile from
         // content-addressed copies; this tree's database names only its own.
         const sources = nativeCompilationFiles(
-            database,
+            commands,
             build,
             root,
             files,
@@ -468,25 +560,21 @@ async function lintCommand(args: readonly string[]): Promise<void> {
             .join("|")})[/\\\\]`;
         return {
             build,
+            database: lintDatabase,
             sources,
             headerFilter,
             scene: typeof target === "string" ? undefined : target.id,
         };
     });
-    const logs = join(
-        root,
-        "artifacts",
-        "code-quality",
-        `${Date.now()}-${process.pid}`,
-    );
     mkdirSync(logs, { recursive: true });
     const work: LintUnit[] = batches.flatMap(
-        ({ build, sources, headerFilter, scene }, batch) => {
+        ({ build, database, sources, headerFilter, scene }, batch) => {
             console.log(
                 `clang-tidy: ${relative(root, build)} (${sources.length} translation units).`,
             );
             return sources.map((file, index) => ({
                 build,
+                database,
                 file,
                 headerFilter,
                 scene,
@@ -503,7 +591,7 @@ async function lintCommand(args: readonly string[]): Promise<void> {
             ({ build, file }) =>
                 `${relative(root, build)}: ${relative(root, file)}`,
             async (item) => {
-                const { build, file, log, fixes, headerFilter } = item;
+                const { database, file, log, fixes, headerFilter } = item;
                 const code = await runLoggedProcess(
                     tool,
                     [
@@ -512,7 +600,7 @@ async function lintCommand(args: readonly string[]): Promise<void> {
                         `--header-filter=${headerFilter}`,
                         `--export-fixes=${fixes}`,
                         "-p",
-                        build,
+                        database,
                         file,
                     ],
                     log,

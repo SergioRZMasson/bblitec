@@ -508,6 +508,9 @@ export function resolveBundledAsset(
     entryFileName?: string,
     deployment: DeploymentOptions = {},
 ): string {
+    // A prior resolution or directory scan may already have produced a local
+    // absolute path. On POSIX its leading slash also resembles a public URL.
+    if (isAbsolute(source) && existsSync(source)) return source;
     const deployed = deploymentAssetSource(source, deployment);
     if (deployed !== undefined) return deployed;
     if (source === "/brdf-lut.png") {

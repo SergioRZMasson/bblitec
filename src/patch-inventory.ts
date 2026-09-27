@@ -18,7 +18,7 @@ import {
  * or portfile names a patch file itself. `artifactPatchState` asks the CMake
  * owner whether an installed artifact's record is current.
  */
-import { spawnSync } from "node:child_process";
+import { runCaptured } from "./tooling/logged-process.js";
 import {
     existsSync,
     mkdtempSync,
@@ -222,7 +222,7 @@ export function runPatchIdentity(
     const directory = mkdtempSync(join(tmpdir(), "bblite-patch-identity-"));
     const output = join(directory, "output.txt");
     try {
-        const result = spawnSync(
+        runCaptured(
             cmake,
             [
                 `-DBBLITE_PATCH_ACTION=${action}`,
@@ -238,13 +238,8 @@ export function runPatchIdentity(
                 "-P",
                 join(root, "native", "patch-identity.cmake"),
             ],
-            { encoding: "utf8", windowsHide: true },
+            `native/patch-identity.cmake ${action} ${library} failed`,
         );
-        if (result.error) throw result.error;
-        if (result.status !== 0)
-            throw new Error(
-                `native/patch-identity.cmake ${action} ${library} failed: ${result.stderr.trim()}`,
-            );
         // CMake writes text-mode line endings on Windows.
         return readFileSync(output, "utf8").replaceAll("\r\n", "\n");
     } finally {

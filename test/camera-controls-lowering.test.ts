@@ -8,6 +8,7 @@ import { LoweringContext } from "../src/lowering/context.js";
 import { lowerWorldAabbHelpers } from "../src/lowering/world-bounds-lowerer.js";
 import { importPinnedModule } from "../src/pinned-shader-composer.js";
 import { doctoredContext } from "./doctored-store.js";
+import { cameraSources } from "./camera-fixture.js";
 import {
     optionalNativeFixtureTools,
     runNativeFixtureCompiler,
@@ -48,21 +49,6 @@ function canvasStub(events: Map<string, Listener>): Canvas {
         hasAttribute: () => false,
         tabIndex: -1,
     };
-}
-
-/** Writes the lowered camera sources a fixture links against. */
-function cameraSources(directory: string): string[] {
-    const lowerer = new CameraLowerer(new LoweringContext());
-    const headers = join(directory, "include/bblite/upstream");
-    mkdirSync(headers, { recursive: true });
-    const controls = lowerer.lowerControls();
-    writeFileSync(join(headers, "camera_controls.hpp"), controls.header);
-    writeFileSync(join(directory, "controls.cpp"), controls.source);
-    writeFileSync(
-        join(directory, "free.cpp"),
-        lowerer.lowerFreeFactory().source,
-    );
-    return [join(directory, "controls.cpp"), join(directory, "free.cpp")];
 }
 
 function compileAndRun(
@@ -224,7 +210,7 @@ int main() {
         .join("\n    ")}
 }
 `,
-        cameraSources(directory),
+        cameraSources(directory, { free: true }),
     );
     if (!actual) {
         t.skip("Native fixture compiler unavailable.");
@@ -407,7 +393,7 @@ int main() {
     ${native}
 }
 `,
-        cameraSources(directory),
+        cameraSources(directory, { free: true }),
     );
     if (!actual) {
         t.skip("Native fixture compiler unavailable.");

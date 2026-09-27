@@ -261,18 +261,10 @@ public:
         if (capture_run && (color_width != width || color_height != height)) {
             if (color)
                 SDL_ReleaseGPUTexture(device, color);
-            SDL_GPUTextureCreateInfo color_info{};
-            color_info.type = SDL_GPU_TEXTURETYPE_2D;
-            color_info.format = swapchain_format;
-            color_info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-            color_info.width = width;
-            color_info.height = height;
-            color_info.layer_count_or_depth = 1;
-            color_info.num_levels = 1;
-            color_info.sample_count = SDL_GPU_SAMPLECOUNT_1;
-            color = SDL_CreateGPUTexture(device, &color_info);
-            if (!color)
-                gpu_error("SDL_CreateGPUTexture sprite color");
+            color = nullptr;
+            color = create_frame_texture(
+                device, swapchain_format, SDL_GPU_SAMPLECOUNT_1, width, height,
+                SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, 1, true);
             color_width = width;
             color_height = height;
         }

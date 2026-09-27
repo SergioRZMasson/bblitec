@@ -51,14 +51,18 @@ export function compiledBuildDirectory(
         : `${directory}-${backend.toLowerCase()}`;
 }
 
-export type OfflineShaderTarget = "d3d12" | "vulkan" | "metal" | "all";
+export type OfflineShaderTarget =
+    "d3d12" | "vulkan" | "metal" | "all" | "reflection";
 
-/** Dawn consumes WGSL directly; an explicit offline target still requests a sweep. */
-export function needsOfflineShaders(
+/** Dawn compiles WGSL at runtime but reads the same reflected binding sidecars. */
+export function backendShaderTarget(
     backend: CompiledBackend,
+    platform: NodeJS.Platform,
     requestedTarget?: string,
-): boolean {
-    return backend !== "DAWN" || requestedTarget !== undefined;
+): OfflineShaderTarget {
+    return requestedTarget === undefined && backend === "DAWN"
+        ? "reflection"
+        : hostOfflineShaderTarget(platform, requestedTarget);
 }
 
 export function canonicalOfflineShaderTarget(
@@ -69,12 +73,13 @@ export function canonicalOfflineShaderTarget(
         canonical === "d3d12" ||
         canonical === "vulkan" ||
         canonical === "metal" ||
-        canonical === "all"
+        canonical === "all" ||
+        canonical === "reflection"
     ) {
         return canonical;
     }
     throw new Error(
-        `--shader must be d3d12|vulkan|metal|all (got '${value}').`,
+        `--shader must be d3d12|vulkan|metal|all|reflection (got '${value}').`,
     );
 }
 

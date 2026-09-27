@@ -1,11 +1,11 @@
 #pragma once
 #include "pal_sdl_gpu_storage_buffer.hpp"
 #include <bblite/pal_storage_readback.hpp>
-#include <thread>
+#include <bblite/joining_thread.hpp>
 
 namespace bbl::pal {
 struct SdlStorageMapCompletion final : OffscreenCompletion {
-    std::jthread waiter;
+    JoiningThread waiter;
     SdlStorageMapCompletion(SDL_GPUDevice* device, SDL_GPUFence* fence,
                             std::function<void(std::exception_ptr)> complete)
         : waiter([device, fence, complete = std::move(complete)] {

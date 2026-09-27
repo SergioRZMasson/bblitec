@@ -1730,7 +1730,7 @@ void create_msaa_color(GpuState& state, SDL_GPUTextureFormat format, std::uint32
                        std::uint32_t height);
 
 void create_color(GpuState& state, SDL_GPUTextureFormat format, std::uint32_t width,
-                  std::uint32_t height);
+                  std::uint32_t height, bool canvas);
 
 #if BBLITE_RENDERER_TRANSMISSION
 /** The image-processing resolve's target: the transmission frame's output. */
@@ -1866,7 +1866,7 @@ prepare_post_process_pass(GpuState& state, Engine& engine, TaskHandle handle,
     if (presents && !state.post_process_present) {
         state.post_process_present = create_frame_texture(
             state.device, swapchain_format, SDL_GPU_SAMPLECOUNT_1, width, height,
-            SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER);
+            SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, 1, true);
     }
     if (gpu.program == npos) {
         // A pass writes into its own output, whose format the frame graph

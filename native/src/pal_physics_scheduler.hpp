@@ -1,6 +1,7 @@
 #pragma once
 
 #include <LinearMath/btThreads.h>
+#include <bblite/joining_thread.hpp>
 #include <algorithm>
 #include <atomic>
 #include <charconv>
@@ -40,7 +41,7 @@ class PhysicsWorkerPool final : public btITaskScheduler {
     bool initialized_ = false;
     const std::thread::id owner_ = std::this_thread::get_id();
     std::vector<btScalar> sums_;
-    std::vector<std::jthread> workers_;
+    std::vector<JoiningThread> workers_;
 
     static void spin_pause() {
 #if defined(_M_X64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
@@ -109,7 +110,7 @@ public:
             throw std::logic_error("Physics workers require one valid initialization.");
         initialized_ = true;
         for (int index = 1; index < count; ++index)
-            workers_.emplace_back([this](std::stop_token stop) {
+            workers_.emplace_back([this](StopToken stop) {
                 std::uint64_t observed = 0;
                 for (;;) {
                     // Keep short solver phases off the OS parking path, then sleep.
@@ -173,14 +174,14 @@ class PhysicsScheduler {
     std::deque<std::packaged_task<void()>> jobs_;
     int thread_count_ = 1;
     std::exception_ptr initialization_error_;
-    std::jthread owner_;
+    JoiningThread owner_;
 
 public:
     PhysicsScheduler() {
         std::promise<void> initialized;
         auto ready = initialized.get_future();
-        owner_ = std::jthread([this,
-                               initialized = std::move(initialized)](std::stop_token stop) mutable {
+        owner_ = JoiningThread([this,
+                                initialized = std::move(initialized)](StopToken stop) mutable {
             std::unique_ptr<PhysicsWorkerPool> scheduler;
             try {
                 scheduler = std::make_unique<PhysicsWorkerPool>();
@@ -222,7 +223,10 @@ public:
     }
 
     ~PhysicsScheduler() {
-        owner_.request_stop();
+        {
+            std::lock_guard lock(mutex_);
+            owner_.request_stop();
+        }
         changed_.notify_one();
     }
 

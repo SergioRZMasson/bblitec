@@ -1,13 +1,23 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+    copyFileSync,
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 import { PNG } from "pngjs";
 import {
     iosCaptureEnvironment,
+    iosRenderedFrames,
+    iosLaunchPid,
     selectIosSimulator,
     verifyIosNativeExit,
+    verifyIosFrameProgress,
 } from "../dist/src/ios-simulator.js";
 import { resolveScene } from "../dist/src/scene-registry.js";
 import {
@@ -19,6 +29,7 @@ import {
     writeJsonRecord,
 } from "../dist/src/tooling/records.js";
 import { parseBackendName } from "../dist/src/tooling/backends.js";
+import { expandTape } from "../dist/src/tooling/check-spec.js";
 
 /** @import { IosSimulator } from "../dist/src/ios-simulator.js" */
 
@@ -27,11 +38,16 @@ const { values } = parseArgs({
         scene: { type: "string" },
         device: { type: "string" },
         bundle: { type: "string" },
+        "build-directory": { type: "string" },
         output: { type: "string" },
         app: { type: "string", default: "org.bblite.prototype" },
         backend: { type: "string", default: "dawn" },
         frame: { type: "string" },
+        "max-frames": { type: "string" },
+        "runtime-trace": { type: "boolean", default: false },
         replay: { type: "string" },
+        lifecycle: { type: "boolean", default: false },
+        "render-state": { type: "boolean", default: false },
         "canvas-only": { type: "boolean", default: false },
     },
 });
@@ -50,6 +66,8 @@ if (
 ) {
     throw new Error("--frame must be an integer in [0, 1000000].");
 }
+if (values.lifecycle && (frame === undefined || frame < 60))
+    throw new Error("--lifecycle requires an explicit --frame of at least 60.");
 if (
     values.replay !== undefined &&
     (frame === undefined || !values.replay.trim())
@@ -80,6 +98,94 @@ function simctl(args, environment = process.env, timeout = 30000) {
         );
     return result.stdout.trim();
 }
+
+/**
+ * @param {string[]} args
+ * @param {NodeJS.ProcessEnv} environment
+ * @param {string} device
+ * @param {string} applicationId
+ * @param {string} screenshot
+ */
+async function lifecycleLaunch(
+    args,
+    environment,
+    device,
+    applicationId,
+    screenshot,
+) {
+    log += `$ xcrun simctl ${args.join(" ")}\n`;
+    const child = spawn("xcrun", ["simctl", ...args], {
+        env: environment,
+        timeout: 120000,
+    });
+    let output = "";
+    let finished = false;
+    /** @type {Error | undefined} */
+    let spawnError;
+    for (const stream of [child.stdout, child.stderr]) {
+        stream.setEncoding("utf8");
+        stream.on("data", (chunk) => {
+            output += String(chunk);
+            log += String(chunk);
+        });
+    }
+    child.on("error", (error) => {
+        spawnError = error;
+    });
+    const completion = new Promise((resolve) => {
+        child.on("close", (status, signal) => {
+            finished = true;
+            resolve({ status, signal });
+        });
+    });
+    try {
+        const deadline = Date.now() + 30000;
+        while (Object.keys(iosRenderedFrames(output)).length === 0) {
+            if (spawnError) throw spawnError;
+            if (finished || Date.now() > deadline)
+                throw new Error(
+                    "The app did not render before the lifecycle transition.",
+                );
+            await delay(25);
+        }
+        const pid = iosLaunchPid(
+            simctl(["launch", device, applicationId]),
+            applicationId,
+        );
+        const framesBeforeBackground = iosRenderedFrames(output);
+        simctl(["launch", device, "com.apple.Preferences"]);
+        await delay(500);
+        if (finished || existsSync(screenshot))
+            throw new Error(
+                "The capture finished before foregrounding; increase --frame.",
+            );
+        const resumeLogStart = output.length;
+        const resumedPid = iosLaunchPid(
+            simctl(["launch", device, applicationId]),
+            applicationId,
+        );
+        if (resumedPid !== pid)
+            throw new Error(
+                `The app restarted instead of resuming (${pid} -> ${resumedPid}).`,
+            );
+        const result = await completion;
+        if (spawnError) throw spawnError;
+        if (result.status !== 0)
+            throw new Error(
+                `Simulator lifecycle launch failed (${result.status ?? result.signal}); inspect simulator.log.`,
+            );
+        const framesAfterResume = iosRenderedFrames(
+            output.slice(resumeLogStart),
+        );
+        verifyIosFrameProgress(framesBeforeBackground, framesAfterResume);
+        return { pid, resumedPid, framesBeforeBackground, framesAfterResume };
+    } finally {
+        if (!finished) {
+            child.kill();
+            await completion;
+        }
+    }
+}
 /**
  * @type {{
  *     platform: string,
@@ -93,6 +199,7 @@ function simctl(args, environment = process.env, timeout = 30000) {
  *     environment?: Record<string, string>,
  *     width?: number,
  *     height?: number,
+ *     lifecycle?: { pid: number, resumedPid: number, framesBeforeBackground: Record<string, number>, framesAfterResume: Record<string, number> },
  *     error?: string,
  * }}
  */
@@ -109,8 +216,22 @@ const receipt = {
 let launchedDevice;
 try {
     const scene = resolveScene(values.scene);
+    const captureEnvironment = iosCaptureEnvironment(scene, backend, {
+        ...(frame === undefined ? {} : { frame }),
+        ...(values["max-frames"] === undefined
+            ? {}
+            : { maxFrames: Number(values["max-frames"]) }),
+        canvasOnly: values["canvas-only"],
+        runtimeTrace: values["runtime-trace"],
+        ...(values.replay === undefined
+            ? {}
+            : {
+                  tape: expandTape(values.replay.split(",")),
+                  testPass: false,
+              }),
+    });
     const executable = join(receipt.bundle, "bblite_native");
-    verifyDeployedPayload(executable, scene.output);
+    verifyDeployedPayload(executable, scene.output, values["build-directory"]);
     const device = selectIosSimulator(
         simctl(["list", "devices", "available", "--json"]),
         values.device,
@@ -126,17 +247,18 @@ try {
     ]);
     const screenshot = join(container, "Documents", `${receipt.runId}.png`);
     const stamp = join(container, "Documents", `${receipt.runId}.stamp`);
+    const renderState = join(container, "Documents", `${receipt.runId}.json`);
     const environment = {
-        ...iosCaptureEnvironment(scene, backend, {
-            ...(frame === undefined ? {} : { frame }),
-            canvasOnly: values["canvas-only"],
-            ...(values.replay === undefined
-                ? {}
-                : { tape: values.replay.split(","), testPass: false }),
-        }),
+        ...captureEnvironment,
         BBLITE_RUN_ID: receipt.runId,
         BBLITE_SCREENSHOT: screenshot,
         BBLITE_BUILD_STAMP_OUT: stamp,
+        ...(values.lifecycle
+            ? { BBLITE_MEM_PROFILE: "1", BBLITE_TEST_PASS: "0" }
+            : {}),
+        ...(values["render-state"]
+            ? { BBLITE_RENDER_CAPTURE: renderState }
+            : {}),
         SDL_ASSERT: "abort",
     };
     receipt.environment = environment;
@@ -149,23 +271,30 @@ try {
         launchEnvironment[`SIMCTL_CHILD_${key}`] = value;
     const start = log.length;
     launchedDevice = device.udid;
-    simctl(
-        [
-            "launch",
-            "--console",
-            "--terminate-running-process",
+    const launchArguments = [
+        "launch",
+        "--console",
+        "--terminate-running-process",
+        device.udid,
+        values.app,
+    ];
+    if (values.lifecycle)
+        receipt.lifecycle = await lifecycleLaunch(
+            launchArguments,
+            launchEnvironment,
             device.udid,
             values.app,
-        ],
-        launchEnvironment,
-        120000,
-    );
+            screenshot,
+        );
+    else simctl(launchArguments, launchEnvironment, 120000);
     launchedDevice = undefined;
     verifyIosNativeExit(log.slice(start), receipt.runId);
     verifyBuildIdentity(executable, scene.output, stamp);
     const png = PNG.sync.read(readFileSync(screenshot));
     copyFileSync(screenshot, join(output, "capture.png"));
     copyFileSync(stamp, join(output, "build-stamp.txt"));
+    if (values["render-state"])
+        copyFileSync(renderState, join(output, "render.json"));
     Object.assign(receipt, {
         passed: true,
         width: png.width,

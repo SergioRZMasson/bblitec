@@ -507,6 +507,21 @@ test("spells the measured pose once: the native seek derives from referenceTimeS
     assert.ok(derived >= 20, `only ${derived} scenes derive a seek.`);
 });
 
+test("fixed browser poses use engine frames independently of Window repaint cadence", () => {
+    for (const scene of scenes) {
+        const parity = scene.parity;
+        if (parity?.referenceFrame === undefined) continue;
+        const expected = String(
+            parity.referenceFrame + (parity.nativeFrameOffset ?? 0),
+        );
+        assert.equal(
+            parity.nativeEnvironment?.BBLITE_CAPTURE_ENGINE_FRAME,
+            expected,
+            scene.id,
+        );
+    }
+});
+
 test("registered reference queries belong to measurement environments", () => {
     for (const scene of scenes) {
         const query = scene.parity?.referenceSearch;

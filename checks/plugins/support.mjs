@@ -65,6 +65,17 @@ export function observedStep(observations, id) {
 }
 
 /**
+ * The source state of a captured step or frame; the plugin owns its record shape.
+ * @param {ObservedStep | ObservedFrame} record
+ */
+export function observedState(record) {
+    const label =
+        "id" in record ? `step '${record.id}'` : `frame ${record.frame}`;
+    assert(record.state, `the observed ${label} recorded no state`);
+    return record.state;
+}
+
+/**
  * The absolute path of an observation image (recorded relative to the browser directory).
  * @param {PluginContext} context
  * @param {string | undefined} name

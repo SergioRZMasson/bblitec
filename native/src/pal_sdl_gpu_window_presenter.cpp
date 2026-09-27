@@ -17,6 +17,7 @@ public:
             gpu_error("SDL_CreateGPUDevice Window");
         if (!SDL_SetGPUAllowedFramesInFlight(device_.get(), 3))
             gpu_error("SDL_SetGPUAllowedFramesInFlight Window");
+        configure_sdl_canvas_window(device_.get(), window_);
         if (!SDL_ClaimWindowForGPUDevice(device_.get(), window_))
             gpu_error("SDL_ClaimWindowForGPUDevice Window");
     }

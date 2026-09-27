@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { CameraLowerer } from "../src/lowering/camera-lowerer.js";
+import { cameraSources } from "./camera-fixture.js";
 import { LoweringContext } from "../src/lowering/context.js";
 import { SceneLowerer } from "../src/lowering/scene-lowerer.js";
 import { compileSource } from "../src/compiler.js";
@@ -73,13 +73,7 @@ test(
     { skip: !cameraTools },
     () => {
         const output = resolve("artifacts/camera-scene-delta");
-        const headers = join(output, "include/bblite/upstream");
-        mkdirSync(headers, { recursive: true });
-        const controls = new CameraLowerer(
-            new LoweringContext(),
-        ).lowerControls();
-        writeFileSync(join(headers, "camera_controls.hpp"), controls.header);
-        writeFileSync(join(output, "controls.cpp"), controls.source);
+        const sources = cameraSources(output);
         const scene = new SceneLowerer(new LoweringContext()).lowerCore()
             .source;
         writeFileSync(
@@ -108,7 +102,7 @@ test(
             "/I",
             join(nativeFixtureVcpkgRoot, "include"),
             "test/fixtures/camera-scene-delta-check.cpp",
-            join(output, "controls.cpp"),
+            ...sources,
         ]);
         assert.match(
             execFileSync(executable, [], { encoding: "utf8" }),
