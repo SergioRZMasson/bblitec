@@ -1,0 +1,120 @@
+{
+  "angles": [
+    "reuse",
+    "simplification",
+    "efficiency",
+    "altitude"
+  ],
+  "findings": [
+    {
+      "summary": "Audio and physics optional calls reuse DataLowerer.optionalAccess while retaining their existing result admissions.",
+      "applied": true
+    },
+    {
+      "summary": "Mesh factory, resize and attribute arguments use typed BindingScopes snapshots, including explicit optional sink conversions.",
+      "applied": true
+    },
+    {
+      "summary": "Self-contained scene-node runtime tests reuse runGeneratedProgram; specialized compile-only and linked fixtures retain their requirements.",
+      "applied": true
+    },
+    {
+      "summary": "Node-input setter discovery uses LoweringContext.findNodes.",
+      "applied": true
+    },
+    {
+      "summary": "Mesh range validation uses the shared JavaScript number_is_integer predicate.",
+      "applied": true
+    },
+    {
+      "summary": "Property-animation evaluator lookup uses the shared objectInitializer and propertyInitializer helpers.",
+      "applied": true
+    },
+    {
+      "summary": "Native physics-body projection reuses physics_body_world for owner resolution and retention.",
+      "applied": true
+    },
+    {
+      "summary": "Mutable struct and optional record fields share typed cell materialization without conflating data containers and optional handles.",
+      "applied": true
+    },
+    {
+      "summary": "Stylesheet and host UI rules share an ordered trailing-argument renderer with unchanged defaults.",
+      "applied": true
+    },
+    {
+      "summary": "Closed and retained billboard options share one discriminated descriptor table, including widths, precision and update permissions.",
+      "applied": true
+    },
+    {
+      "summary": "Font-face resolution uses one terminal-result cache and receives complete quoted CSS family lists through the shared native font provider.",
+      "applied": true
+    },
+    {
+      "summary": "Physics native arguments share one typed snapshot tail after their distinct sink conversions.",
+      "applied": true
+    },
+    {
+      "summary": "Vertex-count lowering selects its absence representation once rather than overwriting an initial binding.",
+      "applied": true
+    },
+    {
+      "summary": "Frame post-submit lowering has one dispatch declaration path; the unreachable generic fallback entry is removed.",
+      "applied": true
+    },
+    {
+      "summary": "Audio handler and listener removal share unobserved-completion cleanup.",
+      "applied": true
+    },
+    {
+      "summary": "Geometry getters, raw CPU accessors, physics mesh and heightfield extraction, and gizmo bounds share typed borrowed CPU-stream views. Getters copy only returned streams once and preserve optional presence, independent ownership and index-space distinctions.",
+      "applied": true
+    },
+    {
+      "summary": "SDL interleaved mesh draws retain their pipeline cache until another draw writer or stage invalidates it.",
+      "applied": true
+    },
+    {
+      "summary": "Property-animation bucket probes request non-owning identities without allocating callbacks; stored bucket identities retain traced owners.",
+      "applied": true
+    },
+    {
+      "summary": "Dawn transmission draws use the shared span-backed BorrowedDrawList instead of allocating singleton command vectors.",
+      "applied": true
+    },
+    {
+      "summary": "HUD pixel checks decode the browser image once and each native image once, then examine both labels.",
+      "applied": true
+    },
+    {
+      "summary": "Native canvas tabIndex uses the shared numeric constant constructor.",
+      "applied": true
+    },
+    {
+      "summary": "Direct-only callback binding analysis caches both outcomes by checker, scope and declaration identifier.",
+      "applied": true
+    },
+    {
+      "summary": "Conditional asset selection reuses projectAssetContainer in typed resource lowering for checked singleton-clone projection.",
+      "applied": true
+    },
+    {
+      "summary": "Promise.all and statically expanded collection callbacks carry ordered input provenance into asynchronous activation instead of matching callback parent syntax.",
+      "applied": true
+    },
+    {
+      "summary": "Audio event delivery retains the listener directly in the dispatched closure without an intermediate callback copy.",
+      "applied": true
+    },
+    {
+      "summary": "Audio session destruction and finalization reuse the nonthrowing teardown reporting boundary.",
+      "applied": true
+    },
+    {
+      "summary": "Move mixed mesh/billboard ordering completely into a generated draw plan.",
+      "applied": false,
+      "blockedBy": "The separate native lists do not retain source deferred-build completion order or prior stable mixed binding order. A unified plan needs those inputs and ordering-neutrality coverage before it can replace the current equal-depth/order and camera-less refusals without inventing behavior.",
+      "filedIn": "TODO.md"
+    }
+  ]
+}
