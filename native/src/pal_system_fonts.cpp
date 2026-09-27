@@ -146,6 +146,7 @@ std::optional<SystemFontFace> android_font_face(const AFont* font, int weight) {
     if (!face->family_name)
         return std::nullopt;
     int index = static_cast<int>(collection_index);
+    std::optional<int> named_weight;
     // RmlUi accepts FreeType's face index, including a variable font's named
     // instance in its high bits. Preserve the requested weight when available.
     FT_MM_Var* variations = nullptr;
@@ -161,12 +162,13 @@ std::optional<SystemFontFace> android_font_face(const AFont* font, int weight) {
                 if (difference < distance) {
                     distance = difference;
                     index = static_cast<int>(collection_index | ((style + 1) << 16));
+                    named_weight = candidate;
                 }
             }
         }
         FT_Done_MM_Var(library, variations);
     }
-    return SystemFontFace{path, face->family_name, index};
+    return SystemFontFace{path, face->family_name, index, named_weight};
 }
 
 std::optional<SystemFontFace> find_platform_font(std::string_view family, int weight, bool italic) {

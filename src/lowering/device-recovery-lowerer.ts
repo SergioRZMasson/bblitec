@@ -21,13 +21,14 @@ import { stringLiteral } from "../cpp-literals.js";
  *  - The rebuild. `runDeviceLostRecovery` is the PAL recreating its device
  *    and replaying the generated uploads over retained CPU owners; it settles
  *    through `complete_device_recovery` or `fail_device_recovery`.
- *  - Capture. The scene strategy's `_enable`/`_disable` retain the pin's
- *    capture caches; native scene and texture owners retain their upload
- *    inputs unconditionally, so neither hook exists here.
+ *  - Capture. Native texture owners retain their upload inputs. Data-mesh
+ *    capture derives the scene strategy's active count from registrations
+ *    and retains the pin's optional CPU aliases at factory time.
  */
 import ts from "typescript";
 import type { LoweredSource, LoweringContext } from "./context.js";
 import { assertDeviceRecoveryContracts } from "./device-recovery-contract.js";
+import { lowerRetainedMeshRecovery } from "./mesh-recovery.js";
 import {
     lowerPinnedFunctionParts,
     type PinnedFunctionParameter,
@@ -119,9 +120,9 @@ const listMethods: NonNullable<PinnedNumericScope["methods"]> = new Map([
 /**
  * `if (!registrations.some((current) => current._kind === registration._kind))
  * registration._enable?.(engine)` (or `_disable`): the capture hook the first
- * registration of a kind retains and the last releases. Native owners retain
- * their sources unconditionally, so the scene strategy has neither hook and
- * the statement is none.
+ * registration of a kind retains and the last releases. Native texture owners
+ * retain their sources, and mesh capture reads the registrations directly,
+ * so the scene strategy needs no separate counter hook.
  */
 function captureHook(
     statement: ts.Statement,
@@ -839,6 +840,8 @@ export function lowerDeviceRecovery(context: LoweringContext): LoweredSource {
 #include <bblite/runtime.hpp>
 #include <bblite/pal.hpp>
 #include <bblite/js_data.hpp>
+#include <bblite/mesh_cpu_streams.hpp>
+#include <bblite/mesh_vertex_packing.hpp>
 #include <algorithm>
 #include <iostream>
 #include <ranges>
@@ -861,6 +864,8 @@ ${sceneRecoveryCpp(context)}
 ${forcedLossCpp(context)}
 
 ${contextKindAssertionCpp(context)}
+
+${lowerRetainedMeshRecovery(context)}
 
 void force_device_loss(Engine& engine) {
     // A disposed engine rebuilds nothing, and one recovery at a time runs
@@ -887,6 +892,7 @@ void begin_device_recovery(Engine& engine) {
     assert_every_active_context_kind_is_recoverable(engine, state.in_flight);
     state.environments.clear(); state.shadows.clear(); state.renderable_counts.clear(); state.fallback = {};
     ++engine.device_generation;
+    recover_retained_meshes(engine);
     engine.stopped = !was_running;
 }
 void complete_device_recovery(Engine& engine) {

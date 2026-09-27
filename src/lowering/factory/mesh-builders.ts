@@ -498,6 +498,7 @@ MeshHandle create_polyhedron(Engine& engine, PolyhedronOptions options) {
 ${usesJsData ? "#include <bblite/js_data.hpp>\n" : ""}\
 #include <bblite/runtime.hpp>
 #include <bblite/pal_mesh_attributes.hpp>
+#include <bblite/mesh_vertex_packing.hpp>
 ${
     heightMapGround
         ? `\
@@ -2390,40 +2391,7 @@ ${computeAabb}
     const std::size_t vertex_count = positions.size() / 3;
     ModelGeometry geometry;
     geometry.owned_packed_geometry = true;
-    geometry.vertices.resize(vertex_count);
-    for (std::size_t index = 0; index < vertex_count; ++index) {
-        ModelVertex& vertex = geometry.vertices[index];
-        vertex.position = Vec3{
-            positions[index * 3],
-            positions[index * 3 + 1],
-            positions[index * 3 + 2]};
-        if (normals.size() >= index * 3 + 3) {
-            vertex.normal = Vec3{
-                normals[index * 3],
-                normals[index * 3 + 1],
-                normals[index * 3 + 2]};
-        }
-        if (uvs.size() >= index * 2 + 2) {
-            vertex.uv = Vec2{uvs[index * 2], uvs[index * 2 + 1]};
-        }
-        if (uvs2.size() >= index * 2 + 2) {
-            vertex.uv2 = Vec2{uvs2[index * 2], uvs2[index * 2 + 1]};
-        }
-        if (tangents.size() >= index * 4 + 4) {
-            vertex.tangent = Vec4{
-                tangents[index * 4],
-                tangents[index * 4 + 1],
-                tangents[index * 4 + 2],
-                tangents[index * 4 + 3]};
-        }
-        if (colors.size() >= index * 4 + 4) {
-            vertex.color = Vec4{
-                colors[index * 4],
-                colors[index * 4 + 1],
-                colors[index * 4 + 2],
-                colors[index * 4 + 3]};
-        }
-    }
+    geometry.vertices = pal::pack_mesh_vertices(positions, normals, uvs, uvs2, tangents, colors);
     geometry.indices = indices;
     geometry.has_tangents = !tangents.empty();
     geometry.cpu_uv2s = !uvs2.empty();

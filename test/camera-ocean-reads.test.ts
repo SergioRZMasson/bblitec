@@ -7,7 +7,7 @@ import { compileSource } from "../src/compiler.js";
 import { CameraLowerer } from "../src/lowering/camera-lowerer.js";
 import { LoweringContext } from "../src/lowering/context.js";
 import { RendererLowerer } from "../src/lowering/renderer-lowerer.js";
-import { pinnedMatrixHeader } from "../src/lowering/pinned-matrix.js";
+import { cameraSources } from "./camera-fixture.js";
 import { importPinnedModule } from "../src/pinned-shader-composer.js";
 import { doctoredContext } from "./doctored-store.js";
 import {
@@ -97,25 +97,8 @@ ${second.map((value, index) => `if(second[${index}]!==${value}||camera.worldMatr
         t.skip("Native compiler unavailable.");
         return;
     }
-    const directory = resolve("artifacts/camera-ocean-reads"),
-        headers = join(directory, "bblite/upstream");
-    mkdirSync(headers, { recursive: true });
-    const context = new LoweringContext(),
-        lowerer = new CameraLowerer(context);
-    const arc = lowerer.lowerArcRotateFactory(),
-        controls = lowerer.lowerControls();
-    writeFileSync(join(headers, "camera_math.hpp"), arc.header);
-    writeFileSync(join(headers, "camera_controls.hpp"), controls.header);
-    writeFileSync(
-        join(headers, "pinned_matrix.hpp"),
-        pinnedMatrixHeader(context),
-    );
-    writeFileSync(join(directory, "arc.cpp"), arc.source);
-    writeFileSync(join(directory, "controls.cpp"), controls.source);
-    writeFileSync(
-        join(directory, "free.cpp"),
-        lowerer.lowerFreeFactory().source,
-    );
+    const directory = resolve("artifacts/camera-ocean-reads");
+    const sources = cameraSources(directory, { arcRotate: true, free: true });
     writeFileSync(join(directory, "program.hpp"), result.cpp);
     writeFileSync(
         join(directory, "check.cpp"),
@@ -135,12 +118,11 @@ int main(){return generated_main();}`,
         "/EHsc",
         "/MD",
         `/I${resolve("native/include")}`,
-        `/I${directory}`,
+        `/I${join(directory, "include")}`,
         `/Fo${directory}/`,
         `/Fe${exe}`,
-        ...["check", "arc", "free", "controls"].map((name) =>
-            join(directory, `${name}.cpp`),
-        ),
+        join(directory, "check.cpp"),
+        ...sources,
     ]);
     assert.equal(execFileSync(exe, { encoding: "utf8", timeout: 10000 }), "");
     assert.throws(

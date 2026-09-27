@@ -26,11 +26,12 @@
 import { relative, resolve, sep } from "node:path";
 import { createSuiteSceneServer } from "./capture-suite-reference.js";
 import { parseDataUrl } from "./data-url.js";
+import { canvasBakeBrowserArgs, runPageGlobal } from "./browser-harness.js";
+import { executedModuleScript } from "./executed-module-script.js";
 import {
-    canvasBakeBrowserArgs,
-    pageBase64Script,
-    runPageGlobal,
-} from "./browser-harness.js";
+    bundledSpriteAtlas,
+    type SpriteAtlasProvenance,
+} from "./sprite-atlas-bundle.js";
 import {
     cachedBake,
     moduleClosureBytes,
@@ -152,23 +153,8 @@ async function evaluateModuleExportInChromium(
     source: ExecutedModuleSource,
     relativePath: string,
 ): Promise<string> {
-    const specifier = `/${relativePath.replace(/\.ts$/, ".js")}`;
     const server = createSuiteSceneServer(
-        `${pageBase64Script}
-window.__runModuleExport = () =>
-            import(${JSON.stringify(specifier)}).then((module) => {
-                    const factory = module[${JSON.stringify(source.exportName)}];
-                    if (typeof factory !== "function") {
-                        throw new Error(
-                            "Module export ${source.exportName} is not a function."
-                        );
-                    }
-                    const value = factory();
-                    if (!ArrayBuffer.isView(value)) return value;
-                    return bblBase64(new Uint8Array(
-                        value.buffer, value.byteOffset, value.byteLength));
-                });
-`,
+        executedModuleScript(relativePath, source.exportName),
     );
     const result: unknown = await runPageGlobal(server, "__runModuleExport", {
         serverName: `${relativePath} server`,
@@ -191,7 +177,11 @@ window.__runModuleExport = () =>
  */
 export async function drawSpriteAtlasPng(
     source: ExecutedModuleSource,
-): Promise<Uint8Array> {
+): Promise<{ bytes: Uint8Array; provenance?: SpriteAtlasProvenance }> {
+    // Validation precedes the cache: a warm entry must never mask a stale,
+    // missing or edited bundle. Other browser bake families keep their host.
+    const bundled = bundledSpriteAtlas(source.modulePath, source.exportName);
+    if (bundled) return bundled;
     const dataUrl = await evaluateModuleExport(source);
     const payload = parseDataUrl(dataUrl);
     if (!payload || payload.mediaType !== "image/png") {
@@ -199,7 +189,7 @@ export async function drawSpriteAtlasPng(
             "A drawn sprite atlas must return a base64 image/png data URL.",
         );
     }
-    return payload.bytes;
+    return { bytes: payload.bytes };
 }
 
 /**

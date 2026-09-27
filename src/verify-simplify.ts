@@ -60,6 +60,7 @@ function gitText(root: string, ...args: string[]): string {
     return execFileSync("git", args, {
         cwd: root,
         encoding: "utf8",
+        windowsHide: true,
         maxBuffer: 1024 * 1024 * 1024,
     });
 }

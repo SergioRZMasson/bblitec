@@ -25,6 +25,7 @@
 #include "pal_gpu_materials.hpp"
 #include "pal_gpu_shadows.hpp"
 #include "pal_gpu_scene_blocks.hpp"
+#include "pal_gpu_velocity.hpp"
 #include "pal_gpu_picking.hpp"
 #include "pal_gpu_targets.hpp"
 #include "pal_gpu_pipeline.hpp"
@@ -458,39 +459,6 @@ BillboardDrawPlan billboard_draw_plan(const BillboardSystemRecord& system) {
     return plan;
 }
 
-bool billboard_needs_upload(const BillboardSystemRecord& system, const BillboardUploadStamp& stamp,
-                            const std::array<float, 16>& view, [[maybe_unused]] Vec3d fo_offset) {
-    if (system.count == 0)
-        return false;
-    if (!stamp.uploaded || stamp.count != system.count ||
-        stamp.instance_version != system.instance_version) {
-        return true;
-    }
-#if BBLITE_FLOATING_ORIGIN
-    // The anchors are uploaded eye-relative, so the offset is an input to
-    // the bytes -- a cutout system, which otherwise uploads once per count
-    // and never again, would hold the offset it first saw. The pin folds
-    // the camera's own version into the same stamp for the same reason
-    // (`lightFoVersion`, `wrapRenderableForFO`).
-    if (stamp.fo_offset.x != fo_offset.x || stamp.fo_offset.y != fo_offset.y ||
-        stamp.fo_offset.z != fo_offset.z) {
-        return true;
-    }
-#endif
-    const bool cutout = system.depth_mode == BillboardDepthMode::cutout;
-    return !(cutout || stamp.view == view);
-}
-
-void stamp_billboard_upload(BillboardUploadStamp& stamp, const BillboardSystemRecord& system,
-                            const std::array<float, 16>& view, [[maybe_unused]] Vec3d fo_offset) {
-    stamp.view = view;
-    stamp.count = system.count;
-    stamp.instance_version = system.instance_version;
-    stamp.uploaded = true;
-#if BBLITE_FLOATING_ORIGIN
-    stamp.fo_offset = fo_offset;
-#endif
-}
 #endif
 
 // ---------------------------------------------------------------------------
@@ -1488,36 +1456,6 @@ ShadowCasterMatrices shadow_caster_matrices(const Engine& engine, const FrameTas
 // ---------------------------------------------------------------------------
 // Scene blocks (pal_gpu_scene_blocks.hpp)
 
-void begin_pinned_velocity_frame(PinnedVelocityHistory& history, const Scene& scene) {
-    if (history.frame == 0 || history.topology_version != scene.render_topology_version) {
-        history.renderables.clear();
-        history.topology_version = scene.render_topology_version;
-    }
-    ++history.frame;
-}
-
-const PinnedVelocityHistory::Renderable&
-update_pinned_velocity(PinnedVelocityHistory& history, MeshHandle mesh,
-                       const std::array<float, 16>& world) {
-    if (history.renderables.size() <= mesh.value) {
-        history.renderables.resize(static_cast<std::size_t>(mesh.value) + 1u);
-    }
-    PinnedVelocityHistory::Renderable& renderable = history.renderables[mesh.value];
-    if (!(renderable.mesh == mesh)) {
-        renderable = {};
-        renderable.mesh = mesh;
-        renderable.previous_world = world;
-    }
-    if (renderable.updated_frame != history.frame) {
-        renderable.written_previous_world = renderable.previous_world;
-        renderable.written_velocity_enabled = renderable.velocity_ready ? 1.0f : 0.0f;
-        renderable.previous_world = world;
-        renderable.velocity_ready = true;
-        renderable.updated_frame = history.frame;
-    }
-    return renderable;
-}
-
 #if (BBLITE_PINNED_MATERIALS || BBLITE_HAS_BILLBOARDS)
 upstream::SceneUniforms pinned_scene_block(const Scene& scene, const Engine& engine,
                                            const CameraRecord& camera,
@@ -1665,47 +1603,6 @@ upstream::MeshUniforms pinned_mesh_block(const Scene& scene, const Engine& engin
     return block;
 }
 
-void update_pinned_velocity_frame(PinnedVelocityHistory& history, const Scene& scene,
-                                  const Engine& engine,
-                                  const std::vector<upstream::RenderItem>& items) {
-    if constexpr (!PinnedVelocityBlock<upstream::MeshUniforms>) {
-        return;
-    }
-    begin_pinned_velocity_frame(history, scene);
-    for (const upstream::RenderItem& source : items) {
-        const upstream::RenderItem item =
-            upstream::bind_render_item(source, engine, source.material);
-        if (item.material_kind != upstream::RenderMaterialKind::standard) {
-            continue;
-        }
-        if (item.mesh.value < history.renderables.size()) {
-            const auto& renderable = history.renderables[item.mesh.value];
-            if (renderable.mesh == item.mesh && renderable.updated_frame == history.frame)
-                continue;
-        }
-        update_pinned_velocity(
-            history, item.mesh,
-            mesh_block_world(scene, engine, handle_at(engine.meshes, item.mesh)));
-    }
-}
-
-void write_pinned_velocity_tail(const PinnedVelocityHistory& history, MeshHandle mesh,
-                                upstream::MeshUniforms& block) {
-    [&]<typename Block>(Block& dependent) {
-        if constexpr (PinnedVelocityBlock<Block>) {
-            if (mesh.value >= history.renderables.size() ||
-                !(history.renderables[mesh.value].mesh == mesh) ||
-                history.renderables[mesh.value].updated_frame != history.frame) {
-                throw std::logic_error("A geometry task drew a Standard mesh its frame's "
-                                       "velocity update did not reach.");
-            }
-            const PinnedVelocityHistory::Renderable& renderable = history.renderables[mesh.value];
-            dependent.world = renderable.previous_world;
-            dependent.previousWorld = renderable.written_previous_world;
-            dependent.velocityEnabled = renderable.written_velocity_enabled;
-        }
-    }(block);
-}
 #endif
 
 #if BBLITE_PINNED_MATERIALS && BBLITE_NODE_VARIANTS > 0

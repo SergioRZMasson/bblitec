@@ -328,6 +328,20 @@
       "variants": ["trimmed"]
     },
     {
+      "library": "sdl3",
+      "file": "native/vcpkg-overlay-ports/sdl3/vulkan-storage-array.patch",
+      "purpose": "Opt-in whole-array Vulkan compute storage views with matching mip and layer barriers",
+      "upstream": { "state": "unsubmitted" },
+      "variants": ["vcpkg", "trimmed"]
+    },
+    {
+      "library": "sdl3",
+      "file": "native/vcpkg-overlay-ports/sdl3/vulkan-canvas-storage.patch",
+      "purpose": "Opt-in Vulkan canvas storage allocation with image and surface capability checks",
+      "upstream": { "state": "unsubmitted" },
+      "variants": ["vcpkg", "trimmed"]
+    },
+    {
       "library": "sdl3-image",
       "file": "native/vcpkg-overlay-ports/sdl3-image/dependencies.diff",
       "purpose": "vcpkg's dependency discovery for SDL_image codecs",
@@ -345,6 +359,13 @@
       "library": "sdl3-image",
       "file": "native/vcpkg-overlay-ports/sdl3-image/png-grey-ramp-last-index.patch",
       "purpose": "Palette-less greyscale PNG ramp reaches 255 at its last index",
+      "upstream": { "state": "unsubmitted" },
+      "variants": ["vcpkg"]
+    },
+    {
+      "library": "sdl3-image",
+      "file": "native/vcpkg-overlay-ports/sdl3-image/png-16bit-surface.patch",
+      "purpose": "Preserve grayscale16 PNG samples in RGB48 surfaces and use native sample order with row padding",
       "upstream": { "state": "unsubmitted" },
       "variants": ["vcpkg"]
     },

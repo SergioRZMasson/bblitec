@@ -68,7 +68,7 @@ if (-not $FreetypeRoot) {
     # is what brings freetype in.
     $hostArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
     $triplet = if ($StaticRuntime) { "x64-windows-static" } elseif ($IsWindows) { "x64-windows" } elseif ($IsMacOS) { "$hostArch-osx" } else { "$hostArch-linux" }
-    $installArguments = if ($StaticRuntime) {
+    [string[]]$installArguments = if ($StaticRuntime) {
         @("install", "--name", "shipping-static", "--triplet", $triplet,
             "--features", $(if ($rmlSvgEnabled) { "ui,ui-svg" } else { "ui" }))
     } else {

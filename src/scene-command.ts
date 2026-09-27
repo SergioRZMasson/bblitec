@@ -3,6 +3,10 @@
 // First, so the modules evaluated after it are compiled through the cache.
 import "./tooling/compile-cache.js";
 import { spawn, spawnSync } from "node:child_process";
+import {
+    oldNativeCacheEntries,
+    pruneNativeCache,
+} from "./native-cache-clean.js";
 import { availableParallelism, totalmem } from "node:os";
 import {
     cpSync,
@@ -148,7 +152,7 @@ import {
     compiledBuildDirectory,
     developmentTriplet,
     hostOfflineShaderTarget,
-    needsOfflineShaders,
+    backendShaderTarget,
     selectedCompiledBackend,
     type OfflineShaderTarget,
 } from "./build-options.js";
@@ -197,6 +201,7 @@ function runAsync(
         const child = spawn(command, arguments_, {
             stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
             env: environment,
+            windowsHide: true,
         });
         const timeout =
             timeoutMs === undefined
@@ -1198,11 +1203,7 @@ function developmentChecks(scope: PreflightScope): DevelopmentCheck[] {
             ),
         );
     }
-    if (
-        scope.shaders &&
-        backend !== undefined &&
-        needsOfflineShaders(backend, process.env.BBLITE_SHADER_TARGET)
-    ) {
+    if (scope.shaders && backend !== undefined) {
         const target = shaderTarget();
         if (target === "d3d12" || target === "all") {
             checks.push({
@@ -1582,7 +1583,8 @@ interface Stage {
 
 /** The one offline shader format this host compiles, or the override. */
 function shaderTarget(): OfflineShaderTarget {
-    return hostOfflineShaderTarget(
+    return backendShaderTarget(
+        selectedCompiledBackend(),
         process.platform,
         process.env["BBLITE_SHADER_TARGET"],
     );
@@ -1591,16 +1593,6 @@ function shaderTarget(): OfflineShaderTarget {
 /** Each selected shader directory reuses its own content checkpoint. */
 function shaderStage(selected: readonly SceneDefinition[]): Stage {
     const setup = buildSetup();
-    if (!needsOfflineShaders(setup.backend, process.env.BBLITE_SHADER_TARGET)) {
-        return {
-            name: "shaders (Dawn WGSL)",
-            body: async () => {
-                console.log(
-                    "shaders: Dawn consumes generated WGSL; no offline compiler required.",
-                );
-            },
-        };
-    }
     return {
         name: "shaders",
         body: async () => {
@@ -2710,6 +2702,8 @@ async function runSurvey(entry: string): Promise<boolean> {
  * deletes the unowned `artifacts/` entries. Nothing outside
  * `native/build-*`, `generated/` and `artifacts/` is ever deleted, and a
  * junction or symbolic link is never followed nor removed.
+ * `--orphans`, `--all` and `--artifacts` also prune native cache support
+ * inputs unused by configure for `--cache-days` (30 by default).
  */
 interface CleanOptions {
     orphans: boolean;
@@ -2718,6 +2712,7 @@ interface CleanOptions {
     dlls: boolean;
     pch: boolean;
     artifacts: boolean;
+    cacheDays: number;
 }
 
 function isLink(path: string): boolean {
@@ -2770,6 +2765,7 @@ function worktreeNativeRoots(): string[] {
     try {
         const listing = spawnSync("git", ["worktree", "list", "--porcelain"], {
             encoding: "utf8",
+            windowsHide: true,
         });
         if (listing.status === 0) {
             for (const line of listing.stdout.split(/\r?\n/)) {
@@ -2802,6 +2798,9 @@ const isDllFile = (name: string): boolean =>
     name.toLowerCase().endsWith(".dll");
 
 function runClean(options: CleanOptions): void {
+    const nativeCacheRoot = resolve("artifacts", "native-cache");
+    if (options.cacheDays <= 0)
+        throw new Error("clean: --cache-days must be a positive number.");
     if (
         !options.orphans &&
         !options.all &&
@@ -2814,7 +2813,7 @@ function runClean(options: CleanOptions): void {
             "clean: pass --report (list sizes, delete nothing), --orphans (delete build trees and generated/ entries " +
                 "no registry entry owns), --all (also delete every owned build tree; owned generated/ directories always stay), " +
                 "--pch / --dlls (delete the precompiled headers / DLL copies inside native/build-*; the next build restores them), " +
-                "and/or --artifacts (delete the artifacts/ entries no tool owns).",
+                "and/or --artifacts (delete unowned artifacts). --orphans, --all and --artifacts also prune native support inputs unused for --cache-days (default 30).",
         );
     }
     let removed = 0;
@@ -2868,6 +2867,10 @@ function runClean(options: CleanOptions): void {
         : [];
 
     if (options.report) {
+        const oldCache = oldNativeCacheEntries(
+            nativeCacheRoot,
+            options.cacheDays,
+        );
         const trees = buildTreesUnder(nativeRoot);
         let owned = 0;
         let orphan = 0;
@@ -2889,6 +2892,9 @@ function runClean(options: CleanOptions): void {
             }
         }
         console.log(`clean --report (${resolve(".")})`);
+        console.log(
+            `  native-cache support inputs: ${oldCache.length} expired entries, ${gigabytes(oldCache.reduce((sum, entry) => sum + entry.bytes, 0))} (unused for ${options.cacheDays} days; --orphans/--all/--artifacts)`,
+        );
         console.log(
             `  native/build-*: ${trees.length} tree(s), ${gigabytes(owned + orphan)} ` +
                 `(owned ${gigabytes(owned)}, orphan ${gigabytes(orphan)} in ${trees.filter((tree) => !ownedBuilds.has(tree)).length})`,
@@ -2974,6 +2980,14 @@ function runClean(options: CleanOptions): void {
     if (options.artifacts) {
         for (const entry of unownedArtifacts)
             removeTree(entry, "unowned artifacts entry");
+    }
+    if (options.orphans || options.all || options.artifacts) {
+        const pruned = pruneNativeCache(nativeCacheRoot, options.cacheDays);
+        removed += pruned.length;
+        if (pruned.length > 0)
+            console.log(
+                `clean: pruned ${pruned.length} old native support inputs (${gigabytes(pruned.reduce((sum, entry) => sum + entry.bytes, 0))}); process --cold restores them.`,
+            );
     }
     console.log(
         removed === 0
@@ -3211,6 +3225,7 @@ const COMMANDS: readonly CommandSpec[] = [
     {
         name: "clean",
         flags: {
+            value: ["--cache-days"],
             boolean: [
                 "--report",
                 "--orphans",
@@ -3221,7 +3236,7 @@ const COMMANDS: readonly CommandSpec[] = [
             ],
         },
         summary:
-            "disk hygiene: --report sizes; --orphans unowned trees; --all owned build trees; --pch/--dlls duplicated payloads; --artifacts unowned artifacts/ entries",
+            "disk hygiene: --report sizes; --orphans unowned trees; --all owned build trees; --pch/--dlls duplicated payloads; --artifacts unowned artifacts; --orphans/--all/--artifacts prune native cache inputs older than --cache-days (30)",
         lock: true,
     },
     {
@@ -3436,6 +3451,7 @@ async function main(): Promise<void> {
                 dlls: parsed.flags.has("--dlls"),
                 pch: parsed.flags.has("--pch"),
                 artifacts: parsed.flags.has("--artifacts"),
+                cacheDays: flagNumber(parsed, "--cache-days", "clean") ?? 30,
             });
             return;
         case "parity":

@@ -88,6 +88,8 @@ export interface OfflineShaderFormats {
 export function offlineShaderFormats(
     target: OfflineShaderTarget,
 ): OfflineShaderFormats {
+    if (target === "reflection")
+        return { tint: [".slots", ".tint-reflection.txt"], dxil: false };
     const metal = target === "metal" || target === "all";
     const vulkan = target === "vulkan" || target === "all";
     return {

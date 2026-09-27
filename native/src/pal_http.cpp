@@ -81,8 +81,7 @@ struct InternetHandle {
 #endif
 } // namespace
 
-HttpResponseData perform_http_request(const std::string& url, HttpRequest request,
-                                      std::stop_token stop) {
+HttpResponseData perform_http_request(const std::string& url, HttpRequest request, StopToken stop) {
     std::string normalized = request.method;
     std::transform(
         normalized.begin(), normalized.end(), normalized.begin(),
@@ -236,7 +235,7 @@ HttpResponseData perform_http_request(const std::string& url, HttpRequest reques
     option(CURLOPT_NOPROGRESS, 0L);
     option(
         CURLOPT_XFERINFOFUNCTION, +[](void* data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
-            return static_cast<std::stop_token*>(data)->stop_requested() ? 1 : 0;
+            return static_cast<StopToken*>(data)->stop_requested() ? 1 : 0;
         });
     option(CURLOPT_XFERINFODATA, &stop);
     const auto performed = curl_easy_perform(client.get());

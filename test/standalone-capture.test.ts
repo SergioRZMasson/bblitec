@@ -66,13 +66,6 @@ test("standalone renderers synchronize live contexts, batch uploads and capture 
         ),
     );
     writeFileSync(
-        join(directory, "clear-color.hpp"),
-        cppFunction(
-            readFileSync("native/src/pal_sdl_gpu_shared.hpp", "utf8"),
-            "inline SDL_FColor gpu_clear_color(",
-        ),
-    );
-    writeFileSync(
         join(directory, "dawn-acquire.hpp"),
         cppFunction(
             readFileSync("native/src/pal_dawn_shared.hpp", "utf8"),

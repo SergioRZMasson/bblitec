@@ -31,6 +31,7 @@
 #elif defined(__APPLE__)
 #include <bblite/js_data.hpp>
 #include <CoreFoundation/CoreFoundation.h>
+#include <mach/mach.h>
 #endif
 
 namespace bbl {
@@ -407,6 +408,15 @@ std::size_t process_working_set_bytes() {
         throw std::runtime_error("GetProcessMemoryInfo failed.");
     }
     return static_cast<std::size_t>(counters.WorkingSetSize);
+#elif defined(__APPLE__)
+    mach_task_basic_info_data_t information{};
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                  reinterpret_cast<task_info_t>(&information), &count) != KERN_SUCCESS ||
+        count != MACH_TASK_BASIC_INFO_COUNT) {
+        throw std::runtime_error("task_info(MACH_TASK_BASIC_INFO) failed.");
+    }
+    return static_cast<std::size_t>(information.resident_size);
 #else
     // A number nothing measured would let `scene -- memory` pass a run it
     // never saw, so the query refuses by name until a platform owns it.

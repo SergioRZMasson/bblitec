@@ -967,6 +967,8 @@ export interface HandleCollectionInfo {
 }
 
 export interface CompileAsset {
+    /** Present only for an explicitly selected, verified device atlas bundle. */
+    spriteAtlasProducer?: import("../sprite-atlas-bundle.js").SpriteAtlasProvenance;
     /** Decoder setup from the realm that loads this asset. */
     readonly assetDecoders?: AssetDecoderConfiguration;
     /** Indices into CompileManifest.meshWalks demanded for this asset. */

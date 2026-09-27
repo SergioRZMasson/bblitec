@@ -18,6 +18,7 @@ import {
     observedImage,
     observedStep,
     requireObservations,
+    observedState,
 } from "./support.mjs";
 
 /**
@@ -84,15 +85,6 @@ function resolvePathErrors() {
 }
 
 /**
- * @param {ObservedStep} step
- * @returns {ObservedState}
- */
-function observedState(step) {
-    assert(step.state, `the observed step '${step.id}' recorded no state`);
-    return /** @type {ObservedState} */ (step.state);
-}
-
-/**
  * @param {string} actualPath
  * @param {string} referencePath
  * @param {string} stem
@@ -149,9 +141,9 @@ export function check(context) {
     const failed = observedStep(observations, "failed-resize");
     const idle = observedStep(observations, "idle-after-failure");
     const startup = observedStep(observations, "startup-960x600");
-    const initialState = observedState(initial);
-    const orbitState = observedState(orbit);
-    const failedState = observedState(failed);
+    const initialState = /** @type {ObservedState} */ (observedState(initial));
+    const orbitState = /** @type {ObservedState} */ (observedState(orbit));
+    const failedState = /** @type {ObservedState} */ (observedState(failed));
     assert(
         Math.abs(orbitState.camera.alpha - initialState.camera.alpha) > 0.1,
         "the browser pointer gesture did not turn the camera",
@@ -167,7 +159,7 @@ export function check(context) {
     );
     assert.equal(
         failedState.submissions,
-        observedState(idle).submissions,
+        /** @type {ObservedState} */ (observedState(idle)).submissions,
         "the pin's RAF loop kept submitting after its thrown resize error",
     );
     assert.notDeepEqual(

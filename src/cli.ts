@@ -367,15 +367,21 @@ async function materializeAsset(
     // same execution, one decoder each for what the export returned. The
     // `pixels` kind can also name already-baked inline bytes (the fetched
     // Canvas2D atlas), so kind alone is not an execution contract.
-    const bake = asset.source.startsWith(pixelsSourcePrefix)
-        ? bakePixelBytes
-        : asset.source.startsWith(spriteAtlasSourcePrefix)
-          ? drawSpriteAtlasPng
-          : undefined;
-    if (bake) {
+    if (asset.source.startsWith(spriteAtlasSourcePrefix)) {
+        const atlas = await drawSpriteAtlasPng(
+            parseExecutedModuleSource(
+                asset.source,
+                findRepositoryRoot(dirname(inputPath)),
+            ),
+        );
+        writeFileSync(destination, atlas.bytes);
+        if (atlas.provenance) asset.spriteAtlasProducer = atlas.provenance;
+        return;
+    }
+    if (asset.source.startsWith(pixelsSourcePrefix)) {
         writeFileSync(
             destination,
-            await bake(
+            await bakePixelBytes(
                 parseExecutedModuleSource(
                     asset.source,
                     findRepositoryRoot(dirname(inputPath)),

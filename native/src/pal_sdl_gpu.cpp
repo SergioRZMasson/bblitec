@@ -3441,7 +3441,7 @@ public:
                                 ? scene_surface_pane(engine, graph_scene, width, height)
                                 : std::nullopt;
                         if (surface_pane) {
-                            create_color(state, swapchain_format, width, height);
+                            create_color(state, swapchain_format, width, height, true);
                             SDL_GPUColorTargetInfo surface_target{};
                             surface_target.texture = state.color;
                             surface_target.load_op =
@@ -3475,7 +3475,8 @@ public:
                             state.post_process_present = create_frame_texture(
                                 state.device, swapchain_format, SDL_GPU_SAMPLECOUNT_1, width,
                                 height,
-                                SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER);
+                                SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, 1,
+                                true);
                         }
 #else
                     if (partial_present) {
@@ -3574,7 +3575,7 @@ public:
                 const bool resized =
                     width != state.frame_graph_width || height != state.frame_graph_height;
                 if (resized)
-                    create_color(state, swapchain_format, width, height);
+                    create_color(state, swapchain_format, width, height, true);
                 present.source = SDL_GPUBlitRegion{
                     state.post_process_present, 0, 0, 0, 0, state.frame_graph_width,
                     state.frame_graph_height};
@@ -3595,7 +3596,7 @@ public:
                 create_color(state,
                              transmission_enabled ? SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT
                                                   : swapchain_format,
-                             width, height);
+                             width, height, !transmission_enabled);
             }
 #if BBLITE_RENDERER_TRANSMISSION
             if (transmission_enabled) {

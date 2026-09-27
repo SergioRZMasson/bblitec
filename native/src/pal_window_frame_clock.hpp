@@ -98,9 +98,11 @@ public:
     /** 300 waits of 100 ms: thirty seconds without a compositor heartbeat. */
     static constexpr std::size_t bounded_idle_waits = 300;
 
-    explicit WindowFrameClock(bool cpu_profile = false, bool bounded_run = false)
-        : cpu_profile_(cpu_profile), idle_wait_limit_(bounded_run ? bounded_idle_waits : 0) {
+    explicit WindowFrameClock([[maybe_unused]] bool cpu_profile = false,
+                              [[maybe_unused]] bool bounded_run = false) {
 #ifdef _WIN32
+        cpu_profile_ = cpu_profile;
+        idle_wait_limit_ = bounded_run ? bounded_idle_waits : 0;
         api_ = acquire_api();
         if (api_)
             waiter_ = std::jthread([this] { run(); });
@@ -131,11 +133,11 @@ public:
 
 private:
     detail::WindowFrameClockTicks ticks_;
+#ifdef _WIN32
     bool cpu_profile_ = false;
     /** Consecutive tickless waits a bounded run tolerates; 0 waits forever. */
     std::size_t idle_wait_limit_ = 0;
 
-#ifdef _WIN32
     struct Api {
         HMODULE module = nullptr;
         HANDLE stop = nullptr;

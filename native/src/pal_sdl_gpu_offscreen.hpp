@@ -28,7 +28,7 @@
 #if BBLITE_COMPUTE_BUFFERS
 #include "pal_sdl_gpu_storage_buffer.hpp"
 #endif
-#include <thread>
+#include <bblite/joining_thread.hpp>
 #if BBLITE_STORAGE_READBACK
 #include "pal_sdl_gpu_storage_readback.hpp"
 #endif
@@ -63,7 +63,7 @@ private:
     }
     SDL_GPUDevice* device_;
     OwnedSdlFence fence_;
-    std::jthread waiter_;
+    JoiningThread waiter_;
 };
 
 /** The host retains the device until all producers and image leases end. */
@@ -181,7 +181,7 @@ struct SdlOffscreenImage final : OffscreenImage {
         : device(owner),
           texture(create_frame_texture(
               owner, SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM, SDL_GPU_SAMPLECOUNT_1, width, height,
-              SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER)) {}
+              SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, 1, true)) {}
     ~SdlOffscreenImage() override { SDL_ReleaseGPUTexture(device, texture); }
     SDL_GPUDevice* device;
     SDL_GPUTexture* texture;

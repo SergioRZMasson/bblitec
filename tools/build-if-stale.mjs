@@ -141,6 +141,7 @@ function run(scriptOrBin, args) {
     const result = spawnSync(process.execPath, [scriptOrBin, ...args], {
         stdio: "inherit",
         cwd: root,
+        windowsHide: true,
     });
     if (result.error) throw result.error;
     if (result.status !== 0) process.exit(result.status ?? 1);

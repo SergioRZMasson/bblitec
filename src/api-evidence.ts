@@ -107,7 +107,12 @@ export function apiEvidenceInputs(root: string, snapshot: ApiSnapshot): string {
     const paths = execFileSync(
         "git",
         ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-        { cwd: root, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+        {
+            cwd: root,
+            encoding: "utf8",
+            windowsHide: true,
+            maxBuffer: 32 * 1024 * 1024,
+        },
     )
         .split("\0")
         .filter(

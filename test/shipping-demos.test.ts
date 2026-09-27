@@ -65,6 +65,7 @@ test(
         ]);
         assert.deepEqual(desktopShaderSuffixes("DAWN", "win32"), [
             ".native.wgsl",
+            ".slots",
         ]);
         const directory = mkdtempSync(
             join(tmpdir(), "bblite-shipping-policy-"),

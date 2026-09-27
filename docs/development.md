@@ -86,7 +86,7 @@ Set ANDROID_HOME to a writable SDK; Android Studio is optional. Use the Windows 
 sdkmanager --sdk_root=$env:ANDROID_HOME "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
 npm run android -- -Scene torus-states -Sdk C:/Dev/android-sdk -Device <serial> -Install
 npm run android -- -Scene torus-states -Backend DAWN -Sdk C:/Dev/android-sdk -Device <serial> -Smoke
-npm run android:sweep -- --sdk C:/Dev/android-sdk --device emulator-5554
+npm run android:sweep -- --sdk C:/Dev/android-sdk --device emulator-5554 --capture-only
 npm run package:demo -- --platform android --scene torus-states --backend dawn --sdk C:/Dev/android-sdk --device <serial>
 npm run demos:release -- --platform android --scene torus-states --backend dawn --sdk C:/Dev/android-sdk --device <serial>
 ```
@@ -105,7 +105,10 @@ Packaging builds Release code into a debug-signed APK with assets/notices, valid
 publishes a ZIP/receipt under `artifacts/releases` (replaced packages move to `.replaced/`). The sweep
 prepares sources, shaders and one dependency set, builds four APKs concurrently (`--parallel`, `--jobs`),
 then captures serially at the registered pose and golden dimensions, reporting unsupported features,
-failures and mismatches separately; `--scene` is repeatable and evidence is in
+failures and mismatches separately. `--capture-only` verifies native exit and GPU readback without
+comparing desktop goldens; visual qualification uses [same-device references](debugging.md#same-device-rendering-comparisons).
+Fixed-frame scenes verify the recorded renderer frame; `--render-state` requires that check for every scene.
+`--scene` is repeatable and evidence is in
 `artifacts/android/sweep/<run-id>`. Release workflows serialize dependency and device work; run
 standalone builds outside an active sweep. Device-local measurements:
 [same-device diagnosis](debugging.md#same-device-rendering-comparisons).
@@ -119,6 +122,19 @@ emulator -avd bblite-api35 -gpu host -no-snapshot
 ```
 
 See [limits](features.md#android).
+
+For device-matched Canvas2D atlases, connect to an already running Chromium debugging socket:
+
+```powershell
+node tools/bake-android-sprite-atlas.mjs --adb C:/Dev/android-sdk/platform-tools/adb.exe --device <serial> --socket <socket> --browser-package org.chromium.chrome --output artifacts/device-atlases.json --module corpus/babylon-lite/lab/lite/src/_shared/sprite-atlas-image.ts#getSpriteAtlasDataUrl
+$env:BBLITE_SPRITE_ATLAS_BUNDLE = (Resolve-Path artifacts/device-atlases.json).Path
+```
+
+`--module` is repeatable. The producer owns only its pages and forwarding rules; it requires observable
+browser process, APK, command-line and GPU identity. Bundles admit repository-relative static imports
+and PNG factories without external requests. Generation inherits the option through child processes,
+validates every entry before reuse, and records consumed provenance. Remove the environment variable
+to restore host baking. Recreate bundles after producer/source changes; output files are never overwritten.
 
 ### iOS
 
@@ -156,7 +172,7 @@ Commands follow `npm run scene --`. Targets are registry IDs, local TypeScript p
 | `check <id> [--observe]` | Declared interaction check / its browser observation |
 | `validate <scene\|all> [--cold]` | Process, parity, status checks |
 | `survey <entry.ts>` | Compile census and API readiness of an external entry |
-| `clean --report\|--orphans\|--all\|--pch\|--dlls\|--artifacts` | Inspect/clean selected outputs; `--artifacts` keeps the tools' roots |
+| `clean --report\|--orphans\|--all\|--pch\|--dlls\|--artifacts` | Inspect/clean selected outputs; orphan/all/artifact cleanup prunes old native support inputs (`--cache-days 30`) |
 
 Diagnosis commands are in [debugging](debugging.md#the-ladder).
 
@@ -265,7 +281,8 @@ published measurements, registry names and canvas gates; measured repeatability 
 neutrality allowlist.
 
 Documentation-only changes require link and affected metadata checks. Rendering checks are required
-when executable inputs or measurement contracts change. `lint:exports` is advisory.
+when executable inputs or measurement contracts change. `lint:exports` reports unused TypeScript exports
+in `tsconfig.exports.json`, including inferred types and tool/plugin consumers of built declarations; it is advisory.
 
 ## Proving a change moved nothing
 
@@ -328,10 +345,17 @@ scene features; trees with the same build options share it. Its entry keys on th
 records. Like `/Yc`, it instantiates the templates its headers use (`-fpch-instantiate-templates`), so units
 do not repeat them. Debug keys retain directory identity.
 
+`clean --orphans`, `--all` and `--artifacts` prune `headers/`, `sources/` and `pch/` inputs unused by
+CMake configure for 30 days (`--cache-days <days>`). Reuse timestamps live in retained lock files;
+compiler input timestamps stay unchanged. `clean --report` lists expired counts/bytes. Links and ccache
+objects are untouched; `process <id> --cold` recreates pruned inputs needed by an existing build tree.
+
 ## Shader compilation
 
-`process --shader d3d12|vulkan|metal|all` selects offline targets; default is the host target.
-`BBLITE_SHADER_TARGET`, `BBLITE_TINT_PATH` and `DXC_PATH` override defaults. Dawn uses WGSL.
+`process --shader d3d12|vulkan|metal|all|reflection` selects shader outputs; the default is the host
+target, or `reflection` for Dawn-only builds. Both backends require Tint's `.slots` layouts; Dawn
+uses WGSL and needs no offline shader binaries or DXC.
+`BBLITE_SHADER_TARGET`, `BBLITE_TINT_PATH` and `DXC_PATH` override defaults.
 `tools/build-tint.ps1` builds the pinned `tint` and bblite-tint (`tools/tint-sdl`), the offline
 compiler's writer driver, from its own checkout carrying the `tint` patch series. Each set of tool
 sources (the script, the Tint pin, `tools/tint-sdl` and the series) builds into

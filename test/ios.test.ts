@@ -16,8 +16,11 @@ import test from "node:test";
 import { discoverDevelopmentTools } from "../src/development-tools.js";
 import {
     iosCaptureEnvironment,
+    iosRenderedFrames,
+    iosLaunchPid,
     selectIosSimulator,
     verifyIosNativeExit,
+    verifyIosFrameProgress,
 } from "../src/ios-simulator.js";
 import { resolveScene } from "../src/scene-registry.js";
 import {
@@ -129,6 +132,70 @@ test("iOS canvas-only capture changes only UI pixels, not registry timing or ren
     }
 });
 
+test("iOS recovery replays can outlive the screenshot within an explicit frame budget", () => {
+    const scene = resolveScene("scene164");
+    const options = {
+        frame: 50,
+        maxFrames: 200,
+        tape: [
+            "Dataset@captured=true",
+            "-*69",
+            "DeviceLoss",
+            "-*39",
+            "GlobalCall@__scene164Dispose",
+        ],
+        testPass: false,
+    };
+    const environment = iosCaptureEnvironment(scene, "dawn", options);
+    assert.deepEqual(
+        environment,
+        measuredRunEnvironment({
+            ...options,
+            environment: scene.parity?.nativeEnvironment ?? {},
+            backend: "dawn",
+            extra: { BBLITE_GPU_BACKEND: "dawn", BBLITE_GPU_DEBUG: "1" },
+        }),
+    );
+    assert.equal(environment.BBLITE_SCREENSHOT_FRAME, "50");
+    assert.equal(environment.BBLITE_MAX_FRAMES, "200");
+    assert.equal(environment.BBLITE_INPUT_REPLAY, options.tape.join(","));
+    for (const maxFrames of [NaN, Infinity, 0, -1, 1.5, 49, 50, 1000002])
+        assert.throws(
+            () =>
+                iosCaptureEnvironment(scene, "dawn", { frame: 50, maxFrames }),
+            /--max-frames/,
+        );
+    assert.throws(
+        () => iosCaptureEnvironment(scene, "dawn", { maxFrames: 200 }),
+        /--max-frames requires --frame/,
+    );
+    for (const frame of [0, 1000000])
+        assert.equal(
+            iosCaptureEnvironment(scene, "dawn", {
+                frame,
+                maxFrames: frame + 1,
+            }).BBLITE_MAX_FRAMES,
+            String(frame + 1),
+        );
+});
+
+test("iOS runtime trace is explicit and leaves the default measured environment unchanged", () => {
+    const scene = resolveScene("scene164");
+    const ordinary = iosCaptureEnvironment(scene, "dawn");
+    assert.equal(ordinary.BBLITE_RUNTIME_TRACE, undefined);
+    assert.deepEqual(
+        iosCaptureEnvironment(scene, "dawn", { runtimeTrace: false }),
+        ordinary,
+    );
+    assert.deepEqual(
+        iosCaptureEnvironment(scene, "dawn", { runtimeTrace: true }),
+        {
+            ...ordinary,
+            BBLITE_RUNTIME_TRACE: "1",
+        },
+    );
+});
+
 test("iOS smoke refuses failed, missing, duplicate and stale native exits", () => {
     verifyIosNativeExit("startup\nNative exit: 0 run=current\n", "current");
     assert.throws(
@@ -142,6 +209,57 @@ test("iOS smoke refuses failed, missing, duplicate and stale native exits", () =
     ]) {
         assert.throws(() => verifyIosNativeExit(log, "current"), /one exit/);
     }
+});
+
+test("iOS lifecycle evidence requires an explicit PID and completed native frames", () => {
+    const application = "org.bblite.prototype";
+    assert.equal(iosLaunchPid(`${application}: 123\n`, application), 123);
+    for (const output of [
+        "",
+        `${application}: 0`,
+        `${application}: 12junk`,
+        `${application}: 123\n${application}: 456`,
+        "other.app: 123",
+    ])
+        assert.throws(
+            () => iosLaunchPid(output, application),
+            /valid application PID/,
+        );
+    assert.deepEqual(iosRenderedFrames("startup\nframe=30\n"), {});
+    assert.deepEqual(
+        iosRenderedFrames("[mem][frame] engine=1 frame=0 working_set_mb=25\n"),
+        { "1": 0 },
+    );
+    assert.deepEqual(
+        iosRenderedFrames(
+            "[mem][frame] engine=1 frame=0 working_set_mb=25\n[mem][frame] engine=1 frame=120 working_set_mb=26\n",
+        ),
+        { "1": 120 },
+    );
+});
+
+test("iOS lifecycle progress keeps interleaved engine timelines separate", () => {
+    const before = iosRenderedFrames(
+        "[mem][frame] engine=1 frame=120 working_set_mb=25\n[mem][frame] engine=2 frame=0 working_set_mb=26\n",
+    );
+    assert.deepEqual(before, { "1": 120, "2": 0 });
+    verifyIosFrameProgress(before, { "1": 150, "2": 30 });
+    assert.throws(
+        () => verifyIosFrameProgress(before, { "2": 150 }),
+        /Engine 1/,
+    );
+    assert.throws(
+        () => verifyIosFrameProgress(before, { "1": 90, "2": 180 }),
+        /Engine 1/,
+    );
+    assert.throws(
+        () => verifyIosFrameProgress(before, { "1": 150, "2": 0 }),
+        /Engine 2/,
+    );
+    assert.throws(
+        () => verifyIosFrameProgress({}, { "1": 30 }),
+        /before backgrounding/,
+    );
 });
 
 test("desktop and Simulator measurements share frame, pose and replay precedence", () => {
@@ -162,6 +280,7 @@ test("desktop and Simulator measurements share frame, pose and replay precedence
         }),
     );
     assert.equal(environment.BBLITE_SCREENSHOT_FRAME, "40");
+    assert.equal(environment.BBLITE_CAPTURE_ENGINE_FRAME, "40");
     assert.equal(environment.BBLITE_MAX_FRAMES, "41");
     assert.equal(environment.BBLITE_TEST_PASS, "0");
     assert.equal(environment.BBLITE_INPUT_REPLAY, "-*30,UiClick@260:197");

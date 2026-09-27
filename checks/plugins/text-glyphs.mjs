@@ -16,6 +16,7 @@ import {
     assertObservationProvenance,
     loadPng,
     observedImage,
+    observedState,
     observedStep,
     readManifest,
     requireObservations,
@@ -23,6 +24,7 @@ import {
 
 /**
  * @import { PluginContext } from "../../dist/src/tooling/check-run.js"
+ * @import { RecordedBufferState } from "./webgpu-records.js"
  */
 
 /**
@@ -42,7 +44,7 @@ import {
  *     instances: Array<GlyphInstance | null>,
  *     styles: number[],
  *     form: Extent,
- *     uniform?: number[],
+ *     uniform?: RecordedBufferState[],
  *     camera?: OrbitCamera,
  *     position?: { x: number, y: number, z: number },
  *     width?: number,
@@ -111,8 +113,7 @@ export function check(context) {
         for (const phase of Object.values(results)) {
             const where = `${backend}/${phase.id}`;
             const step = observedStep(observations, phase.id);
-            assert(step.state, `${where}: the observed step recorded no state`);
-            const state = /** @type {ObservedState} */ (step.state);
+            const state = /** @type {ObservedState} */ (observedState(step));
             const capture = /** @type {NativeCapture} */ (phase.capture);
             const gpu = capture.textGpu;
             assert.deepEqual(
@@ -209,9 +210,29 @@ export function check(context) {
                         uniform,
                         `${where}: no uniform resource ${uniformId}`,
                     );
+                    assert.equal(
+                        state.uniform?.length,
+                        1,
+                        `${where}: browser text-layer uniform`,
+                    );
+                    const browserUniform = state.uniform[0];
+                    assert(
+                        browserUniform,
+                        `${where}: missing browser text-layer uniform`,
+                    );
+                    assert.deepEqual(
+                        browserUniform.written,
+                        [[0, browserUniform.size]],
+                        `${where}: browser uniform has unwritten bytes`,
+                    );
+                    assert.equal(
+                        browserUniform.size,
+                        uniform.uploadedBytes.length,
+                        `${where}: uniform byte length`,
+                    );
                     assert.deepEqual(
                         uniform.uploadedBytes,
-                        state.uniform,
+                        Array.from(Buffer.from(browserUniform.data, "base64")),
                         `${where}: source uniform writes`,
                     );
                 }

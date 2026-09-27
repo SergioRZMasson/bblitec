@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import test from "node:test";
 import {
     canonicalCompiledBackend,
@@ -11,7 +12,7 @@ import {
     developmentVcpkgFeatures,
     developmentTriplet,
     hostOfflineShaderTarget,
-    needsOfflineShaders,
+    backendShaderTarget,
 } from "../src/build-options.js";
 import { listFiles } from "../src/tooling/records.js";
 import { sceneBackendFiles, sceneBackendSource } from "./native-fixture.js";
@@ -29,12 +30,17 @@ test("compiled backends have independent build and deployment directories", () =
     );
 });
 
-test("Dawn-only iteration needs no offline compiler unless a target is explicitly requested", () => {
-    assert.equal(needsOfflineShaders("DAWN"), false);
-    assert.equal(needsOfflineShaders("SDL_GPU"), true);
-    assert.equal(needsOfflineShaders("BOTH"), true);
-    assert.equal(needsOfflineShaders("DAWN", "all"), true);
-    assert.equal(needsOfflineShaders("DAWN", "d3d12"), true);
+test("Dawn-only builds reflect layouts without platform binaries unless explicitly requested", () => {
+    for (const platform of ["win32", "linux", "darwin"] as const) {
+        assert.equal(backendShaderTarget("DAWN", platform), "reflection");
+        for (const backend of ["SDL_GPU", "BOTH"] as const)
+            assert.equal(
+                backendShaderTarget(backend, platform),
+                hostOfflineShaderTarget(platform),
+            );
+        assert.equal(backendShaderTarget("DAWN", platform, "all"), "all");
+        assert.equal(backendShaderTarget("DAWN", platform, "d3d12"), "d3d12");
+    }
 });
 
 test("the development vcpkg install contains every manifest feature", () => {
@@ -536,8 +542,8 @@ test("the scene-invariant PAL units compile in their own object library", () => 
             "utf8",
         );
         assert.deepEqual(
-            [...unity.matchAll(/^#include "([^"]+)"$/gm)].map(
-                (match) => `native/src/${match[1]}`,
+            [...unity.matchAll(/^#include "([^"]+)"$/gm)].map((match) =>
+                resolve("native/src", match[1]!),
             ),
             sources,
             `${backend} scene renderer unit`,

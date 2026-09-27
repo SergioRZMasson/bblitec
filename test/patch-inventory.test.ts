@@ -60,17 +60,23 @@ test(
             "0001-lazy-decoders.patch",
             "0002-core-only.patch",
         ]);
-        // The trimmed SDL carries the overlay port's own patches except
-        // vcpkg's FreeBSD packaging fix, then its dynamic-API switch and the
-        // joystick-free device names.
+        // The trimmed SDL omits vcpkg's FreeBSD packaging fix. Its existing
+        // numbered patches precede the shared Vulkan additions.
         const trimmed = names("sdl3", ["trimmed"]);
+        const vulkan = [
+            "vulkan-storage-array.patch",
+            "vulkan-canvas-storage.patch",
+        ];
         assert.equal(trimmed.includes("fix-freebsd.patch"), false);
-        assert.deepEqual(trimmed.slice(-2), [
+        assert.deepEqual(trimmed.slice(-4), [
             "0009-static-no-dynapi.patch",
             "0010-no-joystick-device-names.patch",
+            ...vulkan,
         ]);
-        assert.equal(trimmed.length, 9);
-        assert.equal(names("sdl3", ["vcpkg"])[0], "fix-freebsd.patch");
+        assert.equal(trimmed.length, 11);
+        const port = names("sdl3", ["vcpkg"]);
+        assert.equal(port[0], "fix-freebsd.patch");
+        assert.deepEqual(port.slice(-2), vulkan);
         // A port feature selects its own patch.
         assert.equal(
             names("freetype", ["vcpkg"]).includes("subpixel-rendering.patch"),

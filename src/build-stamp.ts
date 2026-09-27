@@ -219,6 +219,7 @@ interface DeployedPayload {
 export function deployedPayloads(
     executableDirectory: string,
     generatedDirectory: string,
+    buildDirectory = executableDirectory,
 ): DeployedPayload[] {
     // Read on first use: a tree without shaders configures no suffix list.
     let shaderSuffixes: readonly string[] | undefined;
@@ -229,7 +230,7 @@ export function deployedPayloads(
             deployed: resolve(executableDirectory, "shaders"),
             deploys: (path) =>
                 (shaderSuffixes ??=
-                    executableDeployedShaderSuffixes(executableDirectory)).some(
+                    executableDeployedShaderSuffixes(buildDirectory)).some(
                     (suffix) => path.endsWith(suffix),
                 ),
         },

@@ -12,6 +12,7 @@ struct SystemFontFace {
     std::filesystem::path path;
     std::string family;
     int face_index = 0;
+    std::optional<int> named_weight = std::nullopt;
 };
 
 /**

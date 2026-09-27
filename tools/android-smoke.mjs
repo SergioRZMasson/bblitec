@@ -21,6 +21,7 @@ const { values } = parseArgs({
         scene: { type: "string" },
         backend: { type: "string", default: "sdl_gpu" },
         "canvas-only": { type: "boolean", default: false },
+        "render-state": { type: "boolean", default: false },
         app: { type: "string", default: "org.bblite.prototype" },
     },
 });
@@ -62,6 +63,7 @@ const { captureEnvironment, captureFrame } = androidCaptureSettings(
  *     captureEnvironment?: Record<string, string>,
  *     width?: number,
  *     height?: number,
+ *     rendererFrame?: number,
  *     error?: string,
  * }}
  */
@@ -79,7 +81,15 @@ const receipt = {
 };
 try {
     adb("shell", "am", "force-stop", app);
-    adb("shell", "run-as", app, "rm", "-f", "files/capture.png");
+    adb(
+        "shell",
+        "run-as",
+        app,
+        "rm",
+        "-f",
+        "files/capture.png",
+        "files/render.json",
+    );
     let log = "";
     /** @type {string[]} */
     const logChunks = [];
@@ -139,6 +149,7 @@ try {
             "--ez",
             "capture",
             "true",
+            ...(values["render-state"] ? ["--ez", "renderState", "true"] : []),
         );
         await finished;
     } finally {
@@ -151,6 +162,37 @@ try {
     const bytes = adb("exec-out", "run-as", app, "cat", "files/capture.png");
     const png = PNG.sync.read(bytes);
     writeFileSync(join(output, "capture.png"), bytes);
+    if (values["render-state"]) {
+        const capture = adb(
+            "exec-out",
+            "run-as",
+            app,
+            "cat",
+            "files/render.json",
+        );
+        writeFileSync(join(output, "render.json"), capture);
+        /** @type {unknown} */
+        const state = JSON.parse(capture.toString("utf8"));
+        if (
+            !state ||
+            typeof state !== "object" ||
+            !("frame" in state) ||
+            typeof state.frame !== "number" ||
+            !Number.isSafeInteger(state.frame) ||
+            state.frame < 0
+        )
+            throw new Error(
+                "The native render capture has no valid renderer frame.",
+            );
+        receipt.rendererFrame = state.frame;
+        const expected = Number(
+            captureEnvironment.BBLITE_CAPTURE_ENGINE_FRAME ?? captureFrame,
+        );
+        if (state.frame !== expected)
+            throw new Error(
+                `Renderer frame ${state.frame} differs from requested frame ${expected}.`,
+            );
+    }
     Object.assign(receipt, {
         passed: true,
         width: png.width,

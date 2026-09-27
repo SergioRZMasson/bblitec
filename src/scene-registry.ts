@@ -5090,9 +5090,9 @@ function derivedReferenceFrameEnvironment(
         nativeEnvironment: {
             ...parity.nativeEnvironment,
             BBLITE_SCREENSHOT_FRAME: String(nativeFrame),
-            ...(parity.independentEngines === undefined
-                ? {}
-                : { BBLITE_CAPTURE_ENGINE_FRAME: String(nativeFrame) }),
+            // Window presentation may repaint the same canvas several times.
+            // The browser's fixed RAF pose counts rendered engine frames.
+            BBLITE_CAPTURE_ENGINE_FRAME: String(nativeFrame),
         },
     };
 }

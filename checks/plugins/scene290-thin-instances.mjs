@@ -3,6 +3,8 @@ import {
     assertObservationProvenance,
     maxError,
     requireObservations,
+    observedState,
+    observedStep,
 } from "./support.mjs";
 
 /**
@@ -45,16 +47,6 @@ function checkGround(matrices, where) {
 }
 
 /**
- * @param {unknown} state
- * @param {string} label
- * @returns {ObservedState}
- */
-function observedState(state, label) {
-    assert(state, `the observed ${label} recorded no state`);
-    return /** @type {ObservedState} */ (state);
-}
-
-/**
  * @param {NativeMesh} mesh
  * @param {string} where
  */
@@ -73,7 +65,7 @@ export function check(context) {
     const captureFrames = observations.captureFrames;
     assert(captureFrames, "the observations carry no capture frames");
     for (const frame of captureFrames) {
-        const state = observedState(frame.state, `frame ${frame.frame}`);
+        const state = /** @type {ObservedState} */ (observedState(frame));
         assert.equal(state.step, frame.frame);
         assert.equal(state.nativeBodies, 2009);
         assert.deepEqual(
@@ -92,14 +84,13 @@ export function check(context) {
     const browserMeshes = (number) => {
         const frame = captureFrames.find((entry) => entry.frame === number);
         assert(frame, `the browser captured no frame ${number}`);
-        return observedState(frame.state, `frame ${number}`).meshes;
+        return /** @type {ObservedState} */ (observedState(frame)).meshes;
     };
-    assert(observations.steps, "the observations carry no steps");
-    const steps = new Map(
-        observations.steps.map((step) => [step.id, step.state]),
-    );
     /** @param {string} id */
-    const stepState = (id) => observedState(steps.get(id), `step '${id}'`);
+    const stepState = (id) =>
+        /** @type {ObservedState} */ (
+            observedState(observedStep(observations, id))
+        );
     assert.notEqual(
         stepState("orbit").camera.alpha,
         stepState("baseline").camera.alpha,

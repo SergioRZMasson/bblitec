@@ -91,5 +91,9 @@ ${main}
         join(nativeFixtureVcpkgRoot, "include"),
         source,
     ]);
-    execFileSync(executable, [], { cwd: directory, stdio: "pipe" });
+    execFileSync(executable, [], {
+        cwd: directory,
+        stdio: "pipe",
+        windowsHide: true,
+    });
 }

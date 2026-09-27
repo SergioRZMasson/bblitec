@@ -24,7 +24,5 @@ declare var __webgpuRecorder: {
         meshes: readonly RecorderMesh[],
     ): import("./webgpu-records.js").RecordedMesh[];
 };
-/** scene180-uniform.init.js: the text layer uniform bytes, write for write. */
-declare var __textUniform: Uint8Array | undefined;
 /** raf-pacing.init.js: pace requestAnimationFrame at `rate` frames per second. */
 declare var __bblRafPacing: (rate: number) => void;

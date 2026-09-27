@@ -26,7 +26,7 @@ import { refreshBuildStamp } from "../dist/src/generation-stamp.js";
  */
 
 /**
- * @typedef {{ width?: number, height?: number }} SmokeReceipt the fields read from android-smoke's report.json
+ * @typedef {{ width?: number, height?: number, rendererFrame?: number }} SmokeReceipt the fields read from android-smoke's report.json
  * @typedef {{
  *     scene: string,
  *     status: string,
@@ -44,6 +44,8 @@ import { refreshBuildStamp } from "../dist/src/generation-stamp.js";
  *     startedAt: string,
  *     abi: string,
  *     backend: string,
+ *     mode: "native-smoke" | "registry-parity",
+ *     renderState: "fixed-frame" | "all",
  *     device: string,
  *     model: string,
  *     api: string,
@@ -63,6 +65,8 @@ const { values } = parseArgs({
         scene: { type: "string", multiple: true },
         parallel: { type: "string", default: "4" },
         backend: { type: "string", default: "sdl_gpu" },
+        "capture-only": { type: "boolean", default: false },
+        "render-state": { type: "boolean", default: false },
     },
 });
 if (!values.sdk || !values.device) throw new Error("Use --sdk and --device.");
@@ -109,6 +113,8 @@ const report = {
     startedAt: new Date().toISOString(),
     abi: values.abi,
     backend,
+    mode: values["capture-only"] ? "native-smoke" : "registry-parity",
+    renderState: values["render-state"] ? "all" : "fixed-frame",
     device: serial,
     model: device("shell", "getprop", "ro.product.model").trim(),
     api: device("shell", "getprop", "ro.build.version.sdk").trim(),
@@ -146,18 +152,16 @@ if (values.scene) {
         join(output, "generation.log"),
     );
 }
-if (backend === "sdl_gpu") {
-    writeJsonRecord(
-        join(output, "shaders.json"),
-        await compileOfflineShaders({
-            directories: selected
-                .map((scene) => resolve(scene.output, "upstream/shaders"))
-                .filter(existsSync),
-            repositoryRoot: root,
-            target: "vulkan",
-        }),
-    );
-}
+writeJsonRecord(
+    join(output, "shaders.json"),
+    await compileOfflineShaders({
+        directories: selected
+            .map((scene) => resolve(scene.output, "upstream/shaders"))
+            .filter(existsSync),
+        repositoryRoot: root,
+        target: backend === "sdl_gpu" ? "vulkan" : "reflection",
+    }),
+);
 for (const scene of selected)
     refreshBuildStamp(resolve(scene.output), { generatedInputsChanged: true });
 process.env.BBLITE_ANDROID_INPUTS_PREPARED = "1";
@@ -242,6 +246,9 @@ async function captureScene(scene, result, sceneOutput) {
             scene.id,
             "--backend",
             backend,
+            ...(values["render-state"] || parity?.referenceFrame !== undefined
+                ? ["--render-state"]
+                : []),
         ],
         join(sceneOutput, "capture.log"),
     );
@@ -249,6 +256,21 @@ async function captureScene(scene, result, sceneOutput) {
         JSON.parse(readFileSync(join(sceneOutput, "report.json"), "utf8"))
     );
     result.capture = capture;
+    if (
+        dimensions &&
+        (dimensions.width !== capture.width ||
+            dimensions.height !== capture.height)
+    ) {
+        throw new Error(
+            `Capture dimensions ${capture.width}x${capture.height} differ from reference ${dimensions.width}x${dimensions.height}.`,
+        );
+    }
+    if (values["capture-only"]) {
+        result.status = "captured";
+        result.reason =
+            "Native exit and GPU readback verified; visual parity requires a same-device browser reference.";
+        return;
+    }
     if (!dimensions || !parity || !reference) {
         result.status = "captured";
         result.reason =
@@ -257,14 +279,6 @@ async function captureScene(scene, result, sceneOutput) {
         result.stage = "compare";
         save();
         const actual = join(sceneOutput, "capture.png");
-        if (
-            dimensions.width !== capture.width ||
-            dimensions.height !== capture.height
-        ) {
-            throw new Error(
-                `Capture dimensions ${capture.width}x${capture.height} differ from reference ${dimensions.width}x${dimensions.height}.`,
-            );
-        }
         const full = compareImages(actual, reference);
         const foreground = compareRegion(
             actual,

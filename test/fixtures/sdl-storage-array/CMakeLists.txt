@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.24)
+project(sdl_storage_array_check LANGUAGES CXX)
+find_package(SDL3 CONFIG REQUIRED)
+add_executable(sdl_storage_array_check check.cpp)
+target_compile_features(sdl_storage_array_check PRIVATE cxx_std_20)
+target_compile_options(sdl_storage_array_check PRIVATE -Wall -Wextra -Wpedantic -Werror)
+target_link_libraries(sdl_storage_array_check PRIVATE SDL3::SDL3)

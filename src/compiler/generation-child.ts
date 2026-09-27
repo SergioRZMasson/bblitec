@@ -48,6 +48,7 @@ export function runGenerationChild(options: GenerationChildOptions): string {
             },
             ...(options.input === undefined ? {} : { input: options.input }),
             encoding: "utf8",
+            windowsHide: true,
             maxBuffer: options.maxBuffer ?? 64 * 1024 * 1024,
         },
     );

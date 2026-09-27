@@ -50,7 +50,7 @@ async function compileStages(
     shader: string,
     stages: readonly { stem: string; entryPoint: string }[],
     pinnedBindings: boolean,
-    target: "d3d12" | "vulkan" | "metal" | "all" = "d3d12",
+    target: "d3d12" | "vulkan" | "metal" | "all" | "reflection" = "d3d12",
 ): Promise<string> {
     const directory = join(root, "generated", name, "upstream/shaders");
     mkdirSync(directory, { recursive: true });
@@ -112,6 +112,73 @@ fn resources(i: u32) -> vec4f {
 @fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f {
     return resources(u32(p.x));
 }`;
+
+test(
+    "Dawn reflection emits complete layouts without offline shader binaries or DXC",
+    { skip: !tools.bbliteTint },
+    async (t) => {
+        const root = fixtureRoot(t);
+        const stages = [
+            { stem: "pinned.vert", entryPoint: "vs" },
+            { stem: "pinned.frag", entryPoint: "fs" },
+        ];
+        const directory = await compileStages(
+            root,
+            "reflection",
+            pinnedResources,
+            stages,
+            true,
+            "reflection",
+        );
+        const expected = stages.map(({ stem }) =>
+            sidecarLines(directory, stem),
+        );
+        for (const layout of expected) {
+            assert.ok(layout.some((line) => line.startsWith("@binding")));
+            assert.ok(layout.includes("r0 morph"));
+        }
+        assert.ok(
+            !readdirSync(directory).some((name) =>
+                /\.(?:hlsl|msl|spv|dxil)$/.test(name),
+            ),
+        );
+        const result = await compileOfflineShaders({
+            directories: [directory],
+            repositoryRoot: root,
+            target: "reflection",
+            tools: {
+                bbliteTint: tools.bbliteTint,
+                dxc: undefined,
+                cmake: tools.cmake,
+            },
+            cold: true,
+        });
+        assert.equal(result.compiled, 0);
+        assert.equal(result.tintCompiled + result.tintReused, stages.length);
+        assert.deepEqual(
+            stages.map(({ stem }) => sidecarLines(directory, stem)),
+            expected,
+        );
+        await compileOfflineShaders({
+            directories: [directory],
+            repositoryRoot: root,
+            target: "vulkan",
+            tools: {
+                bbliteTint: tools.bbliteTint,
+                dxc: undefined,
+                cmake: tools.cmake,
+            },
+        });
+        assert.deepEqual(
+            stages.map(({ stem }) =>
+                sidecarLines(directory, stem).filter(
+                    (line) => !line.startsWith("@spirv-"),
+                ),
+            ),
+            expected,
+        );
+    },
+);
 
 test(
     "pinned registers order textures before storage and preserve uniform order across groups",
@@ -450,6 +517,7 @@ fn tint(t: texture_2d<f32>, s: sampler, uv: vec2f) -> vec4f { return textureSamp
 
 test("offline targets select only their executable format", () => {
     for (const [target, products, dxil] of [
+        ["reflection", [".slots", ".tint-reflection.txt"], false],
         ["d3d12", [".hlsl", ".slots", ".tint-reflection.txt"], true],
         [
             "vulkan",

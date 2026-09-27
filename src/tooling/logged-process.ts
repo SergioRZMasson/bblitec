@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type SpawnSyncOptions } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 
 /**
@@ -20,6 +20,29 @@ export function runChecked(
     if (result.status !== 0) {
         throw new Error(`${command} exited with status ${result.status}.`);
     }
+}
+
+/** Run a host tool that must succeed, retaining its output in failures. */
+export function runCaptured(
+    command: string,
+    args: readonly string[],
+    failure: string,
+    options: Pick<
+        SpawnSyncOptions,
+        "cwd" | "env" | "timeout" | "maxBuffer"
+    > = {},
+): string {
+    const result = spawnSync(command, args, {
+        ...options,
+        encoding: "utf8",
+        windowsHide: true,
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0)
+        throw new Error(
+            `${failure} (${result.status ?? result.signal}): ${result.stdout}${result.stderr}`.trim(),
+        );
+    return result.stdout;
 }
 
 /** Run with stdout/stderr in one log, retaining the caller's exit-code policy. */

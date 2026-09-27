@@ -48,12 +48,11 @@ try {
     if (-not $id -or $id -notmatch '^[a-zA-Z0-9_-]+$') { throw 'Android requires a registered scene ID.' }
     if (-not $SkipGenerate) {
         Invoke-Checked 'node' @('dist/src/scene-command.js', 'compile', $id)
-        if ($Backend -ne 'DAWN') {
-            Invoke-Checked 'node' @('dist/src/compile-shaders.js', '--scene', $id, '--target', 'vulkan')
-        }
+        $shaderTarget = if ($Backend -eq 'DAWN') { 'reflection' } else { 'vulkan' }
+        Invoke-Checked 'node' @('dist/src/compile-shaders.js', '--scene', $id, '--target', $shaderTarget)
     }
     $generated = Join-Path $root $resolved.output
-    if (($SkipGenerate -or $Backend -ne 'DAWN') -and $env:BBLITE_ANDROID_INPUTS_PREPARED -ne '1') {
+    if ($env:BBLITE_ANDROID_INPUTS_PREPARED -ne '1') {
         Invoke-Checked 'node' @('--input-type=module', '-e',
             'import { refreshBuildStamp } from "./dist/src/generation-stamp.js"; refreshBuildStamp(process.argv[1], { generatedInputsChanged: true });', $generated)
     }
@@ -143,8 +142,8 @@ try {
     New-Item -ItemType Directory -Force "$payload/shaders", $libraries | Out-Null
     if (Test-Path "$generated/assets") { Copy-Item "$generated/assets" $payload -Recurse }
     if ('ui:rml' -in $sceneFeatures) { Copy-Item "$root/native/android/fonts" $payload -Recurse }
-    $shaderExtensions = @()
-    if ($Backend -ne 'DAWN') { $shaderExtensions += @('.spv', '.slots') }
+    $shaderExtensions = @('.slots')
+    if ($Backend -ne 'DAWN') { $shaderExtensions += '.spv' }
     if ($Backend -ne 'SDL_GPU') { $shaderExtensions += '.wgsl' }
     Get-ChildItem "$build/shaders" -File | Where-Object { $_.Extension -in $shaderExtensions } |
         Copy-Item -Destination "$payload/shaders"

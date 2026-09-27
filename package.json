@@ -51,7 +51,7 @@
     "lint:cpp": "npm run build && node dist/src/code-quality.js lint",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"tools/**/*.mjs\" \"checks/plugins/*.{js,mjs}\" \"*.{json,mjs}\" && npm run build && node dist/src/code-quality.js format --write",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"tools/**/*.mjs\" \"checks/plugins/*.{js,mjs}\" \"*.{json,mjs}\" && npm run build && node dist/src/code-quality.js format",
-    "lint:exports": "ts-prune -p tsconfig.json",
+    "lint:exports": "npm run build && node dist/src/unused-exports.js",
     "patches:check": "npm run build && node dist/src/patch-inventory.js"
   },
   "devDependencies": {
@@ -71,7 +71,6 @@
     "playwright-core": "^1.62.1",
     "pngjs": "^7.0.0",
     "prettier": "3.9.8",
-    "ts-prune": "^0.10.3",
     "typescript": "^5.9.2",
     "typescript-eslint": "8.70.0"
   }

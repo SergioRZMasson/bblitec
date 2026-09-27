@@ -37,6 +37,12 @@ Capture native and WebGPU pixels on the same device, at the same canvas dimensio
 Do not use Windows goldens for Linux, macOS or Android. Retain device/build identity and both images.
 Exclude physics through generated feature reach; keep UI-heavy applications and suppress only their UI pixels.
 
+Fresh drivers can pass `applied-group-pose-v1` as the final `suiteBrowserModule`/`suiteBrowserModuleDigest`
+argument to apply property poses and preserve manager blending. Active groups must share one manager,
+or be a single unowned group, so their evaluation order is known.
+Record that protocol and module digest in a new artifact directory. Omitted protocol retains frozen-reference
+bytes; reference capture/adoption stays unchanged.
+
 Desktop canvas-only captures use `BBLITE_CAPTURE_UI=0`. Run parity with `--recapture-reference` on that
 host before comparing either native backend; its browser image stays in `artifacts/parity-canvas/`.
 Android native captures accept `tools/android-smoke.mjs --canvas-only`. Browser captures must run on
@@ -46,7 +52,11 @@ sets the rendering viewport. Emulator presentation failures require explicit GPU
 including worker canvases, rather than treating a black screenshot as a rendering result.
 
 iOS Simulator captures use native GPU readback at the actual drawable size. `ios-smoke.mjs` supports
-`--canvas-only`, `--frame` and `--replay`; interactive captures require an isolated Simulator.
+`--canvas-only`, `--frame`, `--replay` and `--render-state`. `--lifecycle --frame 1800` verifies
+background/foreground rendering with the same process; increase the frame if capture finishes early.
+`--max-frames` extends replay beyond `--frame`; `--runtime-trace` records lifecycle assertions.
+Staged bundles require `--build-directory` pointing to their producing CMake build.
+Interactive captures require an isolated Simulator.
 iOS 16.2 WebKit has no WebGPU. Same-Mac Chrome comparisons are cross-platform diagnostics, not
 iOS-browser parity. Viewport, DPR and display dimensions must match; authored supersampling uses
 the browser compositor, never offline PNG resizing.
@@ -62,7 +72,7 @@ that keep repainting without reaching readiness.
 
 | Evidence | Boundary |
 | --- | --- |
-| Ordinary native captures | Reconstructed CPU blocks, not intercepted GPU uploads |
+| Ordinary native captures | Main-scene draw plan and reconstructed CPU blocks; utility-layer draws and GPU uploads are not recorded |
 | Browser capture | Shaders, buffers, textures, bundles and draws |
 | .slots | SDL's compiled bindings after dead declarations disappear; the module's declared layout for Dawn |
 | diff --compose | Asset materials; excludes scene-created materials/later writes |

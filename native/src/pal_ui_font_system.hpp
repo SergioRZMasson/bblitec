@@ -18,7 +18,7 @@ class SystemUiFontEngine final : public Rml::FontEngineInterface {
     using FaceKey = std::tuple<std::string, Rml::Style::FontStyle, Rml::Style::FontWeight>;
     Rml::FontEngineInterface& renderer_;
     std::string default_family_;
-    std::set<FaceKey> processed_;
+    std::map<FaceKey, Rml::Style::FontWeight> processed_;
     std::map<std::string, std::vector<std::string>> families_;
     std::set<std::string> reported_;
 
@@ -55,19 +55,28 @@ class SystemUiFontEngine final : public Rml::FontEngineInterface {
         return families_.emplace(value, std::move(names)).first->second;
     }
 
-    void ensure_face(const std::string& family, Rml::Style::FontStyle style,
-                     Rml::Style::FontWeight weight) {
+    Rml::Style::FontWeight ensure_face(const std::string& family, Rml::Style::FontStyle style,
+                                       Rml::Style::FontWeight weight) {
         const FaceKey key{family, style, weight};
-        if (processed_.contains(key))
-            return;
+        if (const auto found = processed_.find(key); found != processed_.end())
+            return found->second;
         const auto face = find_system_font(family, static_cast<int>(weight),
                                            style == Rml::Style::FontStyle::Italic);
         if (!face || Rml::StringUtilities::ToLower(face->family) != family) {
-            processed_.insert(key);
-            return;
+            processed_.emplace(key, weight);
+            return weight;
         }
-        if (!LoadFontFace(face->path.string(), face->face_index, family, style, weight, false))
+        const auto resolved_weight =
+            weight == Rml::Style::FontWeight::Auto
+                ? weight
+                : static_cast<Rml::Style::FontWeight>(
+                      face->named_weight.value_or(static_cast<int>(weight)));
+        if (!processed_.contains(FaceKey{family, style, resolved_weight}) &&
+            !LoadFontFace(face->path.string(), face->face_index, family, style, resolved_weight,
+                          false))
             throw std::runtime_error("RmlUi failed to load installed font: " + family);
+        processed_.emplace(key, resolved_weight);
+        return resolved_weight;
     }
 
 public:
@@ -89,7 +98,8 @@ public:
                       bool fallback) override {
         const bool loaded = renderer_.LoadFontFace(path, index, family, style, weight, fallback);
         if (loaded)
-            processed_.emplace(Rml::StringUtilities::ToLower(family), style, weight);
+            processed_.insert_or_assign(
+                FaceKey{Rml::StringUtilities::ToLower(family), style, weight}, weight);
         return loaded;
     }
     bool LoadFontFace(Rml::Span<const Rml::byte> bytes, int index, const Rml::String& family,
@@ -97,7 +107,8 @@ public:
                       bool fallback) override {
         const bool loaded = renderer_.LoadFontFace(bytes, index, family, style, weight, fallback);
         if (loaded)
-            processed_.emplace(Rml::StringUtilities::ToLower(family), style, weight);
+            processed_.insert_or_assign(
+                FaceKey{Rml::StringUtilities::ToLower(family), style, weight}, weight);
         return loaded;
     }
     Rml::FontFaceHandle GetFontFaceHandle(const Rml::String& family, Rml::Style::FontStyle style,
@@ -109,16 +120,17 @@ public:
         for (const auto& name : families(family)) {
             if (name.empty())
                 continue;
-            ensure_face(name, style, weight);
-            if (const auto handle = renderer_.GetFontFaceHandle(name, style, weight, size))
+            const auto resolved_weight = ensure_face(name, style, weight);
+            if (const auto handle = renderer_.GetFontFaceHandle(name, style, resolved_weight, size))
                 return handle;
         }
         if (reported_.insert(family).second)
             Rml::Log::Message(Rml::Log::LT_WARNING,
                               "UI font-family '%s' is unavailable; using '%s'.", family.c_str(),
                               default_family_.c_str());
-        ensure_face(default_family_, style, weight);
-        const auto handle = renderer_.GetFontFaceHandle(default_family_, style, weight, size);
+        const auto resolved_weight = ensure_face(default_family_, style, weight);
+        const auto handle =
+            renderer_.GetFontFaceHandle(default_family_, style, resolved_weight, size);
         if (!handle)
             throw std::runtime_error("The retained UI has no usable default font face.");
         return handle;

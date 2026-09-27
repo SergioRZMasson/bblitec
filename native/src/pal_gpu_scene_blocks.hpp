@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <vector>
 #include "pal_gpu_variants.hpp"
+#include "pal_gpu_velocity.hpp"
 #if BBLITE_HAS_PBR_RENDERER
 #include <bblite/upstream/renderer_plan.hpp>
 #endif
@@ -29,62 +30,6 @@ struct PinnedGeometryParams {
     std::array<float, 16> previousViewProjection{};
     std::array<float, 4> cameraNearFar{};
 };
-
-/**
- * A geometry task's Standard renderables' velocity state
- * (`standard-geometry-renderable.ts`), one per mesh slot.
- *
- * The pin builds one renderable per bound mesh. It packs the mesh's world
- * as `previousWorld` when built and starts with `velocityReady` false; each
- * frame's update writes the mesh block from that snapshot and flag, then
- * snapshots the current world and sets the flag, so a renderable's first
- * frame writes `velocityEnabled` 0 and the composed vertex's previous clip
- * falls back to the current one. The task rebuilds every renderable when
- * the scene's renderable version moves (`rebuildBoundMeshes`), which here is
- * the scene's `render_topology_version`, and a slot a new mesh reuses is a
- * new renderable. The composed velocity arm and its block tail belong to the
- * Standard geometry output alone, so the history is written for nothing
- * else. Unguarded because the geometry encode names it in both backends
- * whatever the variant count.
- */
-struct PinnedVelocityHistory {
-    struct Renderable {
-        MeshHandle mesh{};
-        /** The pin's `previousWorld` snapshot and `velocityReady`. */
-        std::array<float, 16> previous_world{};
-        bool velocity_ready = false;
-        /**
-         * The history frame this renderable last updated in and what that
-         * update wrote: the pin updates each bound renderable once a frame,
-         * before any draw, so every draw of the mesh in the frame binds the
-         * same block.
-         */
-        std::uint64_t updated_frame = 0;
-        std::array<float, 16> written_previous_world{};
-        float written_velocity_enabled = 0.0f;
-    };
-    std::uint64_t frame = 0;
-    std::uint64_t topology_version = 0;
-    std::vector<Renderable> renderables;
-};
-
-template <typename Block>
-concept PinnedVelocityBlock = requires(Block block) {
-    block.previousWorld;
-    block.velocityEnabled;
-};
-
-/** Opens a task frame; a moved renderable version rebuilds every renderable. */
-void begin_pinned_velocity_frame(PinnedVelocityHistory& history, const Scene& scene);
-
-/**
- * The renderable's update for this frame, run once however many draws the
- * mesh has: builds the renderable on its first frame, then writes the
- * snapshot and flag and snapshots `world`.
- */
-const PinnedVelocityHistory::Renderable& update_pinned_velocity(PinnedVelocityHistory& history,
-                                                                MeshHandle mesh,
-                                                                const std::array<float, 16>& world);
 
 #if BBLITE_PINNED_MATERIALS || BBLITE_HAS_BILLBOARDS
 /**
@@ -169,25 +114,6 @@ inline void pinned_mesh_light_selection(const Scene& scene, const Engine& engine
 upstream::MeshUniforms pinned_mesh_block(const Scene& scene, const Engine& engine, MeshHandle mesh,
                                          const PinnedVelocityHistory* velocity_history = nullptr);
 
-/**
- * A geometry task's pre-draw update (`geometry-renderer-task.ts` executes
- * every bound renderable's `update` before its first draw): each Standard
- * mesh of the layer's plan, the hidden ones included, because the pin
- * reads visibility only at the draw.
- */
-void update_pinned_velocity_frame(PinnedVelocityHistory& history, const Scene& scene,
-                                  const Engine& engine,
-                                  const std::vector<upstream::RenderItem>& items);
-
-/**
- * The Standard geometry output's world and tail (`standard-geometry-renderable.ts`
- * `_baseUpdate`): what this frame's update wrote for the mesh. The generic
- * lambda makes the access dependent: outside a template both `if constexpr`
- * branches must compile, and most scenes' mirrored MeshUniforms carries no
- * velocity tail.
- */
-void write_pinned_velocity_tail(const PinnedVelocityHistory& history, MeshHandle mesh,
-                                upstream::MeshUniforms& block);
 #endif
 
 #if BBLITE_NODE_VARIANTS > 0

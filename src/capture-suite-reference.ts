@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { extname, relative, resolve, sep } from "node:path";
 import type { NativeHostUi } from "./compiler/types.js";
+import { applyCaptureAnimationPose } from "./capture-animation-pose.js";
 import {
     engineCaptureEntryUrl,
     engineFrameCaptureModule,
@@ -146,6 +147,9 @@ export function flattenedBundledDemoAssetPath(
 
 export type SuiteSourceTransform = (source: string) => string;
 
+/** Fresh diagnostics only; omitted means the frozen-reference protocol. */
+type SuiteAnimationPoseProtocol = "applied-group-pose-v1";
+
 const fixedEngineStartMarker =
     'document.getElementById("renderCanvas")?.setAttribute("data-fixed-engine-starting", "true");\n    await startEngine(engine);';
 
@@ -189,15 +193,11 @@ export function pinnedBrowserModuleUrl(relativePath: string): string {
  * scene pinned to a pose — the seek the registry describes injected
  * before `registerScene`.
  *
- * The seek is a time write plus a pause, which is what the corpus
- * scenes' own frozen branches do: the pose then lands on the next tick,
- * from whoever drives the group. `goToFrame` is the other spelling and
- * it does not serve every scene — it converts frames through the group's
- * own rate, so one number cannot seek groups of different rates to one
- * time, and it applies the pose itself, which a skinned glTF group
- * refuses unless its controller has already seen an engine (pinned error
- * #378: a weighted-mixer scene's controller never has). So the registry
- * pins a pose in seconds and the harness writes seconds.
+ * Frozen-reference provenance includes this legacy time-write-and-pause
+ * protocol. It does not apply ordinary property-controller poses: their
+ * paused ticks return without evaluating. The opt-in applied-pose protocol
+ * seeks each group's own frame rate with its engine and restores manager
+ * blending; its different module digest keeps it out of legacy evidence.
  */
 export function suiteBrowserModule(
     sourcePath: string,
@@ -206,11 +206,56 @@ export function suiteBrowserModule(
     captureAnimationGroups?: string[],
     fixedAnimationFrame?: number,
     independentEngines?: number,
+    animationPoseProtocol?: SuiteAnimationPoseProtocol,
 ): string {
+    if (animationPoseProtocol !== undefined) {
+        if (animationPoseProtocol !== "applied-group-pose-v1")
+            throw new Error("Unknown animation capture protocol.");
+        if (
+            captureTimeSeconds === undefined ||
+            !Number.isFinite(captureTimeSeconds) ||
+            captureTimeSeconds < 0
+        )
+            throw new Error(
+                "Applied animation capture needs a finite nonnegative pose.",
+            );
+        if (independentEngines !== undefined)
+            throw new Error(
+                "Applied animation capture requires one local scene engine.",
+            );
+    }
     const input = readFileSync(resolve(sourcePath), "utf8");
     const transformed = transform ? transform(input) : input;
+    if (
+        animationPoseProtocol !== undefined &&
+        transformed.split("await registerScene(scene);").length !== 2
+    )
+        throw new Error(
+            "Applied animation capture needs one scene registration anchor.",
+        );
+    const freshPose =
+        animationPoseProtocol === undefined
+            ? undefined
+            : (
+                  `import { onBeforeRender as __captureOnBeforeRender, goToFrame as __captureGoToFrame } from "babylon-lite";\n` +
+                  `const __captureApplyPose = ${applyCaptureAnimationPose.toString()};\n` +
+                  transformed
+              ).replace(
+                  "await registerScene(scene);",
+                  `let __animationSeekFrame = 0;
+    __captureOnBeforeRender(scene, () => {
+        __animationSeekFrame += 1;
+        if (__animationSeekFrame === 10) {
+            __captureApplyPose(${captureAnimationGroups?.length ? `[${captureAnimationGroups.join(", ")}]` : "scene.animationGroups"}, ${captureTimeSeconds}, engine, __captureGoToFrame);
+            canvas.dataset.animationPoseProtocol = "applied-group-pose-v1";
+            canvas.dataset.animationFrozen = "true";
+        }
+    });
+    await registerScene(scene);`,
+              );
     const framed =
-        captureTimeSeconds !== undefined
+        freshPose ??
+        (captureTimeSeconds !== undefined
             ? (
                   `import { ` +
                   `onBeforeRender as __captureOnBeforeRender, ` +
@@ -236,7 +281,7 @@ export function suiteBrowserModule(
     });
     await registerScene(scene);`,
               )
-            : transformed;
+            : transformed);
     const source = pinnedPackageSpecifiers(
         framed,
         independentEngines === undefined
@@ -274,6 +319,7 @@ export function suiteBrowserModuleDigest(
     captureAnimationGroups?: string[],
     fixedAnimationFrame?: number,
     independentEngines?: number,
+    animationPoseProtocol?: SuiteAnimationPoseProtocol,
 ): string {
     return createHash("sha256")
         .update(
@@ -284,6 +330,7 @@ export function suiteBrowserModuleDigest(
                 captureAnimationGroups,
                 fixedAnimationFrame,
                 independentEngines,
+                animationPoseProtocol,
             ),
         )
         .digest("hex");

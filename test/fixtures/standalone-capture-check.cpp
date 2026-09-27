@@ -3,6 +3,8 @@
 #include "pal_sdl_gpu_commands.hpp"
 #include "pal_sdl_gpu_resources.hpp"
 #include "pal_sdl_gpu_writes.hpp"
+#include "pal_sdl_gpu_texture_ops.hpp"
+#include "pal_sdl_gpu_canvas.hpp"
 #include "pal_dawn_resources.hpp"
 #include <cassert>
 #include <cmath>
@@ -124,6 +126,26 @@ extern "C" void SDLCALL SDL_BlitGPUTexture(SDL_GPUCommandBuffer*, const SDL_GPUB
     blits.push_back(*blit);
 }
 extern "C" const char* SDLCALL SDL_GetGPUDeviceDriver(SDL_GPUDevice*) { return "direct3d12"; }
+extern "C" const char* SDLCALL SDL_GetError() { return "fixture failure"; }
+extern "C" SDL_PropertiesID SDLCALL SDL_GetGPUDeviceProperties(SDL_GPUDevice*) {
+    assert(false && "D3D12 canvas allocation must not query Vulkan properties");
+    return 0;
+}
+extern "C" bool SDLCALL SDL_GetBooleanProperty(SDL_PropertiesID, const char*, bool) {
+    assert(false && "D3D12 canvas allocation must not query Vulkan properties");
+    return false;
+}
+extern "C" SDL_PropertiesID SDLCALL SDL_CreateProperties() {
+    assert(false && "D3D12 canvas allocation must not create Vulkan properties");
+    return 0;
+}
+extern "C" bool SDLCALL SDL_SetBooleanProperty(SDL_PropertiesID, const char*, bool) {
+    assert(false && "D3D12 canvas allocation must not set Vulkan properties");
+    return false;
+}
+extern "C" void SDLCALL SDL_DestroyProperties(SDL_PropertiesID) {
+    assert(false && "D3D12 canvas allocation must not destroy Vulkan properties");
+}
 extern "C" SDL_GPUTransferBuffer* SDLCALL
 SDL_CreateGPUTransferBuffer(SDL_GPUDevice*, const SDL_GPUTransferBufferCreateInfo* info) {
     transfers.emplace_back(std::vector<std::uint8_t>(info->size));
@@ -219,9 +241,7 @@ struct TextGpuCapture;
 #include "capture-options.hpp"
 void CaptureGate::maybe_write_standalone_render_capture(const char*, const Engine&, std::uint32_t,
                                                         std::uint32_t, long, TextGpuCapture*) {}
-[[noreturn]] void gpu_error(const char* operation) { throw std::runtime_error(operation); }
 [[noreturn]] void dawn_error(const std::string& operation) { throw std::runtime_error(operation); }
-#include "clear-color.hpp"
 #include "buffer-batch.hpp"
 #include "texture-copy.hpp"
 SDL_GPUSampleCount gpu_sample_count_from(std::uint32_t samples) {

@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.24)
+
 # The one owner of the maintained patch series and of the record prebuilt
 # dependency artifacts (Dawn, LabSound, RmlUi, the trimmed SDL) carry:
 # <prefix>_SOURCE, the pinned commit or version; <prefix>_PATCHES, each

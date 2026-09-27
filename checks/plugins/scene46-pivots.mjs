@@ -12,11 +12,11 @@ import {
     maxError,
     observedStep,
     requireObservations,
+    observedState,
 } from "./support.mjs";
 
 /**
  * @import { PluginContext } from "../../dist/src/tooling/check-run.js"
- * @import { ObservedFrame, ObservedStep } from "./support.mjs"
  */
 
 /**
@@ -75,16 +75,6 @@ const pivot = (mesh, point) => {
 const distance = (a, b) =>
     Math.hypot(...mapVector(a, (value, index) => value - b[index]));
 
-/**
- * @param {ObservedStep | ObservedFrame} record
- * @param {string} label
- * @returns {ObservedState}
- */
-function observedState(record, label) {
-    assert(record.state, `the observed ${label} recorded no state`);
-    return /** @type {ObservedState} */ (record.state);
-}
-
 /** @param {PluginContext} context */
 export function check(context) {
     const observations = requireObservations(context);
@@ -92,20 +82,18 @@ export function check(context) {
     const captureFrames = observations.captureFrames;
     assert(captureFrames, "the observations carry no capture frames");
     for (const frame of captureFrames) {
-        const state = observedState(frame, `frame ${frame.frame}`);
+        const state = /** @type {ObservedState} */ (observedState(frame));
         assert.equal(
             state.steps,
             frame.frame + 1,
             `browser frame ${frame.frame}: Havok stepped ${state.steps} times`,
         );
     }
-    const baseline = observedState(
-        observedStep(observations, "baseline"),
-        "step 'baseline'",
+    const baseline = /** @type {ObservedState} */ (
+        observedState(observedStep(observations, "baseline"))
     );
-    const pointer = observedState(
-        observedStep(observations, "pointer-wheel"),
-        "step 'pointer-wheel'",
+    const pointer = /** @type {ObservedState} */ (
+        observedState(observedStep(observations, "pointer-wheel"))
     );
     assert.deepEqual(
         pointer.camera,
@@ -116,9 +104,8 @@ export function check(context) {
         pointer.steps > baseline.steps,
         "browser physics stopped during input",
     );
-    const resized = observedState(
-        observedStep(observations, "resize"),
-        "step 'resize'",
+    const resized = /** @type {ObservedState} */ (
+        observedState(observedStep(observations, "resize"))
     );
     assert.deepEqual(resized.viewport, { width: 1000, height: 600 });
     assert(
@@ -153,9 +140,8 @@ export function check(context) {
             let positionError;
             let rotationError;
             if (browserFrame !== undefined) {
-                const expected = observedState(
-                    browserFrame,
-                    `frame ${browserFrame.frame}`,
+                const expected = /** @type {ObservedState} */ (
+                    observedState(browserFrame)
                 ).bodies;
                 /** @param {number} index */
                 const expectedBody = (index) => {

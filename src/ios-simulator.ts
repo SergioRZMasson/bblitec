@@ -74,10 +74,24 @@ export function selectIosSimulator(
 export function iosCaptureEnvironment(
     scene: SceneDefinition,
     backend: "sdl_gpu" | "dawn",
-    options: Pick<MeasuredRunOptions, "frame" | "tape" | "testPass"> & {
+    options: Pick<
+        MeasuredRunOptions,
+        "frame" | "maxFrames" | "tape" | "testPass"
+    > & {
         canvasOnly?: boolean;
+        runtimeTrace?: boolean;
     } = {},
 ): Record<string, string> {
+    if (
+        options.maxFrames !== undefined &&
+        (options.frame === undefined ||
+            !Number.isSafeInteger(options.maxFrames) ||
+            options.maxFrames <= options.frame ||
+            options.maxFrames > 1000001)
+    )
+        throw new Error(
+            "--max-frames requires --frame and an integer in [frame + 1, 1000001].",
+        );
     return measuredRunEnvironment({
         ...options,
         environment: scene.parity?.nativeEnvironment ?? {},
@@ -86,6 +100,7 @@ export function iosCaptureEnvironment(
             BBLITE_GPU_BACKEND: backend,
             BBLITE_GPU_DEBUG: "1",
             ...(options.canvasOnly ? { BBLITE_CAPTURE_UI: "0" } : {}),
+            ...(options.runtimeTrace ? { BBLITE_RUNTIME_TRACE: "1" } : {}),
         },
     });
 }
@@ -102,4 +117,42 @@ export function verifyIosNativeExit(log: string, runId: string): void {
         throw new Error(
             `The native app exited with status ${exits[0]![1]}; inspect simulator.log.`,
         );
+}
+
+/** simctl prints the application's PID after launching or foregrounding it. */
+export function iosLaunchPid(log: string, applicationId: string): number {
+    const prefix = `${applicationId}: `;
+    const lines = log.split(/\r?\n/).filter((line) => line.startsWith(prefix));
+    const value = lines.length === 1 ? lines[0]!.slice(prefix.length) : "";
+    const pid = Number(value);
+    if (!/^\d+$/.test(value) || !Number.isSafeInteger(pid) || pid <= 0)
+        throw new Error("simctl did not report one valid application PID.");
+    return pid;
+}
+
+/** Completed native frames, independent of Simulator launch/UI readiness. */
+export function iosRenderedFrames(log: string): Record<string, number> {
+    const frames: Record<string, number> = {};
+    for (const match of log.matchAll(
+        /\[mem\]\[frame\] engine=(\d+) frame=(\d+) /g,
+    ))
+        frames[match[1]!] = Number(match[2]);
+    return frames;
+}
+
+export function verifyIosFrameProgress(
+    before: Readonly<Record<string, number>>,
+    after: Readonly<Record<string, number>>,
+): void {
+    if (Object.keys(before).length === 0)
+        throw new Error(
+            "No native rendering was reported before backgrounding.",
+        );
+    for (const [engine, frame] of Object.entries(before)) {
+        const resumed = after[engine];
+        if (resumed === undefined || resumed <= frame)
+            throw new Error(
+                `Engine ${engine} reported no rendering progress after foregrounding.`,
+            );
+    }
 }

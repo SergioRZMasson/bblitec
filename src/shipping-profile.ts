@@ -4,12 +4,12 @@
  * features, as `tools/shipping-profile.cmake` derives them from the scene's
  * `features.cmake` through `native/dependency-features.cmake`.
  */
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findRepositoryRoot } from "./repository-root.js";
+import { runCaptured } from "./tooling/logged-process.js";
 
 export interface ShippingFeatures {
     features: string[];
@@ -54,7 +54,7 @@ export function writeShippingProfile(
     generatedDirectory: string,
     output: string,
 ): ShippingFeatures {
-    const result = spawnSync(
+    runCaptured(
         cmake,
         [
             `-DBBLITE_GENERATED_DIR=${resolve(generatedDirectory)}`,
@@ -66,13 +66,8 @@ export function writeShippingProfile(
                 "shipping-profile.cmake",
             ),
         ],
-        { encoding: "utf8", windowsHide: true },
+        `tools/shipping-profile.cmake failed for ${generatedDirectory}`,
     );
-    if (result.error) throw result.error;
-    if (result.status !== 0)
-        throw new Error(
-            `tools/shipping-profile.cmake failed for ${generatedDirectory}: ${result.stdout}${result.stderr}`,
-        );
     return readShippingFeatures(readFileSync(output, "utf8"));
 }
 

@@ -1,11 +1,12 @@
 import ts from "typescript";
 import type { LoweringContext } from "./context.js";
+import { lowerPinnedBody } from "./pinned-body-lowerer.js";
 import {
     PinnedNumericLowerer,
     type PinnedBinding,
 } from "./pinned-numeric-lowerer.js";
 
-const fields = new Map([
+export const meshCpuStreamFields: ReadonlyMap<string, string> = new Map([
     ["_cpuPositions", "positions"],
     ["_cpuNormals", "normals"],
     ["_cpuUvs", "uvs"],
@@ -22,6 +23,90 @@ export const meshCpuStreamArguments =
 export const meshUploadedStreamArguments =
     "positions, normals, indices, retained_upload_stream(uvs), retained_upload_stream(uvs2), retained_upload_stream(tangents), retained_upload_stream(colors)";
 
+/** The optional source capture hook retains additional aliases only while enabled. */
+function lowerFactoryRecoveryCapture(context: LoweringContext): string {
+    const module = "src/engine/device-lost-recovery-capture.ts";
+    const { file, declaration } = context.functionDeclaration(
+        module,
+        "attachRecoveryCapture",
+    );
+    const method = context.findNodes(
+        declaration,
+        (node): node is ts.MethodDeclaration =>
+            ts.isMethodDeclaration(node) && node.name.getText(file) === "m",
+    )[0];
+    if (!method?.body)
+        return context.contractError(
+            declaration,
+            "Expected mesh recovery capture hook.",
+        );
+    const bindings = new Map<string, PinnedBinding>([
+        [
+            "engine._deviceLostRecovery?._meshCaptureRefs",
+            {
+                cpp: '(engine.device_recovery && std::ranges::any_of(engine.device_recovery->registrations, [](const auto& registration) { return registration->kind == "scene"; }))',
+                type: "bool",
+            },
+        ],
+        ["gpuIndices", { cpp: "indices", type: "opaque" }],
+        ["indexFormat", { cpp: 'std::string("uint32")', type: "string" }],
+        ["mesh._cpuGpuIndices", { cpp: "retained.indices", type: "opaque" }],
+        ["mesh._cpuIndexFormat", { cpp: "index_format", type: "string" }],
+    ]);
+    for (const [source, member] of [
+        ["uv2s", "uvs2"],
+        ["tangents", "tangents"],
+        ["colors", "colors"],
+    ] as const) {
+        bindings.set(source, {
+            cpp: member,
+            type: "opaque",
+            absentCpp: `!${member}`,
+        });
+        const field = [...meshCpuStreamFields].find(
+            ([, value]) => value === member,
+        )![0];
+        bindings.set(`mesh.${field}`, {
+            cpp: `retained.${member}`,
+            type: "opaque",
+        });
+    }
+    const factory = context.functionDeclaration(
+        "src/mesh/mesh-factories.ts",
+        "createMeshFromData",
+    );
+    const call = context.findNodes(
+        factory.declaration,
+        (node): node is ts.CallExpression =>
+            ts.isCallExpression(node) &&
+            node.expression.getText(factory.file) === "engine._dlr?.m",
+    )[0];
+    if (!call)
+        return context.contractError(
+            factory.declaration,
+            "Expected data mesh recovery capture.",
+        );
+    context.assertExpressionShape(
+        call,
+        'engine._dlr?.m(mesh, uvs2 ?? null, tangents ?? null, colors ?? null, indices, "uint32")',
+        "data mesh capture arguments",
+    );
+    return `// ${context.provenance(module, "attachRecoveryCapture", "mesh hook")}
+void capture_factory_cpu_streams(Engine& engine, MeshCpuStreams& retained, const js::U32Array& indices, const std::optional<js::F32Array>& uvs2, const std::optional<js::F32Array>& tangents, const std::optional<js::F32Array>& colors) {
+    [[maybe_unused]] std::string index_format;
+${lowerPinnedBody(file, method.body.statements, {
+    bindings,
+    calls: new Map(),
+    expression(node) {
+        return node.kind === ts.SyntaxKind.NullKeyword
+            ? "std::optional<js::F32Array>{}"
+            : undefined;
+    },
+})}
+}
+`;
+}
+
 /** The source's CPU owner fields and optional predicates, over retained native arrays. */
 export function lowerMeshCpuStreamRetainers(context: LoweringContext): string {
     const module = "src/mesh/mesh-factories.ts";
@@ -33,7 +118,7 @@ export function lowerMeshCpuStreamRetainers(context: LoweringContext): string {
                     name,
                 );
                 const bindings = new Map<string, PinnedBinding>();
-                for (const field of fields.values()) {
+                for (const field of meshCpuStreamFields.values()) {
                     bindings.set(field, { cpp: field, type: "opaque" });
                     if (["uvs", "uvs2", "tangents", "colors"].includes(field))
                         bindings.set(`${field}?.length`, {
@@ -60,9 +145,11 @@ export function lowerMeshCpuStreamRetainers(context: LoweringContext): string {
                         (node): node is ts.PropertyAssignment =>
                             ts.isPropertyAssignment(node) &&
                             ts.isIdentifier(node.name) &&
-                            fields.has(node.name.text),
+                            meshCpuStreamFields.has(node.name.text),
                     )) {
-                        const field = fields.get(property.name.getText(file))!;
+                        const field = meshCpuStreamFields.get(
+                            property.name.getText(file),
+                        )!;
                         writes.push(
                             `    result->${field} = ${lowerer.expression(property.initializer)};`,
                         );
@@ -83,7 +170,9 @@ export function lowerMeshCpuStreamRetainers(context: LoweringContext): string {
                             write.left.expression.text !== "mesh"
                         )
                             continue;
-                        const field = fields.get(write.left.name.text);
+                        const field = meshCpuStreamFields.get(
+                            write.left.name.text,
+                        );
                         if (field)
                             writes.push(
                                 `    result->${field} = ${lowerer.expression(write.right)};`,
@@ -99,6 +188,7 @@ ${writes.join("\n")}
             })
             .join("\n") +
         `
+${lowerFactoryRecoveryCapture(context)}
 const std::vector<float>& retained_upload_stream(const std::optional<js::F32Array>& source) {
     static const std::vector<float> empty;
     return source ? static_cast<const std::vector<float>&>(*source) : empty;
@@ -106,6 +196,7 @@ const std::vector<float>& retained_upload_stream(const std::optional<js::F32Arra
 MeshHandle create_retained_mesh_from_data(Engine& engine, const std::string& name, ${meshCpuStreamParameters}) {
     const auto mesh = create_mesh_from_data(engine, name, ${meshUploadedStreamArguments});
     handle_at(engine.meshes, mesh).cpu_streams = factory_cpu_streams(${meshCpuStreamArguments});
+    capture_factory_cpu_streams(engine, *handle_at(engine.meshes, mesh).cpu_streams, indices, uvs2, tangents, colors);
     return mesh;
 }
 `

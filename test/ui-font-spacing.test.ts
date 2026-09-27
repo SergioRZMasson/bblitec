@@ -63,3 +63,45 @@ test(
         );
     },
 );
+
+test(
+    "system font transport caches requested and resolved named weights",
+    { skip: !tools || !existsSync(join(rml, "lib/rmlui.lib")) },
+    () => {
+        const output = resolve("artifacts/ui-system-font-check");
+        mkdirSync(output, { recursive: true });
+        const executable = join(output, "ui-system-font-check.exe");
+        runNativeFixtureCompiler(tools!, [
+            "/nologo",
+            "/std:c++20",
+            "/W4",
+            "/WX",
+            "/EHsc",
+            "/MD",
+            `/Fo:${output}\\`,
+            `/Fe:${executable}`,
+            "/I",
+            "native/include",
+            "/I",
+            "native/src",
+            "/I",
+            join(rml, "include"),
+            "/DRMLUI_STATIC_LIB",
+            "test/fixtures/ui-system-font-check.cpp",
+            join(rml, "lib/rmlui.lib"),
+            join(nativeFixtureVcpkgRoot, "lib/freetype.lib"),
+            join(nativeFixtureVcpkgRoot, "lib/lunasvg.lib"),
+            "user32.lib",
+        ]);
+        assert.match(
+            execFileSync(executable, [], {
+                encoding: "utf8",
+                env: {
+                    ...process.env,
+                    PATH: `${join(nativeFixtureVcpkgRoot, "bin")};${process.env.PATH ?? ""}`,
+                },
+            }),
+            /ui-system-font-check: ok/,
+        );
+    },
+);

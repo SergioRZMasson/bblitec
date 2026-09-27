@@ -15,6 +15,9 @@
 #include "pal_gpu_common.hpp"
 #include "pal_dawn_completion.hpp"
 #include "pal_dawn_formats.hpp"
+#if defined(__linux__) && !defined(__ANDROID__)
+#include "pal_gpu_canvas_targets.hpp"
+#endif
 #if BBLITE_GPU_TASK_TIMING
 #include "pal_dawn_gpu_timestamp.hpp"
 #endif
@@ -498,6 +501,23 @@ inline void configure_dawn_surface(DawnDevice& state, std::uint32_t width, std::
     configuration.device = state.device;
     configuration.format = state.surface_format;
     configuration.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
+#if defined(__linux__) && !defined(__ANDROID__)
+    WGPUSurfaceCapabilities capabilities = WGPU_SURFACE_CAPABILITIES_INIT;
+    if (wgpuSurfaceGetCapabilities(state.surface, state.adapter, &capabilities) !=
+        WGPUStatus_Success) {
+        dawn_error("surface allocation capabilities are unavailable.");
+    }
+    auto free_capabilities = js::finally(
+        [&capabilities]() noexcept { wgpuSurfaceCapabilitiesFreeMembers(capabilities); });
+    const bool storage_format =
+        state.surface_format == WGPUTextureFormat_RGBA8Unorm ||
+        (state.surface_format == WGPUTextureFormat_BGRA8Unorm &&
+         wgpuDeviceHasFeature(state.device, WGPUFeatureName_BGRA8UnormStorage));
+    if (canvas_resolve_uses_storage(
+            true, storage_format && (capabilities.usages & WGPUTextureUsage_StorageBinding))) {
+        configuration.usage |= WGPUTextureUsage_StorageBinding;
+    }
+#endif
     configuration.width = width;
     configuration.height = height;
     configuration.presentMode = state.present_mode;
@@ -780,6 +800,9 @@ inline void create_dawn_device(const EngineOptions& engine_options, const Device
         WGPUFeatureName_Float32Filterable,    WGPUFeatureName_PrimitiveIndex,
         WGPUFeatureName_TextureCompressionBC, WGPUFeatureName_TextureCompressionASTC,
         WGPUFeatureName_TimestampQuery,
+#if defined(__linux__) && !defined(__ANDROID__)
+        WGPUFeatureName_BGRA8UnormStorage,
+#endif
     };
     // Only requested features are listed: WGPUFeatureName has no zero
     // enumerator to pad a fixed array with.

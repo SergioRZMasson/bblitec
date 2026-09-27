@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import {
-    cppFunction,
     nativeFixtureVcpkgRoot,
     optionalNativeFixtureTools,
     runNativeFixtureCompiler,
@@ -20,14 +19,6 @@ test(
         mkdirSync(directory, { recursive: true });
         const source = join(directory, "check.cpp"),
             executable = join(directory, "check.exe");
-        const implementation = cppFunction(
-            readFileSync("native/src/pal_sdl_gpu_shared.hpp", "utf8"),
-            "inline void generate_texture_mipmaps(",
-        );
-        const clear = cppFunction(
-            readFileSync("native/src/pal_sdl_gpu_shared.hpp", "utf8"),
-            "inline SDL_FColor gpu_clear_color(",
-        );
         writeFileSync(
             source,
             `#define SDL_STATIC_LIB
@@ -46,8 +37,8 @@ static std::vector<SDL_GPUBlitInfo> blits;
 extern "C" const char* SDLCALL SDL_GetGPUDeviceDriver(SDL_GPUDevice* device) { return device->driver; }
 extern "C" void SDLCALL SDL_GenerateMipmapsForGPUTexture(SDL_GPUCommandBuffer*, SDL_GPUTexture*) { ++generated; }
 extern "C" void SDLCALL SDL_BlitGPUTexture(SDL_GPUCommandBuffer*, const SDL_GPUBlitInfo* info) { blits.push_back(*info); }
-${implementation}
-${clear}
+#include "pal_sdl_gpu_texture_ops.hpp"
+using namespace bbl::pal;
 int main() {
     SDL_GPUDevice device{"metal"};
     SDL_GPUCommandBuffer command;
@@ -102,6 +93,7 @@ int main() {
             `/Fe:${executable}`,
             `/external:I${join(nativeFixtureVcpkgRoot, "include")}`,
             "/external:W0",
+            "/Inative/src",
             source,
         ]);
         assert.equal(

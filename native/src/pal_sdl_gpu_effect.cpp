@@ -124,28 +124,15 @@ public:
                 SDL_ReleaseGPUTexture(device, resolve);
             color = nullptr;
             resolve = nullptr;
-            SDL_GPUTextureCreateInfo info{};
-            info.type = SDL_GPU_TEXTURETYPE_2D;
-            info.format = swapchain_format;
-            info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-            info.width = width;
-            info.height = height;
-            info.layer_count_or_depth = 1;
-            info.num_levels = 1;
-            info.sample_count = SDL_GPU_SAMPLECOUNT_1;
             if (capture_run) {
-                resolve = SDL_CreateGPUTexture(device, &info);
-                if (!resolve) {
-                    gpu_error("SDL_CreateGPUTexture effect resolve");
-                }
+                resolve = create_frame_texture(
+                    device, swapchain_format, SDL_GPU_SAMPLECOUNT_1, width, height,
+                    SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER, 1, true);
             }
             if (samples > 1) {
-                SDL_GPUTextureCreateInfo msaa = info;
-                msaa.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
-                msaa.sample_count = gpu_sample_count_from(samples);
-                color = SDL_CreateGPUTexture(device, &msaa);
-                if (!color)
-                    gpu_error("SDL_CreateGPUTexture effect color");
+                color =
+                    create_frame_texture(device, swapchain_format, gpu_sample_count_from(samples),
+                                         width, height, SDL_GPU_TEXTUREUSAGE_COLOR_TARGET);
             }
             color_width = width;
             color_height = height;

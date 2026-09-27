@@ -24,6 +24,7 @@ import {
     type FeatureMacroReach,
 } from "../src/feature-macros.js";
 import { developmentVcpkgInstall } from "../src/vcpkg-install.js";
+import { sceneAggregateSources } from "../src/native-scene-sources.js";
 
 /** The development vcpkg install for `triplet` (the one scene builds link against). */
 export function developmentVcpkgRoot(triplet = "x64-windows"): string {
@@ -144,26 +145,12 @@ export function sharedGpuSource(): string {
     ].join("\n");
 }
 
-/** The feature families each scene renderer backend compiles as its own unit. */
-const sceneRendererFamilies = [
-    "meshes",
-    "variants",
-    "shadows",
-    "textures",
-    "targets",
-    "post_process",
-    "picking",
-] as const;
-
 /** A scene renderer backend's files: its state header, family units and driver. */
 export function sceneBackendFiles(backend: "sdl" | "dawn"): string[] {
     const stem = backend === "sdl" ? "pal_sdl_gpu" : "pal_dawn";
     return [
         `native/src/${stem}_scene.hpp`,
-        ...sceneRendererFamilies.map(
-            (family) => `native/src/${stem}_scene_${family}.cpp`,
-        ),
-        `native/src/${stem}.cpp`,
+        ...sceneAggregateSources(`native/src/${stem}_scene_all.cpp`),
     ];
 }
 
@@ -379,6 +366,7 @@ export function runNativeFixtureCompiler(
                 cwd: resolve("."),
                 env: tools.environment,
                 stdio: "pipe",
+                windowsHide: true,
             },
         );
     } catch (error) {
@@ -422,7 +410,7 @@ export function runGeneratedProgram(
         `/Fe:${executable}`,
         source,
     ]);
-    execFileSync(executable, { stdio: "pipe" });
+    execFileSync(executable, { stdio: "pipe", windowsHide: true });
 }
 
 /** Preserve object paths when distinct source folders contain equal basenames. */
@@ -517,6 +505,7 @@ export function runRmlUiFixture(
     assert.equal(
         execFileSync(executable, {
             encoding: "utf8",
+            windowsHide: true,
             env: {
                 ...tools.environment,
                 PATH: `${join(nativeFixtureVcpkgRoot, "bin")};${tools.environment.PATH ?? ""}`,

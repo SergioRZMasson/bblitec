@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import ts from "typescript";
 import { compileSource } from "../src/compiler.js";
-import { CameraLowerer } from "../src/lowering/camera-lowerer.js";
 import { AnimationLowerer } from "../src/lowering/animation-lowerer.js";
 import { CameraMutationLowerer } from "../src/lowering/camera-mutation-lowerer.js";
 import { LoweringContext } from "../src/lowering/context.js";
 import { importPinnedModule } from "../src/pinned-shader-composer.js";
 import { UpstreamSourceStore } from "../src/upstream-source.js";
+import { cameraSources } from "./camera-fixture.js";
 import {
     optionalNativeFixtureTools,
     runNativeFixtureCompiler,
@@ -32,31 +32,6 @@ interface PinCamera {
     inertialRadiusOffset: number;
     inertialPanningX: number;
     inertialPanningY: number;
-}
-
-function cameraSources(output: string): string[] {
-    const context = new LoweringContext();
-    const lowerer = new CameraLowerer(context);
-    const headers = join(output, "include/bblite/upstream");
-    mkdirSync(headers, { recursive: true });
-    const controls = lowerer.lowerControls();
-    writeFileSync(join(headers, "camera_controls.hpp"), controls.header);
-    writeFileSync(join(output, "controls.cpp"), controls.source);
-    const camera = lowerer.lowerArcRotateFactory();
-    writeFileSync(join(headers, "camera_math.hpp"), camera.header);
-    // Keep the production factory itself; matrix functions are outside this
-    // setter/owner fixture and require the renderer's generated matrix header.
-    const start = camera.source.indexOf(
-        "CameraHandle create_arc_rotate_camera(",
-    );
-    assert.ok(start >= 0);
-    const end = camera.source.indexOf("\n}\n", start);
-    assert.ok(end > start);
-    writeFileSync(
-        join(output, "factory.cpp"),
-        `#include <bblite/runtime.hpp>\nnamespace bbl {\n${camera.source.slice(start, end + 3)}\n}`,
-    );
-    return [join(output, "controls.cpp"), join(output, "factory.cpp")];
 }
 
 test("camera transform versions observe pinned setters, reentrant limits and input order", async (t) => {
@@ -173,7 +148,7 @@ test("camera transform versions observe pinned setters, reentrant limits and inp
     assert.equal(duplicate.worldMatrixVersion, 2);
     assert.ok(Math.abs(duplicate.alpha - 0.38) < 1e-12);
     const output = resolve("artifacts/camera-mutations");
-    const sources = cameraSources(output);
+    const sources = cameraSources(output, { arcRotate: true });
     const fixture = join(output, "check.cpp");
     writeFileSync(
         fixture,
@@ -281,7 +256,7 @@ test("camera compiler writes preserve the original owner, scalar snapshots and v
     `;
     const compiled = compileSource(source).cpp;
     const output = resolve("artifacts/camera-mutations-compiler");
-    const sources = cameraSources(output);
+    const sources = cameraSources(output, { arcRotate: true });
     writeFileSync(join(output, "program.hpp"), compiled);
     const fixture = join(output, "check.cpp");
     writeFileSync(
@@ -440,7 +415,7 @@ test("native camera animation uses the pinned scalar setter and limit hook on ea
             `        assert(v_engine.cameras[v_camera.value].world_matrix_version == ${camera.worldMatrixVersion});\n        assert(v_engine.cameras[v_camera.value].alpha == ${camera.alpha});\n        return 0;`,
         );
     const output = resolve("artifacts/camera-mutations-animation");
-    const sources = cameraSources(output);
+    const sources = cameraSources(output, { arcRotate: true });
     const animation = new AnimationLowerer(
         new LoweringContext(),
     ).lowerPropertyAnimation({ cameraVersions: true });
