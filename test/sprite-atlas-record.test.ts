@@ -29,6 +29,10 @@ test("stored sprite atlases remain warning-clean under LTCG with and without ima
             createSprite2DLayer(atlas);
         } void main();
     `);
+    assert.match(
+        result.cpp,
+        /#include <bblite\/features\/has_image_decoder\.hpp>/,
+    );
     const helper = result.cpp.match(
         /bbl::SpriteAtlasHandle (\w+sprite_atlas_record_\d+)\(/,
     )?.[1];

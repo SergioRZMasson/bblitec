@@ -1,6 +1,5 @@
 #pragma once
 
-#include <bblite/features/has_image_decoder.hpp>
 #include <bblite/js_data.hpp>
 
 #include <cstdint>

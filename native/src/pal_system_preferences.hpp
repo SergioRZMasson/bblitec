@@ -28,7 +28,8 @@ bool linux_reduced_motion();
 
 /** Shared by preference consumers; refreshes without changing the user's setting. */
 inline bool system_reduced_motion() {
-#if defined(_WIN32) || defined(__ANDROID__) || defined(__linux__) || (defined(__APPLE__) && TARGET_OS_OSX)
+#if defined(_WIN32) || defined(__ANDROID__) || defined(__linux__) ||                               \
+    (defined(__APPLE__) && TARGET_OS_OSX)
     using Clock = std::chrono::steady_clock;
     static thread_local Clock::time_point checked{};
     static thread_local bool initialized = false;
