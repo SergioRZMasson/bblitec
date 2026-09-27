@@ -164,21 +164,16 @@ export function lowerPhysicsHeightfield(context: LoweringContext): {
 namespace {
 struct HeightfieldInputs { double numX, numZ, sizeX, sizeZ; std::vector<float> data; };
 // ${context.provenance(physicsHeightfieldModule, "optionsFromGroundMesh", "world-space bounds and Float32 square-grid extraction")}
-HeightfieldInputs pinned_ground_heightfield(const std::vector<float>& positions, const std::array<float, 16>& world_matrix) {
+template <class Positions>
+HeightfieldInputs pinned_ground_heightfield(const Positions& positions, const std::array<float, 16>& world_matrix) {
 ${body}
 }
 }
 PhysicsShape create_physics_heightfield_from_ground(PhysicsWorldHandle world, MeshHandle mesh) {
     const Engine& engine = *physics_world_record(world).engine;
     const MeshRecord& record = ${recordAt("engine.meshes", "mesh")};
-    std::vector<float> positions;
-    if (record.geometry < engine.geometries.size()) {
-        const auto& vertices = engine.geometries[record.geometry].vertices;
-        positions.reserve(vertices.size() * 3);
-        for (const auto& vertex : vertices) {
-            positions.insert(positions.end(), {vertex.position.x, vertex.position.y, vertex.position.z});
-        }
-    }
+    const auto positions = MeshCpuStreamsView(record,
+        record.geometry < engine.geometries.size() ? &engine.geometries[record.geometry] : nullptr).positions;
     const auto resolved = pinned_ground_heightfield(positions, mesh_world_matrix(engine, record));
     std::vector<float> heights(static_cast<std::size_t>(resolved.numX * resolved.numZ));
 ${remap}

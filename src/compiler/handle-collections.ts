@@ -750,6 +750,30 @@ export class HandleCollections {
         }
         const unwrapped = this.context.unwrap(expression);
         if (
+            ts.isPropertyAccessExpression(unwrapped) &&
+            unwrapped.name.text === "children"
+        ) {
+            const ownerType = this.context.dataTypes.fromTsType(
+                this.context.checker.getNonNullableType(
+                    this.context.checker.getTypeAtLocation(
+                        unwrapped.expression,
+                    ),
+                ),
+                unwrapped.expression,
+            );
+            if (
+                ownerType?.kind === "handle" &&
+                ["mesh", "transform-node", "scene-node", "asset-root"].includes(
+                    ownerType.handle,
+                )
+            ) {
+                const value = this.context.compileValue(unwrapped);
+                return value.kind === "handle-collection"
+                    ? value.handleCollection
+                    : undefined;
+            }
+        }
+        if (
             ts.isCallExpression(unwrapped) &&
             ts.isIdentifier(unwrapped.expression) &&
             this.context.importedName(unwrapped.expression) ===
@@ -1170,7 +1194,8 @@ export class HandleCollections {
         if (owner.kind !== "asset") {
             return undefined;
         }
-        if ((owner.asset?.kind ?? owner.assetKind) !== "gltf") {
+        const assetKind = owner.asset?.kind ?? owner.assetKind;
+        if (assetKind !== undefined && assetKind !== "gltf") {
             this.context.fail(
                 collection,
                 "Indexing entities is lowered for a glTF container, whose first entity is its synthetic root transform; another container's roots are not.",
@@ -1183,10 +1208,16 @@ export class HandleCollections {
                 "A glTF container's entities are indexed only at static index 0, which is its synthetic root transform.",
             );
         }
+        const engine = this.context.requireEngine(owner, collection);
         return {
             ...owner,
             kind: "asset-root",
-            engineCpp: this.context.requireEngine(owner, collection),
+            cpp:
+                assetKind === "gltf"
+                    ? owner.cpp
+                    : `bbl::asset_container_root(${engine}, ${owner.cpp})`,
+            assetKind: "gltf",
+            engineCpp: engine,
         };
     }
 

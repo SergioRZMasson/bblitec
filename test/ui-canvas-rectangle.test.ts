@@ -7,6 +7,7 @@ import { compileSource } from "../src/compiler.js";
 import {
     optionalNativeFixtureTools,
     runNativeFixtureCompiler,
+    runRmlUiFixture,
 } from "./native-fixture.js";
 
 test("compiler retains dynamic Canvas2D rectangles between path operations", () => {
@@ -40,6 +41,10 @@ test("compiler retains dynamic Canvas2D rectangles between path operations", () 
 });
 
 const nativeTools = optionalNativeFixtureTools(false);
+test("Canvas2D commands render in DOM stacking order and honor hidden ancestors", (t) => {
+    runRmlUiFixture(t, "ui-canvas-stacking");
+});
+
 test("compiler supplies a Canvas2D presentation host without a source engine", () => {
     const result = compileSource(`
         const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;

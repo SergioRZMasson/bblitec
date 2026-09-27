@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <cctype>
 #include <limits>
 #include <map>
+#include <tuple>
 #include <vector>
 
 #if defined(__APPLE__)
@@ -55,7 +57,7 @@ IDWriteFontCollection* system_font_collection() {
     return collection.Get();
 }
 
-std::optional<SystemFontFace> find_platform_font(std::string_view family, int weight) {
+std::optional<SystemFontFace> find_platform_font(std::string_view family, int weight, bool italic) {
     IDWriteFontCollection* collection = system_font_collection();
     if (!collection)
         return std::nullopt;
@@ -77,7 +79,7 @@ std::optional<SystemFontFace> find_platform_font(std::string_view family, int we
     ComPtr<IDWriteFont> font;
     if (FAILED(font_family->GetFirstMatchingFont(
             static_cast<DWRITE_FONT_WEIGHT>(std::clamp(weight, 1, 999)), DWRITE_FONT_STRETCH_NORMAL,
-            DWRITE_FONT_STYLE_NORMAL, &font))) {
+            italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL, &font))) {
         return std::nullopt;
     }
     ComPtr<IDWriteFontFace> face;
@@ -167,14 +169,14 @@ std::optional<SystemFontFace> android_font_face(const AFont* font, int weight) {
     return SystemFontFace{path, face->family_name, index};
 }
 
-std::optional<SystemFontFace> find_platform_font(std::string_view family, int weight) {
+std::optional<SystemFontFace> find_platform_font(std::string_view family, int weight, bool italic) {
     if (family == "sans-serif" || family == "serif" || family == "monospace") {
         FontOwner<AFontMatcher*, &AFontMatcher_destroy> matcher(AFontMatcher_create(),
                                                                 AFontMatcher_destroy);
         if (!matcher)
             return std::nullopt;
         AFontMatcher_setStyle(matcher.get(),
-                              static_cast<std::uint16_t>(std::clamp(weight, 1, 1000)), false);
+                              static_cast<std::uint16_t>(std::clamp(weight, 1, 1000)), italic);
         const std::uint16_t text[] = {'A'};
         FontOwner<AFont*, &AFont_close> font(
             AFontMatcher_match(matcher.get(), std::string(family).c_str(), text, 1, nullptr),
@@ -196,8 +198,6 @@ std::optional<SystemFontFace> find_platform_font(std::string_view family, int we
             return result;
         while (AFont* next = ASystemFontIterator_next(iterator.get())) {
             FontOwner<AFont*, &AFont_close> font(next, AFont_close);
-            if (AFont_isItalic(font.get()))
-                continue;
             FT_Face raw_face = nullptr;
             if (FT_New_Face(library, AFont_getFontFilePath(font.get()),
                             AFont_getCollectionIndex(font.get()), &raw_face))
@@ -211,7 +211,11 @@ std::optional<SystemFontFace> find_platform_font(std::string_view family, int we
     const AFont* best = nullptr;
     int distance = std::numeric_limits<int>::max();
     for (const auto& candidate : fonts) {
-        if (candidate.family != family)
+        if (AFont_isItalic(candidate.font.get()) != italic ||
+            !std::equal(candidate.family.begin(), candidate.family.end(), family.begin(),
+                        family.end(), [](unsigned char left, unsigned char right) {
+                            return std::tolower(left) == std::tolower(right);
+                        }))
             continue;
         const int difference =
             std::abs(static_cast<int>(AFont_getWeight(candidate.font.get())) - weight);
@@ -258,7 +262,7 @@ std::string cf_string(CFStringRef value) {
     return result;
 }
 
-std::optional<SystemFontFace> find_platform_font(std::string_view family, int weight) {
+std::optional<SystemFontFace> find_platform_font(std::string_view family, int weight, bool italic) {
     const std::string family_string(family);
     CfRef<CFStringRef> family_name(CFStringCreateWithCString(
         kCFAllocatorDefault, family_string.c_str(), kCFStringEncodingUTF8));
@@ -271,10 +275,15 @@ std::optional<SystemFontFace> find_platform_font(std::string_view family, int we
         CFNumberCreate(kCFAllocatorDefault, kCFNumberFloatType, &normalized_weight));
     if (!weight_value.get())
         return std::nullopt;
-    const void* trait_keys[] = {kCTFontWeightTrait};
-    const void* trait_values[] = {weight_value.get()};
+    const std::int32_t symbolic = italic ? kCTFontItalicTrait : 0;
+    CfRef<CFNumberRef> style_value(
+        CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &symbolic));
+    if (!style_value.get())
+        return std::nullopt;
+    const void* trait_keys[] = {kCTFontWeightTrait, kCTFontSymbolicTrait};
+    const void* trait_values[] = {weight_value.get(), style_value.get()};
     CfRef<CFDictionaryRef> traits(CFDictionaryCreate(kCFAllocatorDefault, trait_keys, trait_values,
-                                                     1, &kCFTypeDictionaryKeyCallBacks,
+                                                     2, &kCFTypeDictionaryKeyCallBacks,
                                                      &kCFTypeDictionaryValueCallBacks));
     if (!traits.get())
         return std::nullopt;
@@ -350,7 +359,7 @@ int fontconfig_weight(int weight) {
     return FC_WEIGHT_BLACK;
 }
 
-std::optional<SystemFontFace> find_platform_font(std::string_view family, int weight) {
+std::optional<SystemFontFace> find_platform_font(std::string_view family, int weight, bool italic) {
     if (!FcInit())
         return std::nullopt;
     FcPattern* pattern = FcPatternCreate();
@@ -359,7 +368,7 @@ std::optional<SystemFontFace> find_platform_font(std::string_view family, int we
     const std::string family_string(family);
     FcPatternAddString(pattern, FC_FAMILY, reinterpret_cast<const FcChar8*>(family_string.c_str()));
     FcPatternAddInteger(pattern, FC_WEIGHT, fontconfig_weight(weight));
-    FcPatternAddInteger(pattern, FC_SLANT, FC_SLANT_ROMAN);
+    FcPatternAddInteger(pattern, FC_SLANT, italic ? FC_SLANT_ITALIC : FC_SLANT_ROMAN);
     FcConfigSubstitute(nullptr, pattern, FcMatchPattern);
     FcDefaultSubstitute(pattern);
     FcResult result = FcResultNoMatch;
@@ -387,18 +396,19 @@ std::optional<SystemFontFace> find_platform_font(std::string_view family, int we
 
 } // namespace
 
-std::optional<SystemFontFace> find_system_font(std::string_view family, int weight) {
+std::optional<SystemFontFace> find_system_font(std::string_view family, int weight, bool italic) {
     if (family.empty())
         return std::nullopt;
 #ifdef __ANDROID__
-    static thread_local std::map<std::pair<std::string, int>, std::optional<SystemFontFace>> fonts;
-    const auto key = std::pair{std::string(family), weight};
+    static thread_local std::map<std::tuple<std::string, int, bool>, std::optional<SystemFontFace>>
+        fonts;
+    const auto key = std::tuple{std::string(family), weight, italic};
     const auto found = fonts.find(key);
     if (found != fonts.end())
         return found->second;
-    return fonts.emplace(key, find_platform_font(family, weight)).first->second;
+    return fonts.emplace(key, find_platform_font(family, weight, italic)).first->second;
 #else
-    return find_platform_font(family, weight);
+    return find_platform_font(family, weight, italic);
 #endif
 }
 

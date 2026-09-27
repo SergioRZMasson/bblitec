@@ -285,8 +285,19 @@ export interface MeasuredRunOptions {
     arguments?: readonly string[];
     /** Take stderr back as the returned log instead of streaming it. */
     captureLog?: boolean;
-    /** A spawn bound; absent, the run is unbounded (a Window-host run fails through its frame clock). */
+    /** Override the spawn bound; output captures otherwise have a five-minute startup backstop. */
     timeoutMs?: number;
+}
+
+export function measuredRunTimeout(
+    options: MeasuredRunOptions,
+): number | undefined {
+    return (
+        options.timeoutMs ??
+        (options.screenshot !== undefined || options.capture !== undefined
+            ? 300_000
+            : undefined)
+    );
 }
 
 interface MeasuredRun {
@@ -392,6 +403,7 @@ export function runMeasured(
         rmSync(resolve(path), { force: true });
     }
     const environment = measuredRunEnvironment(options, stampPath);
+    const timeoutMs = measuredRunTimeout(options);
     const log = spawnNativeMeasured(executable, environment, {
         dropVariables: [
             "BBLITE_LOCATION_SEARCH",
@@ -399,9 +411,7 @@ export function runMeasured(
             ...(options.dropVariables ?? []),
         ],
         captureStderr: options.captureLog ?? false,
-        ...(options.timeoutMs !== undefined
-            ? { timeoutMs: options.timeoutMs }
-            : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         ...(options.arguments !== undefined
             ? { arguments: options.arguments }
             : {}),

@@ -23,6 +23,7 @@
 #include <bblite/features/workers.hpp>
 
 #include <bblite/pal_audio.hpp>
+#include <bblite/teardown.hpp>
 
 #include <bblite/pal.hpp>
 #if BBLITE_WORKERS
@@ -422,8 +423,7 @@ void retain_audio_completion(const AudioNodeHandle& node) {
             // Delivery is a queued task, outside all audio graph locks/iteration.
             for (auto& listeners : source.ownership->ended) {
                 listeners.dispatch_with([&](auto& listener) {
-                    const auto callback = listener;
-                    owner.dispatch_callback([callback] { callback(); });
+                    owner.dispatch_callback([callback = listener] { callback(); });
                 });
             }
         });
@@ -436,6 +436,7 @@ void retain_audio_completion(const AudioNodeHandle& node) {
     state->event_pull = true;
     poll_audio_events(context_of(node.value));
 }
+
 #endif
 
 /**
@@ -481,6 +482,18 @@ ContextRecord& require_context(std::uint32_t id) {
     }
     return found->second;
 }
+
+#if BBLITE_WORKERS
+bool release_unobserved_audio_completion(const AudioNodeHandle& node) {
+    auto& record = *node.ownership;
+    if (!record.ended[0].empty() || !record.ended[1].empty() || !record.source->completion)
+        return false;
+    EventLoop::current().cancel_completion(record.source->completion);
+    require_context(context_of(node.value)).context->removeAutomaticPullNode(record.node);
+    record.source->event_pull = false;
+    return true;
+}
+#endif
 
 /** The node an already-resolved context holds at a handle's index. */
 std::shared_ptr<lab::AudioNode> require_node(ContextRecord& record, AudioNodeHandle node) {
@@ -819,8 +832,10 @@ AudioContextHandle audio_create_context(std::shared_ptr<AudioSession>& session) 
 }
 
 AudioSession::~AudioSession() {
-    for (const auto& context : contexts_)
-        audio_close_context(context);
+    run_teardown("AudioSession teardown", [this] {
+        for (const auto& context : contexts_)
+            audio_close_context(context);
+    });
 }
 
 void audio_collect_finished() {
@@ -845,11 +860,16 @@ void audio_remove_ended_listener(AudioNodeHandle node, std::size_t identity, boo
     if (!node.ownership->source)
         throw std::runtime_error("Audio node is not a scheduled source.");
     node.ownership->ended[capture ? 0 : 1].remove(identity);
-    auto& record = *node.ownership;
-    if (record.ended[0].empty() && record.ended[1].empty() && record.source->completion) {
-        EventLoop::current().cancel_completion(record.source->completion);
-        require_context(context_of(node.value)).context->removeAutomaticPullNode(record.node);
-        record.source->event_pull = false;
+    release_unobserved_audio_completion(node);
+}
+
+void audio_set_ended_handler(AudioNodeHandle node, js::Callback<void()> callback) {
+    require_node(node);
+    if (!node.ownership->source)
+        throw std::runtime_error("Audio node is not a scheduled source.");
+    node.ownership->ended[1].set_handler(std::move(callback));
+    if (!release_unobserved_audio_completion(node)) {
+        retain_audio_completion(node);
     }
 }
 #endif
@@ -1354,11 +1374,13 @@ void render_audio_capture([[maybe_unused]] std::uint32_t id) noexcept {
 } // namespace
 
 void AudioSession::finish() noexcept {
-    for (const auto& context : contexts_) {
-        render_audio_capture(context.value);
-        audio_close_context(context);
-    }
-    contexts_.clear();
+    run_teardown("AudioSession finish", [this] {
+        for (const auto& context : contexts_) {
+            render_audio_capture(context.value);
+            audio_close_context(context);
+        }
+        contexts_.clear();
+    });
 }
 
 } // namespace bbl::pal

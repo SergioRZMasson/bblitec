@@ -6,6 +6,7 @@ import type { Value } from "../types.js";
 import type { IntrinsicCallContext } from "./context.js";
 import { validateObjectProperties } from "../option-helpers.js";
 import { isDataTuple, tupleComponents } from "../data-types.js";
+import { retainedOptions, emitPresentOption } from "./retained-options.js";
 import {
     addressModeByPin,
     pixelsTexture2DOptionFields,
@@ -42,6 +43,7 @@ export interface SpriteIntrinsicContext
         Pick<
             LoweringServices,
             | "dataTypes"
+            | "dataLowerer"
             | "checker"
             | "unwrap"
             | "requireDefaultEngine"
@@ -445,6 +447,71 @@ function tupleOption(
     );
 }
 
+type BillboardOption = {
+    field: string;
+    update: boolean;
+} & (
+    | {
+          kind: "vector";
+          arity: number;
+          cpp: string;
+          precision: "float" | "double";
+      }
+    | { kind: "number" | "boolean" }
+);
+
+const billboardOptions = new Map<string, BillboardOption>([
+    [
+        "position",
+        {
+            kind: "vector",
+            field: "position",
+            update: true,
+            arity: 3,
+            cpp: "bbl::Vec3d",
+            precision: "double",
+        },
+    ],
+    [
+        "sizeWorld",
+        {
+            kind: "vector",
+            field: "size_world",
+            update: true,
+            arity: 2,
+            cpp: "bbl::Vec2",
+            precision: "float",
+        },
+    ],
+    [
+        "pivot",
+        {
+            kind: "vector",
+            field: "pivot",
+            update: false,
+            arity: 2,
+            cpp: "bbl::Vec2",
+            precision: "float",
+        },
+    ],
+    [
+        "color",
+        {
+            kind: "vector",
+            field: "color",
+            update: true,
+            arity: 4,
+            cpp: "bbl::Vec4",
+            precision: "float",
+        },
+    ],
+    ["frame", { kind: "number", field: "frame", update: false }],
+    ["rotation", { kind: "number", field: "rotation", update: false }],
+    ["flipX", { kind: "boolean", field: "flip_x", update: false }],
+    ["flipY", { kind: "boolean", field: "flip_y", update: false }],
+    ["visible", { kind: "boolean", field: "visible", update: false }],
+]);
+
 /**
  * One billboard instance patch, shared by the index add, the stable-handle
  * add, and the update. `importedName` discriminates the update the way the
@@ -459,38 +526,43 @@ function billboardPropsCpp(
 ): string {
     const update = importedName === "updateBillboardSprite";
     for (const name of Object.keys(props?.recordProperties ?? {})) {
-        if (
-            ![
-                "position",
-                "sizeWorld",
-                "frame",
-                "rotation",
-                "pivot",
-                "color",
-                "flipX",
-                "flipY",
-                "visible",
-            ].includes(name)
-        ) {
+        const option = billboardOptions.get(name);
+        if (!option) {
             context.fail(
                 call,
                 `Billboard sprite option '${name}' is not lowered.`,
             );
         }
-        if (update && !["position", "sizeWorld", "color"].includes(name)) {
+        if (update && !option.update) {
             context.fail(
                 call,
                 `updateBillboardSprite option '${name}' is not lowered.`,
             );
         }
     }
-    const position = tupleOption(context, props, "position", call, 3, "double");
+    const vector = (name: string) => {
+        const option = billboardOptions.get(name);
+        if (option?.kind !== "vector")
+            return context.fail(
+                call,
+                `Billboard vector option '${name}' has no descriptor.`,
+            );
+        return tupleOption(
+            context,
+            props,
+            name,
+            call,
+            option.arity,
+            option.precision,
+        );
+    };
+    const position = vector("position");
     if (!update && !position) {
         context.fail(call, `${importedName}: position required.`);
     }
-    const sizeWorld = tupleOption(context, props, "sizeWorld", call, 2);
-    const pivot = tupleOption(context, props, "pivot", call, 2);
-    const color = tupleOption(context, props, "color", call, 4);
+    const sizeWorld = vector("sizeWorld");
+    const pivot = vector("pivot");
+    const color = vector("color");
     const frame = property(props, "frame");
     const rotation = property(props, "rotation");
     const flipX = property(props, "flipX");
@@ -510,6 +582,80 @@ function billboardPropsCpp(
         `${visible?.cpp ?? "true"}, ${visible ? "true" : "false"}, ` +
         `${position ? "true" : "false"}}`
     );
+}
+
+/** Snapshot a retained scratch record at each add/update, preserving absent fields. */
+function billboardPropsExpression(
+    context: SpriteIntrinsicContext,
+    expression: ts.Expression,
+    call: ts.CallExpression,
+    importedName: string,
+): string {
+    const value = context.compileValue(expression);
+    if (value.kind === "record")
+        return billboardPropsCpp(context, value, call, importedName);
+    const members = retainedOptions(context, value, expression);
+    const result = context.allocateTemporaryCppName("billboard_props");
+    context.emit(`bbl::BillboardSpriteProps ${result}{};`);
+    for (const member of members) {
+        const option = billboardOptions.get(member.name);
+        if (
+            !option ||
+            (importedName === "updateBillboardSprite" && !option.update)
+        )
+            context.fail(
+                expression,
+                `${importedName} option '${member.name}' is not lowered.`,
+            );
+        emitPresentOption(context, member, (present) => {
+            const field = option.field;
+            let cpp: string;
+            if (option.kind === "vector") {
+                const entry =
+                    present.value ??
+                    (present.type &&
+                        context.dataLowerer.leafValue(
+                            present.cpp,
+                            present.type,
+                        ));
+                if (!entry)
+                    context.fail(
+                        expression,
+                        `Billboard option '${member.name}' has no represented tuple.`,
+                    );
+                const parts = tupleOption(
+                    context,
+                    {
+                        kind: "record",
+                        cpp: "",
+                        recordProperties: { [member.name]: entry },
+                    },
+                    member.name,
+                    call,
+                    option.arity,
+                    option.precision,
+                )!;
+                cpp = `${option.cpp}{${parts.join(", ")}}`;
+            } else {
+                if (present.type?.kind !== option.kind)
+                    context.fail(
+                        expression,
+                        `Billboard option '${member.name}' requires ${option.kind}.`,
+                    );
+                cpp =
+                    option.kind === "number"
+                        ? `static_cast<float>(${present.cpp})`
+                        : present.cpp;
+            }
+            context.emit(`${result}.${field} = ${cpp};`);
+            context.emit(`${result}.has_${field} = true;`);
+        });
+    }
+    if (importedName !== "updateBillboardSprite")
+        context.emit(
+            `if (!${result}.has_position) throw std::runtime_error("Billboard position is required.");`,
+        );
+    return result;
 }
 
 /**
@@ -812,11 +958,16 @@ function compileCreateGridSpriteAtlas(
     if (
         texture.textureStorage !== "file" &&
         texture.textureStorage !== "pixels" &&
-        texture.textureStorage !== "render"
+        texture.textureStorage !== "render" &&
+        texture.textureStorage !== "stored" &&
+        !(
+            texture.dataType?.kind === "handle" &&
+            texture.dataType.handle === "texture"
+        )
     ) {
         context.fail(
             argumentAt(call, 0),
-            "createGridSpriteAtlas currently requires a file, pixels, or render texture.",
+            "createGridSpriteAtlas requires a file, pixels, stored, or render texture.",
         );
     }
     const options = optionsRecord(
@@ -1500,19 +1651,6 @@ function compileCreateFacingBillboardSystem(
         "billboard",
         optionsArg ?? call,
     );
-    // `order` sorts a system against the scene's other transparent
-    // renderables upstream. A system here draws in the slot its depth
-    // mode gives it, which is the same image only while nothing else
-    // is transparent, so an explicit order refuses rather than being
-    // silently dropped.
-    for (const unreached of ["order"]) {
-        if (property(options, unreached)) {
-            context.fail(
-                optionsArg ?? call,
-                `${importedName} option '${unreached}' is not lowered.`,
-            );
-        }
-    }
     // The raw axis: the pin normalises it inside the factory and
     // rejects a degenerate one there, so that stays lowered rather
     // than recomputed at the call site.
@@ -1543,6 +1681,8 @@ function compileCreateFacingBillboardSystem(
             `.blend = ${blendCpp}, ` +
             `.opacity = ${numberOption(options, "opacity", floatLiteral(defaults.opacity))}, ` +
             `.visible = ${property(options, "visible")?.cpp ?? String(defaults.visible)}, ` +
+            `.order = ${numberOption(options, "order", "0.0")}, ` +
+            `.has_order = ${property(options, "order") ? "true" : "false"}, ` +
             // resolveAlphaCutoff and the order default both follow
             // the descriptor's own depth mode, so they are resolved
             // beside it rather than from the name at this call site.
@@ -1563,9 +1703,10 @@ function compileAddBillboardSpriteIndex(
     context.expectArgumentCount(call, 2, 2);
     const system = context.compileValue(argumentAt(call, 0));
     context.expectKind(system, "billboard-system", argumentAt(call, 0));
-    const props = optionsRecord(
+    const props = billboardPropsExpression(
         context,
-        call.arguments[1],
+        argumentAt(call, 1),
+        call,
         "addBillboardSpriteIndex",
     );
     const engineCpp = context.engineFor(system, call);
@@ -1575,7 +1716,7 @@ function compileAddBillboardSpriteIndex(
         cpp:
             `bbl::add_billboard_sprite_index(${engineCpp}, ` +
             `${system.cpp}, ` +
-            `${billboardPropsCpp(context, props, call, "addBillboardSpriteIndex")})`,
+            `${props})`,
         engineCpp,
     };
 }
@@ -1587,9 +1728,10 @@ function compileAddBillboardSprite(
     context.expectArgumentCount(call, 2, 2);
     const system = context.compileValue(argumentAt(call, 0));
     context.expectKind(system, "billboard-system", argumentAt(call, 0));
-    const props = optionsRecord(
+    const props = billboardPropsExpression(
         context,
-        call.arguments[1],
+        argumentAt(call, 1),
+        call,
         "addBillboardSprite",
     );
     const engineCpp = context.engineFor(system, call);
@@ -1598,7 +1740,7 @@ function compileAddBillboardSprite(
         kind: "billboard-sprite",
         cpp:
             `bbl::add_billboard_sprite(${engineCpp}, ${system.cpp}, ` +
-            `${billboardPropsCpp(context, props, call, "addBillboardSprite")})`,
+            `${props})`,
         engineCpp,
     };
 }
@@ -1610,9 +1752,10 @@ function compileUpdateBillboardSprite(
     context.expectArgumentCount(call, 2, 2);
     const handle = context.compileValue(argumentAt(call, 0));
     context.expectKind(handle, "billboard-sprite", argumentAt(call, 0));
-    const props = optionsRecord(
+    const props = billboardPropsExpression(
         context,
-        call.arguments[1],
+        argumentAt(call, 1),
+        call,
         "updateBillboardSprite",
     );
     const engineCpp = context.engineFor(handle, call);
@@ -1621,7 +1764,7 @@ function compileUpdateBillboardSprite(
         kind: "void",
         cpp:
             `bbl::update_billboard_sprite(${engineCpp}, ${handle.cpp}, ` +
-            `${billboardPropsCpp(context, props, call, "updateBillboardSprite")})`,
+            `${props})`,
     };
 }
 

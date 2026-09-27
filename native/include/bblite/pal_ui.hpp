@@ -60,6 +60,8 @@ void ui_set_inner_rml(Engine& engine, UiElementHandle element, std::string marku
 UiElementHandle ui_query_markup(Engine& engine, UiElementHandle owner, std::uint32_t node_id,
                                 std::string_view tag);
 std::string ui_get_attribute(Engine& engine, UiElementHandle element, std::string_view name);
+js::Nullable<std::string> ui_dataset_value(Engine& engine, UiElementHandle element,
+                                           std::string_view name);
 bool ui_has_attribute(Engine& engine, UiElementHandle element, std::string_view name);
 void ui_remove_attribute(Engine& engine, UiElementHandle element, std::string_view name);
 void ui_set_boolean_attribute(Engine& engine, UiElementHandle element, std::string name,
@@ -76,26 +78,22 @@ void ui_add_class_style(Engine& engine, UiElementHandle stylesheet, std::string 
                         std::string style);
 void ui_clear_style_rules(Engine& engine, UiElementHandle stylesheet);
 void ui_add_id_style(Engine& engine, UiElementHandle stylesheet, std::string id, std::string style);
-void ui_add_style_rule(Engine& engine, UiElementHandle stylesheet, UiStyleSelectorKind selector,
-                       std::string primary, std::string secondary, std::string tag, bool hover,
-                       double max_width, std::string style,
-                       UiScrollbarPart scrollbar = UiScrollbarPart::None,
-                       bool focus_visible = false, bool active = false,
-                       UiMotionPreference motion = UiMotionPreference::Any,
-                       std::vector<UiSelectorStep> sequence = {},
-                       UiGeneratedPart generated = UiGeneratedPart::None,
-                       std::optional<UiGeneratedContent> content = std::nullopt,
-                       UiRangePart range = UiRangePart::None, double container_max_width = -1.0);
-void ui_add_host_style_rule(Engine& engine, UiStyleSelectorKind selector, std::string primary,
-                            std::string secondary, std::string tag, bool hover, double max_width,
-                            std::string style, bool focus_visible = false, bool active = false,
-                            UiScrollbarPart scrollbar = UiScrollbarPart::None,
-                            UiMotionPreference motion = UiMotionPreference::Any,
-                            std::vector<UiSelectorStep> sequence = {},
-                            UiGeneratedPart generated = UiGeneratedPart::None,
-                            std::optional<UiGeneratedContent> content = std::nullopt,
-                            UiRangePart range = UiRangePart::None,
-                            double container_max_width = -1.0);
+void ui_add_style_rule(
+    Engine& engine, UiElementHandle stylesheet, UiStyleSelectorKind selector, std::string primary,
+    std::string secondary, std::string tag, bool hover, double max_width, std::string style,
+    UiScrollbarPart scrollbar = UiScrollbarPart::None, bool focus_visible = false,
+    bool active = false, UiMotionPreference motion = UiMotionPreference::Any,
+    std::vector<UiSelectorStep> sequence = {}, UiGeneratedPart generated = UiGeneratedPart::None,
+    std::optional<UiGeneratedContent> content = std::nullopt, UiRangePart range = UiRangePart::None,
+    double container_max_width = -1.0, UiOrientation orientation = UiOrientation::Any);
+void ui_add_host_style_rule(
+    Engine& engine, UiStyleSelectorKind selector, std::string primary, std::string secondary,
+    std::string tag, bool hover, double max_width, std::string style, bool focus_visible = false,
+    bool active = false, UiScrollbarPart scrollbar = UiScrollbarPart::None,
+    UiMotionPreference motion = UiMotionPreference::Any, std::vector<UiSelectorStep> sequence = {},
+    UiGeneratedPart generated = UiGeneratedPart::None,
+    std::optional<UiGeneratedContent> content = std::nullopt, UiRangePart range = UiRangePart::None,
+    double container_max_width = -1.0, UiOrientation orientation = UiOrientation::Any);
 js::Array<UiElementHandle> ui_query_class(Engine& engine, UiElementHandle root,
                                           std::string_view class_name);
 UiElementHandle ui_append_child(Engine& engine, UiElementHandle parent, UiElementHandle child);
@@ -106,6 +104,7 @@ void ui_on_click(Engine& engine, UiElementHandle element, std::function<void()> 
 /** Programmatic HTMLElement.click(), including reached default actions. */
 void ui_click(Engine& engine, UiElementHandle element, bool trusted = false);
 void ui_focus(Engine& engine, UiElementHandle element, bool visible = true);
+bool ui_clear_focus(Engine& engine, UiElementHandle next = {});
 UiElementHandle ui_active_element(Engine& engine);
 #if BBLITE_HAS_BROWSER_FILE
 void ui_set_download_url(Engine& engine, UiElementHandle element, ObjectUrlHandle url);
@@ -286,21 +285,28 @@ inline void append_ui_quad(UiRenderFrame& frame, float left, float top, float ri
 }
 
 /** Browser host chrome for a programmatically focused render canvas. */
-inline void append_canvas_focus_outline(UiRenderFrame& frame) {
-    if (frame.width < 2u || frame.height < 2u)
+inline void append_canvas_focus_outline(UiRenderFrame& frame, UiClientRect rectangle) {
+    if (rectangle.width < 2 || rectangle.height < 2)
         return;
     const std::uint32_t first_index = static_cast<std::uint32_t>(frame.indices.size());
     frame.vertices.reserve(frame.vertices.size() + 16u);
     frame.indices.reserve(frame.indices.size() + 24u);
-    const float width = static_cast<float>(frame.width);
-    const float height = static_cast<float>(frame.height);
-    append_ui_quad(frame, 0, 0, width, 1, 16);
-    append_ui_quad(frame, 0, height - 1, width, height, 16);
-    append_ui_quad(frame, 0, 1, 1, height - 1, 16);
-    append_ui_quad(frame, width - 1, 1, width, height - 1, 16);
+    const float left = static_cast<float>(rectangle.left);
+    const float top = static_cast<float>(rectangle.top);
+    const float right = left + static_cast<float>(rectangle.width);
+    const float bottom = top + static_cast<float>(rectangle.height);
+    append_ui_quad(frame, left, top, right, top + 1, 16);
+    append_ui_quad(frame, left, bottom - 1, right, bottom, 16);
+    append_ui_quad(frame, left, top + 1, left + 1, bottom - 1, 16);
+    append_ui_quad(frame, right - 1, top + 1, right, bottom - 1, 16);
     frame.draws.push_back(
         UiRenderDraw{first_index, static_cast<std::uint32_t>(frame.indices.size()) - first_index, 0,
                      0, 0, frame.width, frame.height, false});
+}
+
+inline void append_canvas_focus_outline(UiRenderFrame& frame) {
+    append_canvas_focus_outline(frame, UiClientRect{0, 0, static_cast<double>(frame.width),
+                                                    static_cast<double>(frame.height)});
 }
 
 /** Opaque RmlUi projection of an engine's retained UI tree. */

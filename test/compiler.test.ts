@@ -384,7 +384,7 @@ test("preserves Web Audio writes and nullable class resource assignments", () =>
     assert.match(result.cpp, /audio_param_set_value\([^;]*, 0\.6f\);/);
     assert.match(
         result.cpp,
-        /\(\*v_bblite_class_field_context_\d+\) = v_[^;]*engine;/,
+        /\(\*v_bblite_class_field_context_\d+\) = v_[^;]*engine\.context;/,
     );
     assert.match(
         result.cpp,
@@ -724,7 +724,11 @@ test("compiles pinned Standard material morph targets", () => {
     );
     assert.match(
         result.cpp,
-        /attach_morph_target\([^;]*v_deltas, \{\}, static_cast<float>\(static_cast<double>\([^)]*vertex_count\)\), 1\.0f\)/,
+        /attach_morph_target\([^;]*v_deltas, \{\}, static_cast<float>\(std::get<0>\(\*\w+_scalars_\d+\)\), 1\.0f\)/,
+    );
+    assert.match(
+        result.cpp,
+        /const double \w+_vertexCount_\d+ = static_cast<double>\([^;]+\.vertex_count\);/,
     );
     assert.ok(
         result.manifest.generatedSources.includes(
@@ -1845,7 +1849,7 @@ test("compares the value of an optional boolean from a dynamic record lookup", (
 
     assert.match(
         result.cpp,
-        /\[\[maybe_unused\]\] const bblscene::Def& (v_bblite_optional_chain_\d+) = .*\.get\([^;]+;\s*const auto& (v_bblite_optional_compare_\d+) = \(static_cast<bool>\(\1\) \? bbl::js::Nullable<bool>\{\1->active\} : bbl::js::Nullable<bool>\{std::nullopt\}\);\s*return \(\2\.has_value\(\) && \(\*\2\) == true\);/s,
+        /\[\[maybe_unused\]\] const bblscene::Def& (v_bblite_optional_chain_\d+) = .*\.get\([^;]+;\s*auto (\w+) = \(static_cast<bool>\(\1\) \? bbl::js::Nullable<bool>\{\1->active\} : bbl::js::Nullable<bool>\{std::nullopt\}\);\s*const auto& (v_bblite_optional_compare_\d+) = \2;\s*return \(\3\.has_value\(\) && \(\*\3\) == true\);/s,
     );
     assert.doesNotMatch(
         result.cpp,
@@ -2039,9 +2043,16 @@ test("marks object tuple elements as references before emitting their users", ()
 
     assert.match(result.cpp, /using Point = bbl::js::Ref<PointData>;/);
     assert.match(result.cpp, /v_selected->x/);
+    const first =
+        /auto (\w+) = bbl::js::make_ref<bblscene::PointData>\(bblscene::PointData\{bbl::js::random_js\(\)\}\);/.exec(
+            result.cpp,
+        );
+    assert.ok(first);
     assert.match(
         result.cpp,
-        /bbl::js::Array<bblscene::Point>\{bbl::js::make_ref<bblscene::PointData>/,
+        new RegExp(
+            `bbl::js::Array<bblscene::Point>\\{${first[1]}, bbl::js::make_ref<bblscene::PointData>`,
+        ),
     );
 });
 
@@ -5209,7 +5220,7 @@ test("compares a missing optional scalar as absent", () => {
 
     assert.match(
         result.cpp,
-        /const auto& \w+_optional_compare_\d+ = v_entry\.shape/,
+        /auto (\w+) = bbl::js::snapshot_value\(v_entry\.shape\);\s*const auto& \w+_optional_compare_\d+ = \1;/,
     );
     assert.match(result.cpp, /\.has_value\(\)/);
 });
@@ -5382,9 +5393,21 @@ test("compiles generated mesh data and the file-texture contract", () => {
     assert.ok(result.manifest.features.includes("mesh:thin-instances"));
     assert.ok(result.manifest.features.includes("mesh:thin-instances-dynamic"));
     assert.ok(result.manifest.features.includes("scene:remove"));
+    const mesh =
+        /bbl::create_retained_mesh_from_data\(v_engine, "lattice_a", (\w+), (\w+), (\w+), (\w+)\.to_optional\(\), std::nullopt, std::nullopt, std::nullopt\)/.exec(
+            result.cpp,
+        );
+    assert.ok(mesh);
+    for (const [index, field] of ["positions", "normals", "indices"].entries())
+        assert.match(
+            result.cpp,
+            new RegExp(`auto ${mesh[index + 1]} = v_cube\\.${field};`),
+        );
     assert.match(
         result.cpp,
-        /bbl::create_mesh_from_data\(v_engine, "[^"]+", v_cube\.positions, v_cube\.normals, v_cube\.indices, v_cube\.uvs, \{\}, \{\}, \{\}\)/,
+        new RegExp(
+            `auto ${mesh[4]} = bbl::js::Nullable<bbl::js::F32Array>\\{v_cube\\.uvs\\};`,
+        ),
     );
     // The pool is adopted by name; the capacity expression itself is not
     // part of the contract.
@@ -8632,7 +8655,7 @@ test("retains stylesheet tags assigned through nullable class fields", () => {
 
     assert.match(
         result.cpp,
-        /ui_add_class_style\([^;]*"palette"[^;]*"position:absolute; bottom: 70px;"/,
+        /ui_add_class_style\([^;]*"palette"[^;]*"position:absolute;bottom:70px;"/,
     );
 });
 
@@ -8734,7 +8757,7 @@ test("folds a static CSS fragment array joined into retained UI cssText", () => 
 
     assert.match(
         result.cpp,
-        /position:absolute;top:16px;background-clip:border-box;background-color:rgba\(10,12,20,0\.75\)/,
+        /position:absolute;top:16px;background-clip:border-box;[^"]*--bbl-background-color:rgba\(10,12,20,0\.75\)/,
     );
 });
 
@@ -9865,7 +9888,7 @@ test("recomputes retained UI intrinsic width without overriding responsive width
     );
     const intrinsic = projection.slice(
         projection.indexOf("bool has_active_authored_width"),
-        projection.indexOf("void render_canvases"),
+        projection.indexOf("void render_canvas("),
     );
     assert.match(intrinsic, /intrinsic_width_applied/);
     assert.match(intrinsic, /RemoveProperty\("width"\)/);
@@ -9904,7 +9927,7 @@ test("switches synthetic intrinsic width with active hover width rules", () => {
     assert.match(matchingRules, /IsPseudoClassSet\("hover"\)/);
     const intrinsic = projection.slice(
         projection.indexOf("bool has_active_authored_width"),
-        projection.indexOf("void render_canvases"),
+        projection.indexOf("void render_canvas("),
     );
     assert.match(intrinsic, /for_each_matching_style_rule/);
     const update = projection.slice(
@@ -10321,7 +10344,7 @@ test("lowers dynamic rgb background strings on retained elements", () => {
     `);
 
     assert.match(result.cpp, /ui_set_style_property/);
-    assert.match(result.cpp, /"background-color"/);
+    assert.match(result.cpp, /"--bbl-background-color"/);
     assert.match(result.cpp, /rgb\(/);
 });
 
@@ -10774,15 +10797,13 @@ test("refuses retained style properties outside the reviewed surface", () => {
         () => compileSource(withCss("clip-path:circle(4px);")),
         /accepted with a recorded degradation: .*backdrop-filter.*font-variant-numeric/,
     );
-    // Gradient-text consumables refuse outside their combination instead of
-    // silently dropping.
-    assert.throws(
-        () => compileSource(withCss("background-size:cover;")),
-        /Retained UI style property 'background-size' is not lowered: it is consumed only by the gradient-text projection/,
+    assert.match(
+        compileSource(withCss("background-size:cover;")).cpp,
+        /--bbl-background-size:cover/,
     );
-    assert.throws(
-        () => compileSource(withCss("color:transparent;")),
-        /Retained UI style property 'color' is not lowered: color:transparent is consumed only by the gradient-text/,
+    assert.match(
+        compileSource(withCss("color:transparent;")).cpp,
+        /color:transparent/,
     );
     assert.match(
         compileSource(withCss("display:inline-grid;color:#fff;")).cpp,
@@ -10998,7 +11019,7 @@ test("lowers conditional retained UI gradients to RmlUi decorators", () => {
 
     assert.match(
         result.cpp,
-        /v_lit \? "decorator:linear-gradient\(#ff8a5d,#ff4d4d\);"/,
+        /v_lit \? "[^"]*decorator:linear-gradient\(#ff8a5d,#ff4d4d\);"/,
     );
     assert.match(result.cpp, /background-color:rgba\(40,40,48,.7\)/);
 });
@@ -11072,9 +11093,13 @@ test("lowers dynamic Number.toFixed values in retained UI styles", () => {
         void main();
     `);
 
+    const receiver = /const double (\w+) = \([^;]*\.client_x \* 0\.4\);/.exec(
+        result.cpp,
+    );
+    assert.ok(receiver);
     assert.match(
         result.cpp,
-        /number_to_fixed\(\([^)]*\.client_x \* 0\.4\), 2\)/,
+        new RegExp(`number_to_fixed\\(${receiver[1]}, 2\\.0\\)`),
     );
 });
 
@@ -11272,18 +11297,18 @@ test("projects an audited native host-page UI companion without changing scene s
     );
     assert.match(
         result.cpp,
-        /ui_add_host_style_rule[^\n]*UiStyleSelectorKind::Class[^\n]*"touch-controls"[^\n]*"display:none;"/,
+        /ui_add_host_style_rule[^\n]*UiStyleSelectorKind::Class[^\n]*"touch-controls"[^\n]*"display:none;[^"]*--bbl-authored-display:1;"/,
     );
     assert.doesNotMatch(result.cpp, /ui_add_host_class_style/);
     assert.match(
         result.cpp,
-        /ui_add_host_style_rule[^\n]*ClassDescendantTag[^\n]*"title"[^\n]*"span"[^\n]*"display:block;color:#7fe0ff;"/,
+        /ui_add_host_style_rule[^\n]*ClassDescendantTag[^\n]*"title"[^\n]*"span"[^\n]*"display:block;color:#7fe0ff;[^"]*--bbl-authored-display:1;"/,
     );
     assert.match(result.cpp, /ui_create_element[^\n]*"div"/);
     assert.match(result.cpp, /ui_set_text[^\n]*"Keyboard help"/);
     assert.match(
         result.cpp,
-        /position:absolute;background-clip:border-box;background-color:rgba\(0,0,0,0\.5\)/,
+        /position:absolute;background-clip:border-box;[^"]*--bbl-background-color:rgba\(0,0,0,0\.5\)/,
     );
     assert.match(result.cpp, /ui_append_to_root/);
 });
@@ -13018,7 +13043,10 @@ test("stores mesh visibility in the live mesh record", () => {
         void main();
     `);
 
-    assert.match(result.cpp, /\.meshes, v_anchor\)\.visible = false;/);
+    assert.match(
+        result.cpp,
+        /\.meshes, v_anchor\)\.visible = bbl::js::Nullable<bool>\{false\};/,
+    );
     assert.ok(result.manifest.features.includes("mesh:visible"));
 });
 
@@ -13299,7 +13327,7 @@ test("lowers Scene 12's imported recursive mesh walk and animated root clones", 
             `,
                 labDeployment,
             ),
-        /only for the effect-only recursive TransformNode material walk/,
+        /Unsupported property assignment '.*\.material'/,
     );
 
     assert.throws(
@@ -13343,7 +13371,7 @@ test("lowers Scene 12's imported recursive mesh walk and animated root clones", 
             `,
                 labDeployment,
             ),
-        /only for the effect-only recursive TransformNode material walk/,
+        /'in' is decided for compile-time records, dictionaries and structs/,
     );
 
     assert.throws(
@@ -13420,7 +13448,7 @@ test("lowers Scene 12's imported recursive mesh walk and animated root clones", 
             `,
                 labDeployment,
             ),
-        /only for the effect-only recursive TransformNode material walk/,
+        /'in' is decided for compile-time records, dictionaries and structs/,
     );
 });
 
@@ -16240,9 +16268,16 @@ test("compiles Babylon Lite scene 267 Standard vertex colors", () => {
     ]);
     // The RGBA colors ride the ninth createMeshFromData slot, after the
     // three optional typed arrays the scene skips with `undefined`.
+    const colors =
+        /auto (\w+) = bbl::js::Nullable<bbl::js::F32Array>\{bbl::js::f32_array_from\(bbl::js::Array<double>\{0\.0, 0\.0, 1\.0, 1\.0, 1\.0, 0\.0, 1\.0, 1\.0, 0\.0, 1\.0, 0\.0, 1\.0, 1\.0, 1\.0, 0\.0, 1\.0\}\)\};/.exec(
+            result.cpp,
+        );
+    assert.ok(colors);
     assert.match(
         result.cpp,
-        /create_mesh_from_data\([^;]*\{\}, \{\}, \{\}, bbl::js::f32_array_from\(bbl::js::Array<double>\{0\.0, 0\.0, 1\.0, 1\.0, 1\.0, 0\.0, 1\.0, 1\.0, 0\.0, 1\.0, 0\.0, 1\.0, 1\.0, 1\.0, 0\.0, 1\.0\}\)\)/,
+        new RegExp(
+            `create_retained_mesh_from_data\\([^;]*std::nullopt, std::nullopt, std::nullopt, ${colors[1]}\\.to_optional\\(\\)\\)`,
+        ),
     );
     assert.match(result.cpp, /\.disable_lighting = true;/);
     assert.match(result.cpp, /\.double_sided = !\(false\);/);
@@ -18536,11 +18571,17 @@ test("retains mutable containers in records returned by factories", () => {
     `);
 
     const storage = result.cpp.match(
-        /auto (v_\w*values_\d+) = bbl::js::make_gc_shared<bbl::js::Map<double, std::string>>\(bbl::js::Map<double, std::string>\{\}\);/,
+        /auto (\w+) = bbl::js::make_gc_shared<bblscene::(\w+)>\(bbl::js::make_ref<bblscene::\2Data>\(bblscene::\2Data\{bbl::js::Map<double, std::string>\{\}\}\)\);/,
     );
     assert.ok(storage);
-    assert.match(result.cpp, new RegExp(`\\(\\*${storage[1]}\\)\\.set\\(`));
-    assert.match(result.cpp, new RegExp(`\\(\\*${storage[1]}\\)\\.get\\(`));
+    assert.match(
+        result.cpp,
+        new RegExp(`\\(\\*${storage[1]}\\)->values\\.set\\(`),
+    );
+    assert.match(
+        result.cpp,
+        new RegExp(`\\(\\*${storage[1]}\\)->values\\.get\\(`),
+    );
     assert.doesNotMatch(
         result.cpp,
         /bbl::js::Map<double, std::string>\{\}\.(?:set|get)\(/,
@@ -19399,7 +19440,11 @@ test("fuses a mesh-material map/find and replaces an asset occlusion texture bef
     assert.match(result.cpp, /\.materials, [^)]+\)\.name/);
     assert.match(
         result.cpp,
-        /if \([^\n]*material\.value != bbl::invalid_handle[^\n]*\) \{[\s\S]*?const bbl::js::Nullable<std::string>[^\n]*\.materials, /,
+        /if \([^\n]*material\.value != bbl::invalid_handle[^\n]*\) \{[\s\S]*?const bbl::js::Nullable<std::string> \w+_optional_compare_\d+\{\w+\}/,
+    );
+    assert.match(
+        result.cpp,
+        /v_material\.has_value\(\) && bbl::handle_at\([^;]+occlusion_texture\.has_image\(\)/,
     );
     assert.match(result.cpp, /optional_compare[^\n]*== "metalmat"/);
     assert.match(result.cpp, /bbl::set_pbr_occlusion_solid_texture\(/);

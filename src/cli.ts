@@ -342,6 +342,7 @@ async function materializeAsset(
     nodeTransforms = false,
     meshWalks: NonNullable<CompileResult["manifest"]["meshWalks"]> = [],
     decoders: AssetDecoders = {},
+    boneControl = false,
 ): Promise<MaterializedAssetFacts | undefined> {
     const inlineSource = assetPayloads.get(asset.source);
     if (
@@ -415,7 +416,11 @@ async function materializeAsset(
                     decoders,
                 ),
                 source,
-                { cameras: asset.gltfCameras === true, nodeTransforms },
+                {
+                    cameras: asset.gltfCameras === true,
+                    nodeTransforms,
+                    boneControl,
+                },
                 decoders,
             ),
         );
@@ -513,7 +518,11 @@ async function materializeAsset(
             : await packageGltfLoadPlan(
                   bytes,
                   source,
-                  { cameras: asset.gltfCameras === true, nodeTransforms },
+                  {
+                      cameras: asset.gltfCameras === true,
+                      nodeTransforms,
+                      boneControl,
+                  },
                   decoders,
               ),
     );
@@ -865,6 +874,7 @@ async function main(): Promise<void> {
                 result.manifest.features.includes("scene:node-transforms"),
                 result.manifest.meshWalks,
                 decodersFor(asset),
+                result.manifest.features.includes("loader:gltf-bone-control"),
             ),
         ),
     );
@@ -1105,6 +1115,8 @@ async function main(): Promise<void> {
                 ),
                 result.manifest.features.includes("scene:node-transforms"),
                 result.manifest.meshWalks,
+                {},
+                result.manifest.features.includes("loader:gltf-bone-control"),
             );
         }
     }
@@ -1201,6 +1213,7 @@ async function main(): Promise<void> {
         toneMappingStates,
         gltfAssets,
         materialIndexBase,
+        scenePbrMaterialIndices,
         casterViewCount,
         renderableMeshFeatures,
         meshProfiles,
@@ -1543,6 +1556,7 @@ async function main(): Promise<void> {
             materialIndexBase +
             result.manifest.sceneMaterialCount +
             casterViewCount,
+        scenePbrMaterialIndices,
         renderableMeshFeatures,
         pinnedSkeletonPalette,
         ...(meshProfiles ? { meshProfiles } : {}),

@@ -19,6 +19,7 @@ import {
 } from "./syntax.js";
 import { promiseExecutor } from "./promise-executor.js";
 import { isNativeBrowserFileExpression } from "./browser-file.js";
+import { customEventDispatchTarget } from "./custom-events.js";
 import { writesUnobservedCanvasMetadata } from "./canvas-instrumentation.js";
 import { staticClassMember } from "./class-members.js";
 import { platformHandleKind } from "./data-types.js";
@@ -84,12 +85,14 @@ const NATIVE_DOM_BRIDGE_KINDS = new EmissionSet<Value["kind"]>([
     "static-fetch-response",
     "platform-keyboard-event",
     "platform-mouse-event",
+    "custom-event",
     "ui-element",
     "worker",
     "worker-scope",
     "worker-message-event",
     "worker-error-event",
     "worker-media-query",
+    "worker-mutation-observer",
     "offscreen-canvas",
 ]);
 
@@ -186,6 +189,14 @@ type PrimaryCanvasContext = Pick<
 export function primaryCanvasIds(
     context: PrimaryCanvasContext,
 ): ReadonlySet<string> {
+    const ids = engineCanvasIds(context);
+    return ids.size > 0 ? ids : new Set([HOST_PRIMARY_CANVAS_ID]);
+}
+
+/** Explicit document IDs flowing into reached engine-creation syntax, without a host default. */
+export function engineCanvasIds(
+    context: PrimaryCanvasContext,
+): ReadonlySet<string> {
     const cached = primaryCanvasIdsByEntry.get(context.sourceFile);
     if (cached) return cached;
     const calls: ts.CallExpression[] = [];
@@ -244,10 +255,8 @@ export function primaryCanvasIds(
         )
             collect(canvas);
     }
-    const primary: ReadonlySet<string> =
-        ids.size > 0 ? ids : new Set([HOST_PRIMARY_CANVAS_ID]);
-    primaryCanvasIdsByEntry.set(context.sourceFile, primary);
-    return primary;
+    primaryCanvasIdsByEntry.set(context.sourceFile, ids);
+    return ids;
 }
 
 /** The id a library `document.getElementById(id)` call looks up. */
@@ -1344,6 +1353,7 @@ export class BrowserErasure {
     }
 
     private isNativeUiCall(call: ts.CallExpression): boolean {
+        if (customEventDispatchTarget(this.context, call)) return true;
         if (
             this.context.isNativeHostUiLookup(call) ||
             this.isPrimaryCanvas2DContext(call)

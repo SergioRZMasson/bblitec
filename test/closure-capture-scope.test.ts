@@ -108,10 +108,18 @@ test(
             result.cpp,
         )?.[1];
         assert.ok(rect);
+        assert.equal(result.cpp.match(/bbl::ui_get_client_rect\(/g)?.length, 1);
+        const storage =
+            /std::shared_ptr<std::tuple<double, double, double, double>> (\w+) = bbl::js::make_gc_shared/.exec(
+                result.cpp,
+            )?.[1];
+        assert.ok(storage);
         assert.match(
             result.cpp,
-            new RegExp(`auto& ${rect} = \\w+\\.capture\\d+`),
+            new RegExp(`auto& ${storage} = \\w+\\.capture\\d+`),
         );
+        for (const field of ["left", "top", "width", "height"])
+            assert.match(result.cpp, new RegExp(`= ${rect}\\.${field};`));
         const output = resolve("artifacts/platform-local-capture-check");
         mkdirSync(output, { recursive: true });
         const source = join(output, "check.cpp");

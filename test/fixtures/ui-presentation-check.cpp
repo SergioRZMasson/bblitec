@@ -29,6 +29,8 @@ int main() try {
         const auto update = [&] { pal::update_ui_rml_runtime(runtime, 640, 480); };
         update();
         auto* raw = runtime.projected_elements.at(panel.value).element;
+        const auto italic_face = raw->GetFontFaceHandle();
+        check(italic_face != 0, "italic text has a loaded font face");
         const auto& box = raw->GetBox();
         check(box.GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Top) == 2.f &&
                   box.GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Right) == 3.f &&
@@ -60,6 +62,8 @@ int main() try {
                       Rml::Style::TextTransform::Lowercase &&
                   raw->GetComputedValues().text_overflow() == Rml::Style::TextOverflow::Clip,
               "live text style replacement");
+        check(raw->GetFontFaceHandle() != 0 && raw->GetFontFaceHandle() != italic_face,
+              "normal and italic faces retain distinct font selection");
         ui_set_style_property(engine, panel, "border-width", "");
         update();
         check(raw->GetBox().GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Right) == 0.f,

@@ -107,6 +107,7 @@ const resourceMetadataFields = {
     ],
     "physics-viewer": ["shaderVariant"],
     "scene-node": [
+        "sceneNodeClone",
         "sceneMeshIndex",
         "sceneMeshProfileIndex",
         "runtimeMeshStreams",
@@ -120,8 +121,6 @@ const resourceMetadataFields = {
     ],
     light: ["lightIdentity", "lightKind"],
     "shadow-generator": ["shadowGeneratorIndex"],
-    "audio-engine": ["audioMainBusCpp", "audioMainBusOwnerCpp"],
-    "audio-context": ["audioMainBusCpp", "audioMainBusOwnerCpp"],
     asset: ["asset", "assetKind", "assetRootState", "assetRootClone"],
     "asset-root": ["asset", "assetKind", "assetRootState", "assetRootClone"],
     "asset-entity": ["asset", "assetKind", "assetRootState", "assetRootClone"],

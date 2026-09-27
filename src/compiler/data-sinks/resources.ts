@@ -12,6 +12,37 @@ import { pickedMeshHandleCpp } from "../properties.js";
 import { resolvedSymbol } from "../symbols.js";
 import type { DataSinkHost, DataSinkOperations } from "./contracts.js";
 
+/** A singleton cloned-root container shares the clone's mesh-only asset record. */
+export function projectAssetContainer(
+    context: Pick<DataSinkHost["context"], "requireEngine">,
+    value: Value,
+    node: ts.Node,
+): Value | undefined {
+    if (value.kind === "asset") return value;
+    if (value.kind !== "record") return undefined;
+    const properties = value.recordProperties ?? {};
+    const entities = properties.entities;
+    const root =
+        Object.keys(properties).length === 1 &&
+        entities?.kind === "tuple" &&
+        entities.tupleElements?.length === 1
+            ? entities.tupleElements[0]
+            : undefined;
+    if (root?.kind === "asset-root" && root.assetRootClone)
+        return { ...root, kind: "asset" };
+    if (root?.kind === "scene-node" && root.sceneNodeClone) {
+        return {
+            kind: "asset",
+            cpp: `bbl::cloned_asset_container(${root.cpp})`,
+            engineCpp: context.requireEngine(root, node),
+            assetKind: "gltf",
+            assetRootClone: true,
+            assetRootState: { reparented: false },
+        };
+    }
+    return undefined;
+}
+
 function expressionHandle(
     dataType: DataType<"handle">,
     lowerer: DataSinkHost,
@@ -28,6 +59,12 @@ function expressionHandle(
     )
         return lowerer.compileKnownValueForSink(rawValue, dataType, unwrapped);
     if (dataType.handle === "mesh" && rawValue.kind === "picked-node") {
+        return lowerer.compileKnownValueForSink(rawValue, dataType, unwrapped);
+    }
+    if (
+        dataType.handle === "scene-node" &&
+        ["mesh", "transform-node", "asset-root"].includes(rawValue.kind)
+    ) {
         return lowerer.compileKnownValueForSink(rawValue, dataType, unwrapped);
     }
     if (

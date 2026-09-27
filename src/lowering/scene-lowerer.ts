@@ -4,12 +4,17 @@ import { assetRootTransformSource } from "./asset-root-transform.js";
 import { LoweredSource, LoweringContext } from "./context.js";
 import { lowerMat4InvertCpp } from "./pinned-function-lowerer.js";
 import { lowerMat4DecomposeFull } from "./pinned-mat4-decompose.js";
-import { sceneNodeTransformsSource } from "./scene-node-transforms.js";
+import {
+    sceneNodeTransformsSource,
+    sceneNodeTraversalSource,
+} from "./scene-node-transforms.js";
 import { PinnedNumericLowerer } from "./pinned-numeric-lowerer.js";
 import { lowerAssetSceneAttachment } from "./asset-scene-attachment.js";
 import { lowerMeshMaterialSetter } from "./mesh-material-setter.js";
 import { lowerPbrMaterialGroups } from "./pbr-material-groups.js";
 import { recordAt } from "../compiler/record-access.js";
+import { lowerMeshGeometryAccess } from "./mesh-geometry-access.js";
+import { lowerSceneNodeRemoval } from "./scene-node-removal.js";
 
 const fogModulePath = "src/scene/scene-ubo-extras.ts";
 const fogName = "setFog";
@@ -740,7 +745,11 @@ export class SceneLowerer {
             header: "",
             source: `// ${this.context.provenance(modulePath, `${createName}, ${addName}, ${beforeName}, ${disposeName}, ${registerName}`, `${transformNodeModulePath}#cloneTransformNode, cloneMeshNode`)}
 #include <bblite/runtime.hpp>
+${options.geometryAccess ? "#include <bblite/mesh_cpu_streams.hpp>" : ""}
 #include <bblite/features/has_ui.hpp>
+#if BBLITE_HAS_UI
+#include <bblite/pal_ui.hpp>
+#endif
 #include <bblite/features/has_shadows.hpp>
 #include <bblite/features/has_sprites.hpp>
 ${options.text ? "#include <bblite/upstream_text_records.hpp>" : ""}
@@ -802,7 +811,7 @@ ${this.sceneCreationSource(callbackDelta, value, clear, options)}${options.pbrSc
     scene.transmission_enabled = true;
 }
 ${fogSource}${clipPlaneSource}${meshDirtySource}${visibilitySource}${transformNodeSource}${mirroredSource}${parentingSource}${geometryAccessSource}
-${options.sceneNodeTransforms ? sceneNodeTransformsSource(options.transformNodes === true) : ""}
+${options.sceneNodeTransforms ? sceneNodeTransformsSource(options.transformNodes === true) + sceneNodeTraversalSource() + lowerSceneNodeRemoval(this.context) : ""}
 } // namespace bbl
 `,
         };
@@ -981,7 +990,8 @@ void set_mesh_transform_parent(
         throw std::runtime_error("Invalid mesh child handle.");
     }
     if (parent.value >= engine.transform_nodes.size()) {
-        throw std::runtime_error("Invalid transform-node parent handle.");
+        throw std::runtime_error("Invalid transform-node parent handle " + std::to_string(parent.value) +
+            " for mesh " + std::to_string(mesh.value) + " (" + ${recordAt("engine.meshes", "mesh")}.name + ").");
     }
     MeshRecord& record = ${recordAt("engine.meshes", "mesh")};
     if (
@@ -1015,8 +1025,9 @@ void require_acyclic_transform_node_parent(
     if (node.value >= engine.transform_nodes.size()) {
         throw std::runtime_error("Invalid transform-node child handle.");
     }
-    if (parent.value >= engine.transform_nodes.size()) {
-        throw std::runtime_error("Invalid transform-node parent handle.");
+    if (parent.value != invalid_handle && parent.value >= engine.transform_nodes.size()) {
+        throw std::runtime_error("Invalid transform-node parent handle " + std::to_string(parent.value) +
+            " for node " + std::to_string(node.value) + " (" + ${recordAt("engine.transform_nodes", "node")}.name + ").");
     }
     TransformNodeHandle cursor = parent;
     std::size_t depth = 0;
@@ -1820,58 +1831,36 @@ void remove_hierarchy_instance(
     private geometryAccessSource(options: SceneCoreOptions): string {
         return options.geometryAccess
             ? `
+${lowerMeshGeometryAccess(this.context)}
 // src/mesh/mesh.ts retained CPU arrays. The native geometry record retains
 // every lane the pin exposes, and these copies preserve typed-array value
 // semantics for scene code that only reads them.
 std::vector<float> mesh_cpu_positions(
     const Engine& engine,
     MeshHandle mesh) {
-    const ModelGeometry& geometry =
-        engine.geometries.at(${recordAt("engine.meshes", "mesh")}.geometry);
-    std::vector<float> result;
-    result.reserve(geometry.vertices.size() * 3);
-    for (const ModelVertex& vertex : geometry.vertices) {
-        result.push_back(vertex.position.x);
-        result.push_back(vertex.position.y);
-        result.push_back(vertex.position.z);
-    }
-    return result;
+    const auto& record = ${recordAt("engine.meshes", "mesh")};
+    return MeshCpuStreamsView(record, record.cpu_streams ? nullptr : &engine.geometries.at(record.geometry)).positions.copy();
 }
 
 std::vector<float> mesh_cpu_normals(
     const Engine& engine,
     MeshHandle mesh) {
-    const ModelGeometry& geometry =
-        engine.geometries.at(${recordAt("engine.meshes", "mesh")}.geometry);
-    std::vector<float> result;
-    result.reserve(geometry.vertices.size() * 3);
-    for (const ModelVertex& vertex : geometry.vertices) {
-        result.push_back(vertex.normal.x);
-        result.push_back(vertex.normal.y);
-        result.push_back(vertex.normal.z);
-    }
-    return result;
+    const auto& record = ${recordAt("engine.meshes", "mesh")};
+    return MeshCpuStreamsView(record, record.cpu_streams ? nullptr : &engine.geometries.at(record.geometry)).normals.copy();
 }
 
 std::vector<float> mesh_cpu_uvs(
     const Engine& engine,
     MeshHandle mesh) {
-    const ModelGeometry& geometry =
-        engine.geometries.at(${recordAt("engine.meshes", "mesh")}.geometry);
-    std::vector<float> result;
-    result.reserve(geometry.vertices.size() * 2);
-    for (const ModelVertex& vertex : geometry.vertices) {
-        result.push_back(vertex.uv.x);
-        result.push_back(vertex.uv.y);
-    }
-    return result;
+    const auto& record = ${recordAt("engine.meshes", "mesh")};
+    return MeshCpuStreamsView(record, record.cpu_streams ? nullptr : &engine.geometries.at(record.geometry)).uvs.copy();
 }
 
 std::vector<std::uint32_t> mesh_cpu_indices(
     const Engine& engine,
     MeshHandle mesh) {
-    return engine.geometries.at(
-        ${recordAt("engine.meshes", "mesh")}.geometry).indices;
+    const auto& record = ${recordAt("engine.meshes", "mesh")};
+    return MeshCpuStreamsView(record, record.cpu_streams ? nullptr : &engine.geometries.at(record.geometry)).indices.copy_raw();
 }
 
 js::Array<double> asset_root_world_matrix_array(Engine& engine, AssetHandle asset) {
@@ -2238,6 +2227,7 @@ AssetHandle clone_asset_root(Engine& engine, AssetHandle asset) {
     const std::vector<MeshHandle> source_meshes = source.meshes;
     const auto clone_animation = source.clone_mesh_animation;
     AssetRecord clone;
+    clone.has_synthetic_root = source.has_synthetic_root;
     clone.source_mesh_walks = source.source_mesh_walks;
     clone.root_position = source.root_position;
     clone.root_rotation = source.root_rotation;
@@ -2565,14 +2555,10 @@ void set_canvas_cursor(Engine& engine, std::string cursor) {
 }
 
 void focus_canvas(Engine& engine) {
-    engine.canvas_focused = true;
 #if BBLITE_HAS_UI
-    // Canvas focus replaces DOM focus, just as button focus replaces canvas
-    // focus. Otherwise a stale button still reports activeElement and paints
-    // its focus-visible outline after the source has focused the canvas.
-    engine.ui_focused_element = {};
-    ++engine.ui_focus_revision;
+    if (!ui_clear_focus(engine)) return;
 #endif
+    engine.canvas_focused = true;
 }
 
 void request_pointer_lock(Engine& engine) {

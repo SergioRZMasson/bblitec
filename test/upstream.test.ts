@@ -468,15 +468,15 @@ test("emits the weighted property mixer only when blending is reached", () => {
     // weighted sum, the hemisphere sign, the final normalize, and the
     // category-handler early-out that hands an uncontested tick back to
     // the ordinary per-group path.
-    assert.match(blended.source, /PropertyAnimationBucket& track_bucket/);
-    assert.match(blended.source, /if \(!contested\) return false;/);
+    assert.match(blended.source, /const auto get_bucket =/);
+    assert.match(blended.source, /contestedCount == 0\.0/);
     // The two opt-ins share one handler slot, the way the pin's own
     // setAnimationTaskCategoryHandler does.
     assert.match(blended.source, /AnimationCategoryHandler::property_mixer;/);
     assert.match(blended.source, /sign = \(dot < 0\.0 \? \(-1\.0\) : 1\.0\);/);
     assert.match(
         blended.source,
-        /normalize_blended_quaternion\(bucket\.values\);/,
+        /normalize_blended_quaternion\(bucket->values\);/,
     );
     // The bucket width comes from the same path table the clip lowerer
     // validates key values against.
@@ -625,7 +625,11 @@ test("emits mixer-neutral weight fades in the manager pre-update phase", () => {
 test("integrates the source property clock and pinned interpolation", () => {
     const context = new LoweringContext();
     const lowered = new AnimationLowerer(context).lowerPropertyAnimation();
-    assert.match(lowered.source, /if \(dot > 0\.9995\) \{/);
+    assert.ok(
+        lowered.source.includes(
+            lowerGltfAnimationEvaluator(context, "property"),
+        ),
+    );
     // The native playback fixture covers source clock-divisor and wrap
     // mutations, including reverse playback and paused/stopped groups.
     assert.ok(lowered.source.includes(lowerPropertyAnimationPlayback(context)));
@@ -633,11 +637,10 @@ test("integrates the source property clock and pinned interpolation", () => {
         lowered.source,
         /tick_property_animation_group\(\*group,delta_ms,/,
     );
-    // The pinned STEP tie-break: an exact key-time query takes the LATER
-    // key's value.
+    // Property sampler queries round to the pin's Float32 key-time domain.
     assert.match(
         lowered.source,
-        /\(t >= t1 \? \(idx \+ 1\.0\) : idx\) \* stride/,
+        /const double sampleTime = bbl::js::math_fround\(t\);/,
     );
 });
 
@@ -888,9 +891,11 @@ test("emits the opt-in bone-control chunk only when it is reached", () => {
         source,
         /gltf_set_bone_visibility\(owner\.bone_overrides, node, visible,/,
     );
-    // A skinned file with no animations carries no skin runtime here, so
-    // that pairing is refused by name rather than silently empty.
-    assert.match(source, /if \(!animated && !skin_json\.empty\(\)\)/);
+    assert.match(
+        source,
+        /const bool retained_pose = animated \|\| !required\(mesh_plan, "animationBindings"\)\.is_null\(\);/,
+    );
+    assert.match(source, /if \(retained_pose\) \{/);
 });
 
 test("generates engine API wrappers over the PAL", () => {
@@ -2230,7 +2235,7 @@ test("emits the Sprite2D Y-sort extension only where a scene enables it", () => 
     // Depth-hosted layers are out of the pin's own support boundary.
     assert.match(
         sorted,
-        /if \(layer\.depth_mode != Sprite2DDepthMode::none\) \{\n\s*throw std::runtime_error\("#575"\);/,
+        /if \(layer\.depth_mode != Sprite2DDepthMode::none\) \{\n\s*throw std::runtime_error\("#635"\);/,
     );
     // Every canonical mutation observes the extension where the pin does.
     for (const observer of [

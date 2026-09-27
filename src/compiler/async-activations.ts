@@ -3,7 +3,10 @@ import ts from "typescript";
 import { framePollExecutor } from "./frame-poll.js";
 import { PendingActivations } from "./pending-activations.js";
 import type { DataType } from "./data-types.js";
-import type { SupportedFunction } from "./user-functions.js";
+import {
+    tryResolveFunctionDeclaration,
+    type SupportedFunction,
+} from "./user-functions.js";
 import { unwrapExpression } from "./syntax.js";
 import type { Value } from "./types.js";
 import type {
@@ -18,6 +21,7 @@ interface AsyncActivationContext extends Pick<
     | "allocateTemporaryCppName"
     | "assetRegistry"
     | "browserErasure"
+    | "bindings"
     | "captureEmittedLines"
     | "captureEmittedStatements"
     | "checker"
@@ -200,18 +204,99 @@ export class AsyncActivations {
     }
 
     @journaled public accessor awaitedSetupDepth = 0;
+    @journaled private accessor orderedSetupInput: ts.Expression | undefined;
 
-    /** Immediately awaited helpers preserve their new engine's resource order. */
+    private immediatelyAwaited(node: ts.Node): boolean {
+        let consumer = node;
+        while (
+            consumer.parent &&
+            (ts.isParenthesizedExpression(consumer.parent) ||
+                ts.isAsExpression(consumer.parent) ||
+                ts.isNonNullExpression(consumer.parent))
+        )
+            consumer = consumer.parent;
+        return !!consumer.parent && ts.isAwaitExpression(consumer.parent);
+    }
+
+    private withOrderedSetupInput<T>(
+        expression: ts.Expression,
+        body: () => T,
+    ): T {
+        const previous = this.orderedSetupInput;
+        this.orderedSetupInput = unwrapExpression(expression);
+        try {
+            return body();
+        } finally {
+            this.orderedSetupInput = previous;
+        }
+    }
+
+    /** The aggregate owns this eagerly evaluated input, not arbitrary nested calls. */
+    public withOrderedAggregateInput<T>(
+        consumer: ts.CallExpression,
+        input: ts.Expression,
+        body: () => T,
+    ): T {
+        return this.context.engineCreationExecution !== undefined &&
+            this.immediatelyAwaited(consumer) &&
+            !this.context.isRuntimeResourceConstruction()
+            ? this.withOrderedSetupInput(input, body)
+            : body();
+    }
+
+    /** Static collection lowering supplies the fixed invocation count. */
+    public withStaticCollectionCallback<T>(
+        call: ts.CallExpression,
+        callback: ts.Identifier | ts.ArrowFunction | ts.FunctionExpression,
+        body: () => T,
+    ): T {
+        if (this.orderedSetupInput !== call) return body();
+        const bound = ts.isIdentifier(callback)
+            ? this.context.bindings.lookupOptional(callback)
+                  ?.callbackDeclaration
+            : undefined;
+        const target = bound ?? callback;
+        const declaration = ts.isIdentifier(target)
+            ? tryResolveFunctionDeclaration(this.context.checker, target)
+            : target;
+        if (
+            !declaration?.body ||
+            ts
+                .getModifiers(declaration)
+                ?.some(
+                    (modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword,
+                )
+        )
+            return body();
+        const returned = ts.isBlock(declaration.body)
+            ? declaration.body.statements.at(-1)
+            : declaration.body;
+        const expression =
+            returned && ts.isReturnStatement(returned)
+                ? returned.expression
+                : returned && ts.isExpression(returned)
+                  ? returned
+                  : undefined;
+        return expression
+            ? this.withOrderedSetupInput(expression, body)
+            : body();
+    }
+
+    /** Awaited helpers and proven aggregate inputs retain their new engine's setup order. */
     public withAsyncInvocation<T>(node: ts.Node, body: () => T): T {
         const ordered =
             this.context.engineCreationExecution !== undefined &&
-            ts.isAwaitExpression(node.parent) &&
+            (this.immediatelyAwaited(node) ||
+                this.orderedSetupInput === node) &&
             !this.context.isRuntimeResourceConstruction();
+        const previous = this.orderedSetupInput;
+        this.orderedSetupInput = undefined;
         if (ordered) this.awaitedSetupDepth++;
         try {
             return this.context.withOwnedCallbackBody(body);
         } finally {
             if (ordered) this.awaitedSetupDepth--;
+            this.orderedSetupInput = previous;
         }
     }
 

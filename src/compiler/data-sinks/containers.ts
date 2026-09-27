@@ -1,7 +1,7 @@
 import ts from "typescript";
 
 import { dataTypesEqual, doubleLiteral, type DataType } from "../data-types.js";
-import type { Value } from "../types.js";
+import { presenceFlagCpp, type Value } from "../types.js";
 
 import type { DataSinkHost, DataSinkOperations } from "./contracts.js";
 
@@ -92,6 +92,24 @@ function valueOptional(
             `${lines.join("\n")} return ${converted}; }())`
         );
     }
+    const found = presenceFlagCpp(value);
+    if (found !== undefined) {
+        let inner = "";
+        const lines = lowerer.context.captureEmittedLines(() => {
+            inner = lowerer.compileKnownValueForSink(
+                value,
+                dataType.inner,
+                node,
+            );
+        });
+        const cppType = lowerer.context.dataTypes.cppType(dataType);
+        if (lines.length)
+            return (
+                `([&]() -> ${cppType} { if (!(${found})) return std::nullopt; ` +
+                `${lines.join("\n")} return ${inner}; }())`
+            );
+        return `(${found} ? ${cppType}{${inner}} : ${cppType}{std::nullopt})`;
+    }
     return lowerer.compileKnownValueForSink(value, dataType.inner, node);
 }
 
@@ -101,6 +119,15 @@ function valueVector(
     value: Value,
     node: ts.Node,
 ): string | undefined {
+    if (
+        value.kind === "data" &&
+        value.dataType?.kind === "tuple" &&
+        dataType.element.kind === "number"
+    ) {
+        lowerer.context.reachJsData();
+        lowerer.markEscaped(value);
+        return `bbl::js::Array<double>{(${value.cpp}).retained_storage()}`;
+    }
     if (
         value.kind === "handle-collection" &&
         value.handleCollection &&

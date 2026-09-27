@@ -47,11 +47,13 @@
 #include "pal_ui_form.hpp"
 #include "pal_ui_font_win32.hpp"
 #include "pal_ui_font_color.hpp"
+#include "pal_ui_font_system.hpp"
 #include "pal_ui_range.hpp"
 #include "pal_ui_control_marks.hpp"
 #include "pal_ui_color.hpp"
 #include "pal_ui_scrollbars.hpp"
 #include "pal_ui_style_properties.hpp"
+#include "pal_ui_background.hpp"
 #include "pal_ui_text.hpp"
 #include "pal_system_preferences.hpp"
 
@@ -228,6 +230,7 @@ struct RetainedUiSelectorTree {
     using Node = UiElementHandle;
     Engine& engine;
     static constexpr Node document{invalid_handle - 1};
+    bool root(Node node) const { return node == engine.ui_document_roots.html; }
     bool valid(Node node) const {
         return node == document || node.value < engine.ui_elements.size();
     }
@@ -695,6 +698,13 @@ std::string ui_get_attribute(Engine& engine, UiElementHandle element, std::strin
     const auto found = record.attributes.find(std::string(name));
     return found == record.attributes.end() ? std::string{} : found->second;
 }
+js::Nullable<std::string> ui_dataset_value(Engine& engine, UiElementHandle element,
+                                           std::string_view name) {
+    const auto& attributes = ui_element(engine, element).attributes;
+    const auto found = attributes.find(std::string(name));
+    return found == attributes.end() ? js::Nullable<std::string>{}
+                                     : js::Nullable<std::string>{found->second};
+}
 
 std::string ui_escape_rml(std::string_view text) {
     std::string escaped;
@@ -810,7 +820,21 @@ void ui_set_attribute(Engine& engine, UiElementHandle element, std::string name,
 #endif
     const bool replaces_style = name == "style" && !record.style_properties.empty();
     if (existing != record.attributes.end() && existing->second == value && !replaces_style) {
+        if (engine.ui_attribute_changed)
+            engine.ui_attribute_changed(element, name);
         return;
+    }
+    static const bool trace = pal::environment_variable("BBLITE_RUNTIME_TRACE") == "1";
+    if (trace && record.tag == "canvas" && name.starts_with("data-")) {
+        std::string key;
+        for (std::size_t index = 5; index < name.size(); ++index) {
+            if (name[index] == '-' && index + 1 < name.size() && name[index + 1] >= 'a' &&
+                name[index + 1] <= 'z') {
+                key += static_cast<char>(name[++index] - 'a' + 'A');
+            } else
+                key += name[index];
+        }
+        std::fprintf(stderr, "[bblite trace] dataset %s=%s\n", key.c_str(), value.c_str());
     }
     if (name == "style") {
         record.style_properties.clear();
@@ -823,7 +847,9 @@ void ui_set_attribute(Engine& engine, UiElementHandle element, std::string name,
         record.image_request.reset();
     }
 #endif
-    record.attributes.insert_or_assign(std::move(name), std::move(value));
+    const auto updated = record.attributes.insert_or_assign(std::move(name), std::move(value));
+    if (engine.ui_attribute_changed)
+        engine.ui_attribute_changed(element, updated.first->first);
 #if BBLITE_WORKERS
     if (updates_image)
         static_cast<void>(image_request(engine, element));
@@ -843,6 +869,8 @@ void ui_remove_attribute(Engine& engine, UiElementHandle element, std::string_vi
         throw std::runtime_error("Removing the type of a native file input is not represented.");
 #endif
     bool changed = record.attributes.erase(normalized) != 0;
+    if (changed && engine.ui_attribute_changed)
+        engine.ui_attribute_changed(element, normalized);
 #if BBLITE_WORKERS
     if (changed && normalized == "src" && record.image_request) {
         record.image_request->invalidated = true;
@@ -991,7 +1019,7 @@ void ui_add_style_rule(Engine& engine, UiElementHandle stylesheet, UiStyleSelect
                        bool focus_visible, bool active, UiMotionPreference motion,
                        std::vector<UiSelectorStep> sequence, UiGeneratedPart generated,
                        std::optional<UiGeneratedContent> content, UiRangePart range,
-                       double container_max_width) {
+                       double container_max_width, UiOrientation orientation) {
     UiElementRecord& owner = ui_element(engine, stylesheet);
     if (owner.tag != "style") {
         throw std::runtime_error("A native UI stylesheet rule must belong to a <style> element.");
@@ -1003,7 +1031,7 @@ void ui_add_style_rule(Engine& engine, UiElementHandle stylesheet, UiStyleSelect
     owner.style_rules.push_back({selector, std::move(primary), std::move(secondary), std::move(tag),
                                  std::move(style), max_width, hover, focus_visible, active,
                                  scrollbar, motion, std::move(sequence), generated,
-                                 std::move(content), range, container_max_width});
+                                 std::move(content), range, container_max_width, orientation});
     mark_ui_changed(engine, owner);
 }
 
@@ -1013,7 +1041,7 @@ void ui_add_host_style_rule(Engine& engine, UiStyleSelectorKind selector, std::s
                             UiScrollbarPart scrollbar, UiMotionPreference motion,
                             std::vector<UiSelectorStep> sequence, UiGeneratedPart generated,
                             std::optional<UiGeneratedContent> content, UiRangePart range,
-                            double container_max_width) {
+                            double container_max_width, UiOrientation orientation) {
     if (primary.empty() || (style.empty() && !content)) {
         throw std::runtime_error(
             "A native host UI style rule must have a target and declarations.");
@@ -1021,7 +1049,7 @@ void ui_add_host_style_rule(Engine& engine, UiStyleSelectorKind selector, std::s
     engine.ui_host_style_rules.push_back(
         {selector, std::move(primary), std::move(secondary), std::move(tag), std::move(style),
          max_width, hover, focus_visible, active, scrollbar, motion, std::move(sequence), generated,
-         std::move(content), range, container_max_width});
+         std::move(content), range, container_max_width, orientation});
     ++engine.ui_style_revision;
     mark_ui_changed(engine);
 }
@@ -1271,6 +1299,33 @@ UiElementHandle ui_active_element(Engine& engine) {
     return engine.ui_focused_element;
 }
 
+namespace {
+void dispatch_ui_focus(Engine& engine, UiElementHandle element, std::string type,
+                       UiElementHandle related) {
+    auto event = dom_event(PlatformMouseEvent{}, type, dom_ui_path(engine, element), false, false,
+                           related.value == invalid_handle
+                               ? std::nullopt
+                               : std::optional{DomEventTarget::node(related.value)});
+    event.dom->trusted = true;
+    dispatch_dom_pointer(engine, event);
+    const auto& events = ui_element(engine, element).event_callbacks;
+    if (const auto found = events.find(type); found != events.end()) {
+        const auto callbacks = found->second;
+        for (const auto& callback : callbacks)
+            callback(event);
+    }
+}
+} // namespace
+
+bool ui_clear_focus(Engine& engine, UiElementHandle next) {
+    const auto previous = ui_active_element(engine);
+    engine.ui_focused_element = {};
+    const auto revision = ++engine.ui_focus_revision;
+    if (previous.value != invalid_handle)
+        dispatch_ui_focus(engine, previous, "blur", next);
+    return revision == engine.ui_focus_revision;
+}
+
 void ui_focus(Engine& engine, UiElementHandle element, bool visible) {
     if (!ui_focusable(engine, element))
         return;
@@ -1278,19 +1333,15 @@ void ui_focus(Engine& engine, UiElementHandle element, bool visible) {
         engine.ui_focus_visible = visible;
         ++engine.ui_focus_revision;
     }
-    if (ui_active_element(engine) == element)
+    const auto previous = ui_active_element(engine);
+    if (previous == element)
+        return;
+    if (!ui_clear_focus(engine, element))
         return;
     engine.ui_focused_element = element;
     engine.canvas_focused = false;
     ++engine.ui_focus_revision;
-    const auto& events = ui_element(engine, element).event_callbacks;
-    const auto found = events.find("focus");
-    if (found != events.end()) {
-        const auto callbacks = found->second;
-        const PlatformMouseEvent event{};
-        for (const auto& callback : callbacks)
-            callback(event);
-    }
+    dispatch_ui_focus(engine, element, "focus", previous);
 }
 
 #if BBLITE_HAS_BROWSER_FILE
@@ -1382,6 +1433,10 @@ void reset_canvas(UiElementRecord::CanvasState& canvas, double width, double hei
     canvas.pixel_revision = next_pixel_revision;
 }
 
+void mark_canvas_changed(Engine& engine, UiElementRecord::CanvasState& canvas) {
+    canvas.draw_revision = ++engine.ui_canvas_revision;
+}
+
 } // namespace
 
 UiElementHandle ui_primary_canvas(Engine& engine, std::string_view id) {
@@ -1404,11 +1459,13 @@ UiElementHandle ui_primary_canvas(Engine& engine, std::string_view id) {
 void ui_canvas_set_width(Engine& engine, UiElementHandle element, double width) {
     auto& canvas = ui_canvas(engine, element);
     reset_canvas(canvas, width, canvas.height);
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_set_height(Engine& engine, UiElementHandle element, double height) {
     auto& canvas = ui_canvas(engine, element);
     reset_canvas(canvas, canvas.width, height);
+    mark_canvas_changed(engine, canvas);
 }
 
 double ui_canvas_width(Engine& engine, UiElementHandle element) {
@@ -1448,7 +1505,9 @@ void ui_canvas_scale(Engine& engine, UiElementHandle element, double x, double y
 void ui_canvas_clear_rect(Engine& engine, UiElementHandle element, double, double, double, double) {
     // The reached overlays clear their full backing store once per update.
     // Keep clearRect bounded to that retained-frame behavior for now.
-    ui_canvas(engine, element).draws.clear();
+    auto& canvas = ui_canvas(engine, element);
+    canvas.draws.clear();
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_fill_rect(Engine& engine, UiElementHandle element, double x, double y, double width,
@@ -1458,6 +1517,7 @@ void ui_canvas_fill_rect(Engine& engine, UiElementHandle element, double x, doub
     if (color.alpha == 0)
         return;
     pal::retain_canvas_fill_rect(canvas, x, y, width, height, color.alpha == 255);
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_begin_path(Engine& engine, UiElementHandle element) {
@@ -1569,6 +1629,7 @@ void ui_canvas_fill(Engine& engine, UiElementHandle element) {
     draw.line_width = 0.0;
     draw.closed = true;
     canvas.draws.push_back(std::move(draw));
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_stroke(Engine& engine, UiElementHandle element) {
@@ -1585,6 +1646,7 @@ void ui_canvas_stroke(Engine& engine, UiElementHandle element) {
     draw.round_join = canvas.line_join == "round";
     draw.round_cap = canvas.line_cap == "round";
     canvas.draws.push_back(std::move(draw));
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_set_image_smoothing(Engine& engine, UiElementHandle element, bool enabled) {
@@ -1631,6 +1693,7 @@ void ui_canvas_put_image_data(Engine& engine, UiElementHandle element, const js:
         }
     }
     ++canvas.pixel_revision;
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_draw_image(Engine& engine, UiElementHandle destination, UiElementHandle source,
@@ -1649,6 +1712,7 @@ void ui_canvas_draw_image(Engine& engine, UiElementHandle destination, UiElement
     draw.destination_height = height * canvas.scale_y;
     draw.nearest_sampling = !canvas.image_smoothing_enabled;
     canvas.draws.push_back(std::move(draw));
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_set_font(Engine& engine, UiElementHandle element, std::string value) {
@@ -1687,6 +1751,7 @@ void ui_canvas_fill_text(Engine& engine, UiElementHandle element, std::string te
     draw.shadow_blur =
         canvas.shadow_blur * (std::abs(canvas.scale_x) + std::abs(canvas.scale_y)) * 0.5;
     canvas.draws.push_back(std::move(draw));
+    mark_canvas_changed(engine, canvas);
 }
 
 namespace pal {
@@ -1915,6 +1980,68 @@ std::string quote_css_font_family(std::string family) {
     return quoted + "\"";
 }
 
+std::string rml_css_font_families(std::string value, std::string_view property) {
+    if (property == "font-family")
+        return value.find(',') == std::string::npos ? value
+                                                    : quote_css_font_family(std::move(value));
+    char quote = 0;
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        const char token = value[index];
+        if (token == '\\') {
+            ++index;
+            continue;
+        }
+        if (quote) {
+            if (token == quote)
+                quote = 0;
+            continue;
+        }
+        if (token == '\'' || token == '"') {
+            quote = token;
+            continue;
+        }
+        if (token == '/' && index + 1 < value.size() && value[index + 1] == '*') {
+            const auto end = value.find("*/", index + 2);
+            if (end == std::string::npos)
+                break;
+            index = end + 1;
+            continue;
+        }
+        if (token != ':')
+            continue;
+        const auto boundary = value.find_last_of(";{}", index);
+        const auto begin = boundary == std::string::npos ? 0 : boundary + 1;
+        if (!css_property_name_equals(
+                trim_css_token(std::string_view(value).substr(begin, index - begin)),
+                "font-family"))
+            continue;
+        const auto start = index + 1;
+        auto end = start;
+        char family_quote = 0;
+        for (; end < value.size(); ++end) {
+            const auto character = value[end];
+            if (character == '\\')
+                ++end;
+            else if (family_quote) {
+                if (character == family_quote)
+                    family_quote = 0;
+            } else if (character == '\'' || character == '"')
+                family_quote = character;
+            else if (character == ';' || character == '}')
+                break;
+        }
+        const auto family = trim_css_token(std::string_view(value).substr(start, end - start));
+        if (family.find(',') != std::string_view::npos) {
+            // RmlUi parses a string property as one token; our font engine owns the CSS list.
+            const auto quoted = quote_css_font_family(std::string(family));
+            value.replace(start, end - start, quoted);
+            end = start + quoted.size();
+        }
+        index = end ? end - 1 : end;
+    }
+    return value;
+}
+
 void load_rml_font(const SystemFontFace& face, std::string_view registered_family, int weight,
                    bool fallback = false) {
     if (!Rml::LoadFontFace(
@@ -2119,6 +2246,7 @@ std::string take_css_declaration(std::string& style, std::string_view requested_
 bool is_private_ui_declaration(std::string_view declaration) {
     const std::size_t first = declaration.find_first_not_of(" \t\r\n");
     return first != std::string_view::npos && declaration.substr(first).starts_with("--bbl-") &&
+           !declaration.substr(first).starts_with("--bbl-background-") &&
            !declaration.substr(first).starts_with("--bbl-text-gradient");
 }
 
@@ -3104,8 +3232,12 @@ public:
         const Rml::String extension = extension_offset == Rml::String::npos
                                           ? Rml::String{}
                                           : source.substr(extension_offset + 1);
-        SDL_Surface* surface = IMG_LoadTyped_IO(
-            SDL_IOFromConstMem(encoded.data(), static_cast<int>(size)), true, extension.c_str());
+        SDL_Surface* surface = nullptr;
+        {
+            std::lock_guard lock(image_decoder_mutex());
+            surface = IMG_LoadTyped_IO(SDL_IOFromConstMem(encoded.data(), static_cast<int>(size)),
+                                       true, extension.c_str());
+        }
         if (!surface) {
             return {};
         }
@@ -3426,6 +3558,19 @@ private:
     std::unordered_map<std::uint32_t, RetainedCanvasTexture> retained_canvas_textures;
 };
 
+class UiCanvasElement final : public Rml::Element {
+    UiRmlRuntime* runtime_ = nullptr;
+    UiElementHandle handle_{};
+    void OnRender() override;
+
+public:
+    explicit UiCanvasElement(const Rml::String& tag) : Element(tag) {}
+    void bind(UiRmlRuntime& runtime, UiElementHandle handle) {
+        runtime_ = &runtime;
+        handle_ = handle;
+    }
+};
+
 struct UiRmlRuntime {
     UiRmlRuntime(Engine& engine, SDL_Window* window, std::uint32_t width, std::uint32_t height,
                  bool (*read_motion_preference)() = system_reduced_motion)
@@ -3440,7 +3585,9 @@ struct UiRmlRuntime {
             }
             initialized = true;
             register_ui_style_properties();
+            register_ui_background_properties();
             Rml::Factory::RegisterElementInstancer("button", &button_instancer);
+            Rml::Factory::RegisterElementInstancer("canvas", &canvas_instancer);
             Rml::Factory::RegisterElementInstancer("select", &select_instancer);
             Rml::Factory::RegisterElementInstancer("input", &input_instancer);
             scrollbar_properties = register_ui_scrollbar_properties();
@@ -3473,6 +3620,9 @@ struct UiRmlRuntime {
             if (!system_regular) {
                 throw std::runtime_error("The platform font service could not resolve system-ui.");
             }
+            system_fonts = std::make_unique<SystemUiFontEngine>(*Rml::GetFontEngineInterface(),
+                                                                system_regular->family);
+            Rml::SetFontEngineInterface(system_fonts.get());
             const std::string system_family = system_regular->family;
             const auto load_system_weight = [&system_family](int resolved_weight,
                                                              int registered_weight) {
@@ -3569,15 +3719,19 @@ struct UiRmlRuntime {
             if (!document) {
                 throw std::runtime_error("RmlUi document creation failed.");
             }
+            document->SetPseudoClass("root", true);
             document_head = document->AppendChild(
                 Rml::Factory::InstanceElement(document, "*", "head", Rml::XMLAttributes{}));
             document_body = document->AppendChild(
                 Rml::Factory::InstanceElement(document, "*", "body", Rml::XMLAttributes{}));
+            context->Update();
+            root_font_size = document->GetComputedValues().font_size() / density_ratio;
             sync_style_sheet();
             sync_motion_preference();
             document->Show(Rml::ModalFlag::None, Rml::FocusFlag::None, Rml::ScrollFlag::None);
             sync_tree();
             context->Update();
+            sync_root_font_math();
             if (sync_container_queries()) {
                 sync_tree();
                 context->Update();
@@ -3588,6 +3742,8 @@ struct UiRmlRuntime {
                     context->Update();
             }
             if (sync_ui_scrollbar_styles(*document, scrollbar_properties))
+                context->Update();
+            if (background_styles.sync(*document))
                 context->Update();
             if (refresh_gradient_text())
                 context->Update();
@@ -3625,6 +3781,7 @@ struct UiRmlRuntime {
 #endif
         } catch (...) {
             if (initialized) {
+                background_styles.clear();
                 Rml::Shutdown();
                 initialized = false;
             }
@@ -3639,6 +3796,7 @@ struct UiRmlRuntime {
             engine.dom_input->can_activate = {};
         }
         if (initialized) {
+            background_styles.clear();
             Rml::Shutdown();
         }
     }
@@ -3669,17 +3827,18 @@ struct UiRmlRuntime {
         return true;
     }
 
-    std::string project_css(std::string value) const {
+    std::string project_css(std::string value, std::string_view property = {}) const {
         static_cast<void>(take_css_declaration(value, "resize"));
         replace_all(value, "--bbl-text-gradient", "bbl-text-gradient");
         replace_all(value, "system-ui", css_font_family);
         replace_all(value, "sans-serif", css_sans_family);
         replace_all(value, "ui-monospace", css_monospace_family);
         replace_all(value, "monospace", css_monospace_family);
+        value = rml_css_font_families(std::move(value), property);
         value = rml_css_animation_easing(std::move(value));
         value = rml_css_filter_arguments(std::move(value));
         value = rml_css_length_math(std::move(value), viewport_width / density_ratio,
-                                    viewport_height / density_ratio);
+                                    viewport_height / density_ratio, root_font_size, property);
         value = rml_css_density_units(std::move(value));
         return rml_css_color_alpha(std::move(value));
     }
@@ -3688,8 +3847,12 @@ struct UiRmlRuntime {
                                 const std::string& value) const {
         if (value.empty()) {
             element.RemoveProperty(name);
+            if (name == "display")
+                element.RemoveProperty("--bbl-authored-display");
             return;
         }
+        if (name == "display")
+            element.SetProperty("--bbl-authored-display", "1");
         const bool checked = name == "object-fit" || name == "filter" || name == "overflow-wrap" ||
                              name == "word-break" || name == "flex" || name.starts_with("flex-") ||
                              name == "align-self" || name == "align-content" || name == "row-gap" ||
@@ -3697,9 +3860,35 @@ struct UiRmlRuntime {
                              name == "margin-left" || name == "margin-right" ||
                              name == "box-shadow";
         const bool accepted = element.SetProperty(
-            name, project_css(checked && name != "box-shadow" ? js::string_lower(value) : value));
+            name,
+            project_css(checked && name != "box-shadow" ? js::string_lower(value) : value, name));
         if (checked && !accepted)
             throw std::runtime_error("Unsupported retained UI " + name + " value: " + value);
+    }
+
+    bool sync_root_font_math() {
+        bool changed = false;
+        for (unsigned attempt = 0; attempt < 4; ++attempt) {
+            const double font_size = document->GetComputedValues().font_size() / density_ratio;
+            if (font_size == root_font_size)
+                return changed;
+            if (!std::isfinite(font_size) || font_size <= 0)
+                throw std::runtime_error("The UI root font size must be finite and positive.");
+            root_font_size = font_size;
+            sync_style_sheet(true);
+            sync_tree();
+            for (std::size_t index = 0; index < projected_elements.size(); ++index) {
+                auto* element = projected_elements[index].element;
+                if (!element)
+                    continue;
+                const auto& record = engine.ui_elements[index];
+                for (const auto& name : record.style_property_order)
+                    set_projected_property(*element, name, record.style_properties.at(name));
+            }
+            context->Update();
+            changed = true;
+        }
+        throw std::runtime_error("Root font size and CSS length math did not converge.");
     }
 
     std::string projected_attribute_value(std::string_view name,
@@ -3782,7 +3971,10 @@ struct UiRmlRuntime {
     }
 
     bool style_rule_media_matches(const UiStyleRule& rule) const {
-        return (rule.max_width < 0.0 ||
+        return (rule.orientation == UiOrientation::Any ||
+                (viewport_width <= viewport_height) ==
+                    (rule.orientation == UiOrientation::Portrait)) &&
+               (rule.max_width < 0.0 ||
                 static_cast<double>(viewport_width) / std::max(1.0f, density_ratio) <=
                     rule.max_width) &&
                (rule.motion == UiMotionPreference::Any ||
@@ -3877,19 +4069,27 @@ struct UiRmlRuntime {
             // presentation adaptations and content-only generated parts.
             if (public_style.empty() && rule.container_max_width < 0.0)
                 return;
-            const bool media = rule.max_width >= 0.0 || motion;
+            const bool orientation = rule.orientation != UiOrientation::Any;
+            const bool media = rule.max_width >= 0.0 || motion || orientation;
             if (media)
                 source += "@media ";
             if (rule.max_width >= 0.0) {
                 source += "(max-width:";
                 source += std::to_string(rule.max_width);
                 source += "px)";
-                if (motion)
+                if (motion || orientation)
                     source += " and ";
             }
             if (motion)
                 source += std::string("(theme:") +
                           motion_theme(rule.motion == UiMotionPreference::Reduce) + ")";
+            if (orientation) {
+                if (motion)
+                    source += " and ";
+                source += std::string("(orientation:") +
+                          (rule.orientation == UiOrientation::Portrait ? "portrait" : "landscape") +
+                          ")";
+            }
             if (media)
                 source += "{";
             source += ui_style_rule_selector(rule);
@@ -4289,6 +4489,12 @@ struct UiRmlRuntime {
             throw std::runtime_error("RmlUi could not create element tag '" + record.tag + "'.");
         }
         Rml::Element* raw = element.get();
+        if (record.tag == "canvas") {
+            auto* canvas = dynamic_cast<UiCanvasElement*>(raw);
+            if (!canvas)
+                throw std::logic_error("The canvas instancer returned an incompatible element.");
+            canvas->bind(*this, handle);
+        }
         ProjectedUiElement& projected = handle_at(projected_elements, handle);
         projected = {};
         projected.element = raw;
@@ -5148,58 +5354,52 @@ struct UiRmlRuntime {
         context->Update();
     }
 
-    void render_canvases() {
-        for (std::uint32_t index = 0; index < engine.ui_elements.size(); ++index) {
-            const UiElementRecord& record = engine.ui_elements[index];
-            if (!record.canvas || index >= projected_elements.size() ||
-                !projected_elements[index].element) {
-                continue;
-            }
-            Rml::Element& element = *projected_elements[index].element;
-            if (element.GetProperty("object-fit")->Get<int>() != 0)
-                throw std::runtime_error(
-                    "Retained canvas object-fit currently supports fill only.");
-            const Rml::Vector2f offset = element.GetAbsoluteOffset(Rml::BoxArea::Content);
-            const double layout_width = element.GetClientWidth();
-            const double layout_height = element.GetClientHeight();
-            if (record.canvas->width <= 0.0 || record.canvas->height <= 0.0 ||
-                layout_width <= 0.0 || layout_height <= 0.0) {
-                continue;
-            }
-            const double scale_x = layout_width / record.canvas->width;
-            const double scale_y = layout_height / record.canvas->height;
-            for (const auto& draw : record.canvas->draws) {
-                CanvasMesh mesh;
-                Rml::TextureHandle texture{};
-                if (draw.kind == UiElementRecord::CanvasDrawCommand::Kind::Blit) {
-                    if (draw.source.value >= engine.ui_elements.size()) {
-                        continue;
-                    }
-                    const UiElementRecord& source = handle_at(engine.ui_elements, draw.source);
-                    if (!source.canvas)
-                        continue;
-                    mesh = canvas_blit_mesh(draw, scale_x, scale_y);
-                    texture = render_interface.retained_canvas_texture(draw.source, *source.canvas);
-                    if (!texture)
-                        continue;
-                } else if (draw.kind == UiElementRecord::CanvasDrawCommand::Kind::Text) {
-                    if (render_canvas_text(draw, offset, scale_x, scale_y)) {
-                        continue;
-                    }
-                    mesh = canvas_text_mesh(draw, scale_x, scale_y);
-                } else {
-                    mesh = canvas_mesh(draw, scale_x, scale_y);
+    void render_canvas(UiElementHandle handle, Rml::Element& element) {
+        const UiElementRecord& record = engine.ui_elements.at(handle.value);
+        if (!record.canvas)
+            return;
+        if (element.GetProperty("object-fit")->Get<int>() != 0)
+            throw std::runtime_error("Retained canvas object-fit currently supports fill only.");
+        const Rml::Vector2f offset = element.GetAbsoluteOffset(Rml::BoxArea::Content);
+        const double layout_width = element.GetClientWidth();
+        const double layout_height = element.GetClientHeight();
+        if (record.canvas->width <= 0.0 || record.canvas->height <= 0.0 || layout_width <= 0.0 ||
+            layout_height <= 0.0) {
+            return;
+        }
+        const double scale_x = layout_width / record.canvas->width;
+        const double scale_y = layout_height / record.canvas->height;
+        for (const auto& draw : record.canvas->draws) {
+            CanvasMesh mesh;
+            Rml::TextureHandle texture{};
+            if (draw.kind == UiElementRecord::CanvasDrawCommand::Kind::Blit) {
+                if (draw.source.value >= engine.ui_elements.size()) {
+                    continue;
                 }
-                if (mesh.vertices.empty() || mesh.indices.empty())
+                const UiElementRecord& source = handle_at(engine.ui_elements, draw.source);
+                if (!source.canvas)
                     continue;
-                const Rml::CompiledGeometryHandle geometry =
-                    render_interface.CompileGeometry(mesh.vertices, mesh.indices);
-                if (!geometry)
+                mesh = canvas_blit_mesh(draw, scale_x, scale_y);
+                texture = render_interface.retained_canvas_texture(draw.source, *source.canvas);
+                if (!texture)
                     continue;
-                render_interface.RenderGeometryWithSampling(geometry, offset, texture,
-                                                            draw.nearest_sampling);
-                render_interface.ReleaseGeometry(geometry);
+            } else if (draw.kind == UiElementRecord::CanvasDrawCommand::Kind::Text) {
+                if (render_canvas_text(draw, offset, scale_x, scale_y)) {
+                    continue;
+                }
+                mesh = canvas_text_mesh(draw, scale_x, scale_y);
+            } else {
+                mesh = canvas_mesh(draw, scale_x, scale_y);
             }
+            if (mesh.vertices.empty() || mesh.indices.empty())
+                continue;
+            const Rml::CompiledGeometryHandle geometry =
+                render_interface.CompileGeometry(mesh.vertices, mesh.indices);
+            if (!geometry)
+                continue;
+            render_interface.RenderGeometryWithSampling(geometry, offset, texture,
+                                                        draw.nearest_sampling);
+            render_interface.ReleaseGeometry(geometry);
         }
     }
 
@@ -5467,6 +5667,7 @@ struct UiRmlRuntime {
     UiControlMarkDecoratorInstancer control_mark_decorator;
     UiControlArrowDecoratorInstancer control_arrow_decorator;
     Rml::ElementInstancerGeneric<UiButtonElement> button_instancer;
+    Rml::ElementInstancerGeneric<UiCanvasElement> canvas_instancer;
     Rml::ElementInstancerGeneric<UiSelectElement> select_instancer;
     UiInputInstancer input_instancer;
     Rml::Context* context = nullptr;
@@ -5488,6 +5689,7 @@ struct UiRmlRuntime {
     std::uint64_t projected_focus_revision = ~std::uint64_t{0};
     UiElementHandle projected_focused{};
     std::string css_font_family;
+    std::unique_ptr<SystemUiFontEngine> system_fonts;
     std::string css_sans_family;
     std::string css_monospace_family;
     std::optional<TextFormMetrics> text_form_metrics;
@@ -5501,6 +5703,7 @@ struct UiRmlRuntime {
     std::size_t projected_container_query_revision = 0;
     float density_ratio = 0.0f;
     std::uint32_t viewport_width = 0;
+    double root_font_size = 0;
     std::uint32_t viewport_height = 0;
     bool (*const motion_preference_reader)();
     bool observes_motion_preference = false;
@@ -5520,7 +5723,19 @@ struct UiRmlRuntime {
     std::map<Rml::TouchId, Rml::Touch> native_touches;
     bool initialized = false;
     UiScrollbarProperties scrollbar_properties{};
+    UiBackgroundStyles background_styles;
+    double canvas_render_ms = 0;
 };
+
+void UiCanvasElement::OnRender() {
+    Element::OnRender();
+    if (!runtime_)
+        return;
+    auto& cpu = runtime_->render_interface.cpu;
+    const auto started = cpu.now();
+    runtime_->render_canvas(handle_, *this);
+    runtime_->canvas_render_ms += cpu.now() - started;
+}
 
 UiRmlRuntime* create_ui_rml_runtime(Engine& engine, SDL_Window* window, std::uint32_t width,
                                     std::uint32_t height) {
@@ -5639,6 +5854,27 @@ bool handle_ui_rml_event(UiRmlRuntime& runtime, SDL_Event& event) {
          event.type == SDL_EVENT_MOUSE_BUTTON_UP || event.type == SDL_EVENT_MOUSE_WHEEL)) {
         return true;
     }
+    const auto pointer_position = [&]() -> std::optional<Rml::Vector2f> {
+        if (event.type == SDL_EVENT_MOUSE_MOTION)
+            return Rml::Vector2f{event.motion.x, event.motion.y} * runtime.density_ratio;
+        if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP)
+            return Rml::Vector2f{event.button.x, event.button.y} * runtime.density_ratio;
+        if (event.type == SDL_EVENT_MOUSE_WHEEL)
+            return Rml::Vector2f{event.wheel.mouse_x, event.wheel.mouse_y} * runtime.density_ratio;
+        if (event.type == SDL_EVENT_FINGER_DOWN || event.type == SDL_EVENT_FINGER_MOTION ||
+            event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED)
+            return Rml::Vector2f{event.tfinger.x * static_cast<float>(runtime.viewport_width),
+                                 event.tfinger.y * static_cast<float>(runtime.viewport_height)};
+        return std::nullopt;
+    }();
+    auto* pointer_target =
+        pointer_position ? runtime.context->GetElementAtPoint(*pointer_position) : nullptr;
+    const auto target = runtime.event_targets.find(pointer_target);
+    const bool canvas_target =
+        target != runtime.event_targets.end() &&
+        target->second.kind == DomEventTargetKind::Element &&
+        target->second.element < runtime.engine.ui_elements.size() &&
+        runtime.engine.ui_elements[target->second.element].external_gpu_canvas;
     runtime.default_prevented = false;
     Rml::Element* previous_focus = runtime.context->GetFocusElement();
     const bool replay_key = (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) &&
@@ -5661,7 +5897,9 @@ bool handle_ui_rml_event(UiRmlRuntime& runtime, SDL_Event& event) {
         }
     }
     runtime.sync_native_focus();
-    return result;
+    // Canvas DOM listeners make it a RmlUi hit target, not an overlay that owns
+    // the scene's camera input. Its canceled defaults still remain canceled.
+    return result || (canvas_target && !runtime.default_prevented);
 }
 
 void update_ui_rml_runtime(UiRmlRuntime& runtime, std::uint32_t width, std::uint32_t height) {
@@ -5680,6 +5918,8 @@ void update_ui_rml_runtime(UiRmlRuntime& runtime, std::uint32_t width, std::uint
     const bool density_changed = runtime.update_density_ratio();
     const bool viewport_changed = dimensions_changed || density_changed;
     const bool tree_changed = runtime.projected_revision != runtime.engine.ui_revision;
+    if (tree_changed || viewport_changed)
+        runtime.style_trace_written = false;
     if (cpu.enabled && tree_changed)
         ++cpu.sample.changed;
     if (tree_changed || viewport_changed)
@@ -5704,6 +5944,7 @@ void update_ui_rml_runtime(UiRmlRuntime& runtime, std::uint32_t width, std::uint
     }
     cpu.split(cpu.sample.projection, checkpoint);
     runtime.context->Update();
+    bool root_font_changed = runtime.sync_root_font_math();
     cpu.split(cpu.sample.context, checkpoint);
     if (runtime.sync_text_form_metrics())
         runtime.context->Update();
@@ -5722,10 +5963,11 @@ void update_ui_rml_runtime(UiRmlRuntime& runtime, std::uint32_t width, std::uint
         // same active selector set.
         runtime.sync_tree();
         runtime.context->Update();
+        root_font_changed = runtime.sync_root_font_math() || root_font_changed;
     }
     bool generated_changed = false;
-    if (tree_changed || motion_changed || dimensions_changed || density_changed || focus_changed ||
-        hover_changed || containers_changed) {
+    if (tree_changed || motion_changed || dimensions_changed || density_changed ||
+        root_font_changed || focus_changed || hover_changed || containers_changed) {
         generated_changed = runtime.sync_generated_content();
         if (generated_changed) {
             runtime.context->Update();
@@ -5746,9 +5988,11 @@ void update_ui_rml_runtime(UiRmlRuntime& runtime, std::uint32_t width, std::uint
     }
     if (runtime.refresh_gradient_text())
         runtime.context->Update();
+    if (runtime.background_styles.sync(*runtime.document))
+        runtime.context->Update();
     const bool layout_changed = tree_changed || density_changed || dimensions_changed ||
-                                motion_changed || generated_changed || containers_changed ||
-                                hover_changed;
+                                root_font_changed || motion_changed || generated_changed ||
+                                containers_changed || hover_changed;
     cpu.split(cpu.sample.decorations, checkpoint);
     if (layout_changed)
         runtime.update_intrinsic_widths();
@@ -5770,12 +6014,9 @@ const UiRenderFrame& record_ui_rml_frame(UiRmlRuntime& runtime, std::uint32_t wi
     auto& cpu = runtime.render_interface.cpu;
     const double started = cpu.now();
     runtime.render_interface.begin_frame(width, height);
-    // Canvas overlays are below the regular retained DOM controls in the
-    // racer (speed lines at z=9, HUD/minimap at z=10). Queue their geometry
-    // first, then let RmlUi draw the interactive tree above it.
-    runtime.render_canvases();
-    const double canvases_finished = cpu.now();
+    runtime.canvas_render_ms = 0;
     runtime.context->Render();
+    const double canvases_finished = started + runtime.canvas_render_ms;
     const double render_finished = cpu.now();
     if (!runtime.style_trace_written && std::getenv("BBLITE_UI_STYLE_TRACE")) {
         Rml::ElementList elements;
@@ -5787,8 +6028,11 @@ const UiRenderFrame& record_ui_rml_frame(UiRmlRuntime& runtime, std::uint32_t wi
                 const auto& style = element->GetComputedValues();
                 const auto position = element->GetAbsoluteOffset(Rml::BoxArea::Border);
                 const auto size = element->GetBox().GetSize(Rml::BoxArea::Border);
-                std::cerr << "[bblite ui] " << element->GetTagName() << "."
-                          << element->GetClassNames() << " font=" << style.font_family()
+                std::cerr << "[bblite ui] " << element->GetTagName() << "#" << element->GetId()
+                          << "." << element->GetClassNames()
+                          << " hidden=" << element->HasAttribute("hidden")
+                          << " display=" << static_cast<int>(style.display())
+                          << " font=" << style.font_family()
                           << " weight=" << static_cast<int>(style.font_weight())
                           << " size=" << style.font_size() << " box=" << position.x << ','
                           << position.y << ',' << size.x << ',' << size.y << '\n';
@@ -5797,6 +6041,20 @@ const UiRenderFrame& record_ui_rml_frame(UiRmlRuntime& runtime, std::uint32_t wi
     }
     if (runtime.engine.canvas_focused) {
         append_canvas_focus_outline(runtime.render_interface.frame);
+    } else if (runtime.engine.ui_focus_visible) {
+        const auto focused = runtime.engine.ui_focused_element;
+        if (focused.value < runtime.engine.ui_elements.size() &&
+            runtime.engine.ui_elements[focused.value].tag == "canvas" &&
+            focused.value < runtime.projected_elements.size()) {
+            auto* element = runtime.projected_elements[focused.value].element;
+            if (element) {
+                const auto offset = element->GetAbsoluteOffset(Rml::BoxArea::Content);
+                append_canvas_focus_outline(
+                    runtime.render_interface.frame,
+                    UiClientRect{offset.x, offset.y, static_cast<double>(element->GetClientWidth()),
+                                 static_cast<double>(element->GetClientHeight())});
+            }
+        }
     }
     runtime.render_interface.append_composite_quad();
     if (cpu.enabled) {

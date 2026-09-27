@@ -461,11 +461,21 @@ function ownedPackagedResponse(
         url.hash = "";
         return `{${context.cppString(key)}, ${context.cppString(url.href)}, ${context.cppString(output)}}`;
     });
+    const response = context.dataLowerer.leafValue(
+        `bbl::pal::fetch_packaged(${selected.cpp}, std::array<bbl::pal::PackagedFetchEntry, ${entries.length}>{{${entries.join(", ")}}})`,
+        { kind: "promise", result: { kind: "http-response" } },
+    );
+    if (response.kind !== "promise" || !response.promiseResult) return response;
     return {
-        ...context.dataLowerer.leafValue(
-            `bbl::pal::fetch_packaged(${selected.cpp}, std::array<bbl::pal::PackagedFetchEntry, ${entries.length}>{{${entries.join(", ")}}})`,
-            { kind: "promise", result: { kind: "http-response" } },
-        ),
+        ...response,
+        ...(assets.length === 1
+            ? {
+                  promiseResult: {
+                      ...response.promiseResult,
+                      packagedBodySource: assets[0]!.logicalSource,
+                  },
+              }
+            : {}),
         nativeCaptures: selected.nativeCaptures ?? [],
     };
 }

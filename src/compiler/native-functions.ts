@@ -15,6 +15,7 @@ import {
 import { emitReachableStatements } from "./loop-control.js";
 import { arrayReturnStorage } from "./array-return-storage.js";
 import { cppIdentifier, cppIdentifierPattern } from "../cpp-literals.js";
+import { cppIdentifiers } from "./cpp-identifiers.js";
 import {
     declaredSymbol,
     isNullishLiteral,
@@ -31,6 +32,7 @@ import { MATH_MEMBERS, mathMemberCall } from "./math-intrinsics.js";
 import { classMemberTable, classMethod } from "./class-members.js";
 import type { Value } from "./types.js";
 import {
+    bindingIsOnlyCalledDirectly,
     borrowsReferenceParameter,
     isSupportedFunction,
     parameterIsReadOnly,
@@ -192,12 +194,15 @@ export function captureDataFunctionBody(
     const bindingBoundary = context.nativeBindingCheckpoint();
     context.bindings.pushScope(context.allocateUserFunctionPrefix());
     try {
+        const leading = channels?.bindLeading?.() ?? [];
+        const parameterNames = new Map<number, string>();
         const parameterDeclarations = [
-            ...(channels?.bindLeading?.() ?? []),
-            ...parameters.map((parameter) => {
+            ...leading,
+            ...parameters.map((parameter, index) => {
                 const cppName = context.bindings.cppIdentifier(
                     parameter.name.text,
                 );
+                parameterNames.set(leading.length + index, cppName);
                 const cppType = context.dataTypes.cppType(parameter.type);
                 context.registerNativeBindingType(
                     cppName,
@@ -259,7 +264,18 @@ export function captureDataFunctionBody(
                     "A namespace body reads an enclosing native local and requires a closure.",
                     "entry-scope-required",
                 );
-            return { parameterDeclarations, lines: captured.value };
+            const used = cppIdentifiers(captured.value.join("\n"));
+            return {
+                parameterDeclarations: parameterDeclarations.map(
+                    (declaration, index) => {
+                        const name = parameterNames.get(index);
+                        return name && !used.has(name)
+                            ? `[[maybe_unused]] ${declaration}`
+                            : declaration;
+                    },
+                ),
+                lines: captured.value,
+            };
         } finally {
             context.endNativeFunctionBody();
         }
@@ -1976,26 +1992,14 @@ export class NativeFunctionLowerer {
                     ts.isIdentifier(callback.parent.name)
                   ? callback.parent.name
                   : undefined;
-            const symbol = name
-                ? declaredSymbol(this.context.checker, name)
-                : undefined;
-            if (!name || !symbol) return false;
-            return !someAnalysisNode(declaration, (node) => {
-                if (
-                    ts.isIdentifier(node) &&
-                    node !== name &&
-                    declaredSymbol(this.context.checker, node) === symbol
-                ) {
-                    const parent = node.parent;
-                    if (
-                        !ts.isCallExpression(parent) ||
-                        this.context.unwrap(parent.expression) !== node
-                    ) {
-                        return true;
-                    }
-                }
-                return false;
-            });
+            return (
+                !!name &&
+                bindingIsOnlyCalledDirectly(
+                    this.context.checker,
+                    name,
+                    declaration,
+                )
+            );
         };
 
         const found = someAnalysisNode(declaration, (node) => {

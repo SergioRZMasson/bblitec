@@ -17,7 +17,7 @@ test(
         writeJsonRecord(path, { completed: 1 });
         const quote = (value: string): string =>
             `'${value.replaceAll("'", "''")}'`;
-        const script = `$stream = [IO.File]::Open(${quote(path)}, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read); try { [IO.File]::WriteAllText(${quote(ready)}, 'ready'); Start-Sleep -Milliseconds 250 } finally { $stream.Dispose() }`;
+        const script = `$stream = [IO.File]::Open(${quote(path)}, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read); try { [IO.File]::WriteAllText(${quote(ready)}, 'ready'); Start-Sleep -Milliseconds 750 } finally { $stream.Dispose() }`;
         const child = spawn("pwsh", ["-NoProfile", "-Command", script], {
             windowsHide: true,
             stdio: "ignore",

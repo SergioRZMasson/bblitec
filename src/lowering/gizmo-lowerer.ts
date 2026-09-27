@@ -73,7 +73,7 @@ import {
     pinnedGizmoFollowGeometry,
     pinnedGizmoGeometry,
 } from "./pinned-gizmo-geometry.js";
-import { lowerComputeAabb, positionsView } from "./pinned-compute-aabb.js";
+import { lowerComputeAabb } from "./pinned-compute-aabb.js";
 import { recordAt } from "../compiler/record-access.js";
 
 const UTILITY_MODULE = "src/gizmo/utility-layer.ts";
@@ -3995,7 +3995,6 @@ std::array<float, 16> bbox_mat4_from_quat(
         const computeAabb = lowerComputeAabb(this.context, {
             arm: "world",
             cppName: "bbox_compute_aabb",
-            positionsType: "BoundingBoxPositions",
         });
         const fromQuat = this.loweredMat4FromQuat(file);
         const refreshArguments = this.refreshInverseArguments(factory, file);
@@ -4115,22 +4114,6 @@ struct BoundingBoxBounds {
 };
 
 ${pinnedGizmoBoundsGeometry(this.context)}
-
-/**
- * The pin's own _cpuPositions stream over a native geometry.
- *
- * Upstream a mesh keeps its local positions as one flat Float32Array and
- * the pinned fold walks it three components at a time; this port keeps
- * them as model vertices, so the same walk reads through this view rather
- * than through a copy built per frame.
- */
-${positionsView({
-    name: "BoundingBoxPositions",
-    element: "ModelVertex",
-    member: "vertices",
-    local: "vertex",
-    position: "vertex.position",
-})}
 
 using upstream::mat4_multiply_into;
 
@@ -4296,9 +4279,8 @@ void bbox_fold_mesh(
     const std::array<float, 16>& pre_transform,
     BoundingBoxBounds& bounds) {
     if (mesh.geometry >= engine.geometries.size()) return;
-    const std::vector<ModelVertex>& vertices =
-        engine.geometries[mesh.geometry].vertices;
-    if (vertices.empty()) return;
+    const auto positions = MeshCpuStreamsView(mesh, &engine.geometries[mesh.geometry]).positions;
+    if (positions.empty()) return;
     std::array<float, 16> world{};
     mat4_multiply_into(
         world,
@@ -4308,7 +4290,7 @@ void bbox_fold_mesh(
         upstream::mesh_world_matrix(engine, mesh),
         0);
     const std::array<std::array<double, 3>, 2> aabb =
-        bbox_compute_aabb(BoundingBoxPositions{&vertices}, world);
+        bbox_compute_aabb(positions, world);
     gizmo_bounds_fold(bounds, aabb);
 }
 
@@ -5440,6 +5422,7 @@ void attach_light_gizmo_to_light(
                     `${LIGHT_MODULE}#createLightGizmo`,
             )}
 #include <bblite/runtime.hpp>
+#include <bblite/mesh_cpu_streams.hpp>
 #include <bblite/js_data.hpp>
 #include <bblite/upstream/camera_math.hpp>
 #include <bblite/upstream/renderer_plan.hpp>
