@@ -4836,11 +4836,12 @@ const sceneInputs: readonly SceneInput[] = [
         title: "Babylon Lite Native - The Playroom",
         nativeHostUi: "ui/playroom-host.json",
         parity: {
-            referenceHostPage: "corpus/babylon-lite/lab/lite/demo-playroom.html",
+            referenceHostPage:
+                "corpus/babylon-lite/lab/lite/demo-playroom.html",
             referenceFrame: 180,
             maxFullMad: 0.5,
             maxForegroundMad: 0.5,
-            canvasThresholds: {maxFullMad: 0.5, maxForegroundMad: 0.5},
+            canvasThresholds: { maxFullMad: 0.5, maxForegroundMad: 0.5 },
             backgroundColor: [46, 46, 51],
             backgroundThreshold: 30,
             nativeEnvironment: fixedCaptureEnvironment(),

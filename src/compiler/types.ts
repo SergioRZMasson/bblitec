@@ -2261,6 +2261,8 @@ export interface ValueFields {
      * the container-level animation/camera wiring a second time.
      */
     assetRootClone?: true;
+    /** A clone with a widened node type; asset projection must check its concrete handle. */
+    sceneNodeClone?: true;
     /**
      * The graph a `node-particle-graph` value carries, and — on a set, its
      * systems and one of them — which recorded set it names. The program

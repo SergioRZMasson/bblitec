@@ -31,7 +31,8 @@ namespace bbl::pal {
 #if BBLITE_NODE_VARIANTS > 0
 /** The composed graph's declared streams decide which pool a draw binds. */
 inline bool node_variant_instanced(const upstream::NodeVariantEntry& view) {
-    if (view.uses_instance_index) return true;
+    if (view.uses_instance_index)
+        return true;
     for (std::size_t index = 0; index < view.attribute_count; ++index) {
         const auto& attribute = upstream::node_variant_attributes[view.first_attribute + index];
         if (pinned_vertex_input(attribute.name).stream == VertexInputStream::instance_matrix)
@@ -41,8 +42,8 @@ inline bool node_variant_instanced(const upstream::NodeVariantEntry& view) {
 }
 
 inline std::span<const float> node_uniform_values(const upstream::NodeVariantEntry& view,
-                                                 const MaterialRecord* material,
-                                                 bool geometry_view = false) {
+                                                  const MaterialRecord* material,
+                                                  bool geometry_view = false) {
     if (!geometry_view && material && material->node_inputs && material->node_inputs->uniforms)
         return material->node_inputs->uniforms->values;
     return std::span<const float>{upstream::node_variant_uniform_floats}.subspan(

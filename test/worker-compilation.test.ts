@@ -22,8 +22,13 @@ test("application asset merging retains independent texture and binary uses of o
         }
         void main();
     `);
-    const shared = result.manifest.assets.filter(asset => asset.source === "shared.png");
-    assert.deepEqual(shared.map(asset => asset.kind).sort(), ["binary", "texture"]);
+    const shared = result.manifest.assets.filter(
+        (asset) => asset.source === "shared.png",
+    );
+    assert.deepEqual(shared.map((asset) => asset.kind).sort(), [
+        "binary",
+        "texture",
+    ]);
     assert.equal(shared[0]!.output, shared[1]!.output);
 });
 

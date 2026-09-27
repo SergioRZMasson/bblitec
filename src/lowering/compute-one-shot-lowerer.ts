@@ -112,11 +112,7 @@ function bodyScope(
             "scalar",
         ],
         ["state.engine", "state->engine.lock()", "opaque"],
-        [
-            "state.removePostSubmit",
-            "state->remove_post_submit",
-            "opaque",
-        ],
+        ["state.removePostSubmit", "state->remove_post_submit", "opaque"],
         ["engine._currentEncoder", "engine->current_compute_encoder", "opaque"],
         [
             "completions.length",
@@ -149,10 +145,7 @@ function bodyScope(
         "state.shots.add",
         (args) => `state->shots.add(${args.join(", ")})`,
     );
-    calls.set(
-        "state.removePostSubmit",
-        () => "state->remove_post_submit()",
-    );
+    calls.set("state.removePostSubmit", () => "state->remove_post_submit()");
     calls.set(
         "Promise.reject",
         (args) => `js::Promise<js::PromiseVoid>::rejected(${args.join(", ")})`,

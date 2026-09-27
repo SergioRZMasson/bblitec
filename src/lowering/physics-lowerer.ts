@@ -1660,6 +1660,7 @@ ${locals}            return pal::${palFunction}(${args.join(", ")});
 #include "bblite/js_data.hpp"
 #include "bblite/pal_physics.hpp"
 #include "bblite/runtime.hpp"
+#include "bblite/mesh_cpu_streams.hpp"
 
 namespace bbl::upstream {
 
@@ -2608,9 +2609,7 @@ SceneNodeHandle physics_body_node(PhysicsBody body) {
     return std::visit([](const auto& node) { return SceneNodeHandle{node}; }, body.node);
 }
 PhysicsNativeBody physics_native_body(PhysicsBody body) {
-    const auto owner = body.owner.lock();
-    if (!owner) throw std::runtime_error("Physics body owner expired.");
-    return {{owner->handle.value, owner}, body.handle, false};
+    return {physics_body_world(body), body.handle, false};
 }
 std::optional<double> physics_thin_count([[maybe_unused]] PhysicsWorldHandle handle, [[maybe_unused]] PhysicsBody body) {
 ${thin ? `    if (auto* state = thin_state(physics_world_record(handle), body.handle)) return static_cast<double>(state->handles.size());` : ""}

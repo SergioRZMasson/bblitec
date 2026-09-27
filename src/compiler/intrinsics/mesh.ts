@@ -9,8 +9,8 @@ import ts from "typescript";
 import { argumentAt } from "../syntax.js";
 import { compileBakedMesh } from "../baked-mesh.js";
 
-import { isStringValue, type Value } from "../types.js";
-import { handleCppType } from "../data-types.js";
+import { isStringValue, valueForKind, type Value } from "../types.js";
+import { handleCppType, type DataType } from "../data-types.js";
 import type { IntrinsicCallContext } from "./context.js";
 import {
     staticNumberValue,
@@ -1228,6 +1228,7 @@ function compileCloneTransformNode(
             kind: "scene-node",
             cpp: `bbl::clone_scene_node(${engine}, ${source.cpp})`,
             engineCpp: engine,
+            sceneNodeClone: true,
         };
     }
     if (source.kind === "mesh") {
@@ -1263,25 +1264,54 @@ function compileCloneTransformNode(
     };
 }
 
-function captureMeshArgument(context: MeshIntrinsicContext, cpp: string, type: string, label: string): string {
-    const name = context.allocateTemporaryCppName(label);
-    context.emit({kind: "declaration", type, name, initializer: cpp});
-    return name;
+function compileMeshStream(
+    context: MeshIntrinsicContext,
+    expression: ts.Expression,
+    kind: "f32array" | "u32array",
+    label: string,
+): string {
+    return context.bindings.pinValueToTemporary(
+        context.dataLowerer.leafValue(
+            context.compileTypedArrayArgument(expression, kind),
+            { kind },
+        ),
+        label,
+        expression,
+    ).cpp;
 }
 
-function compileMeshOptionalStreams(context: MeshIntrinsicContext, call: ts.CallExpression) {
+function compileMeshOptionalStreams(
+    context: MeshIntrinsicContext,
+    call: ts.CallExpression,
+) {
     return [5, 6, 7, 8].map((index) => {
         const argument = call.arguments[index];
         if (!argument || context.symbols.isGlobalUndefined(argument))
-            return {cpp: "std::nullopt", present: false};
+            return { cpp: "std::nullopt", present: false };
         const value = context.compileValue(argument);
         const optional = value.dataType?.kind === "optional";
-        const cpp = context.dataLowerer.compileKnownValueForSink(value, {
-            kind: "optional", inner: {kind: "f32array"}, undefinedOnly: true,
-        }, argument);
-        const captured = captureMeshArgument(context, cpp,
-            "const bbl::js::Nullable<bbl::js::F32Array>", "mesh_optional_stream");
-        return {cpp: captured + ".to_optional()", present: optional ? undefined : true};
+        const type: DataType = {
+            kind: "optional",
+            inner: { kind: "f32array" },
+            undefinedOnly: true,
+        };
+        const cpp = context.dataLowerer.compileKnownValueForSink(
+            value,
+            type,
+            argument,
+        );
+        const captured = context.bindings.pinValueToTemporary(
+            context.dataLowerer.leafValue(
+                `${context.dataTypes.cppType(type)}{${cpp}}`,
+                type,
+            ),
+            "mesh_optional_stream",
+            argument,
+        ).cpp;
+        return {
+            cpp: captured + ".to_optional()",
+            present: optional ? undefined : true,
+        };
     });
 }
 
@@ -1292,7 +1322,11 @@ function compileCreateMeshFromData(
     context.expectArgumentCount(call, 5, 9);
     const engine = context.compileValue(argumentAt(call, 0));
     context.expectKind(engine, "engine", argumentAt(call, 0));
-    const engineCpp = captureMeshArgument(context, engine.cpp, "auto&", "mesh_factory_engine");
+    const engineCpp = context.bindings.pinValueToTemporary(
+        engine,
+        "mesh_factory_engine",
+        argumentAt(call, 0),
+    ).cpp;
     // The record carries the pinned Mesh name; scene code finds
     // meshes by it.
     const name = context.compileValue(argumentAt(call, 1));
@@ -1302,13 +1336,29 @@ function compileCreateMeshFromData(
             `Mesh names must be strings, received ${name.kind}.`,
         );
     }
-    const nameCpp = captureMeshArgument(context, name.cpp, "const std::string", "mesh_name");
-    const positions = captureMeshArgument(context, context.compileTypedArrayArgument(
-        argumentAt(call, 2), "f32array"), "const bbl::js::F32Array", "mesh_positions");
-    const normals = captureMeshArgument(context, context.compileTypedArrayArgument(
-        argumentAt(call, 3), "f32array"), "const bbl::js::F32Array", "mesh_normals");
-    const indices = captureMeshArgument(context, context.compileTypedArrayArgument(
-        argumentAt(call, 4), "u32array"), "const bbl::js::U32Array", "mesh_indices");
+    const nameCpp = context.bindings.pinValueToTemporary(
+        name,
+        "mesh_name",
+        argumentAt(call, 1),
+    ).cpp;
+    const positions = compileMeshStream(
+        context,
+        argumentAt(call, 2),
+        "f32array",
+        "mesh_positions",
+    );
+    const normals = compileMeshStream(
+        context,
+        argumentAt(call, 3),
+        "f32array",
+        "mesh_normals",
+    );
+    const indices = compileMeshStream(
+        context,
+        argumentAt(call, 4),
+        "u32array",
+        "mesh_indices",
+    );
     const streams = compileMeshOptionalStreams(context, call);
     const optional = streams.map((stream) => stream.cpp);
     // The streams decide the mesh half of the variant key. A
@@ -1390,8 +1440,12 @@ function compileResizeMeshGeometry(
     context.expectArgumentCount(call, 5, 9);
     const engine = context.compileValue(argumentAt(call, 0));
     context.expectKind(engine, "engine", argumentAt(call, 0));
-    const engineCpp = captureMeshArgument(context, engine.cpp, "auto&", "resize_engine");
-    let meshCpp: string;
+    const engineCpp = context.bindings.pinValueToTemporary(
+        engine,
+        "resize_engine",
+        argumentAt(call, 0),
+    ).cpp;
+    let meshValue: Value;
     if (shared) {
         const entries = context.handleCollections.staticHandleList(
             argumentAt(call, 1),
@@ -1401,7 +1455,14 @@ function compileResizeMeshGeometry(
                 context.expectKind(entry.value, "mesh", entry.node);
                 context.expectSameEngine(engine, entry.value, entry.node);
             }
-            meshCpp = `std::vector<bbl::MeshHandle>{${entries.map((entry) => entry.value.cpp).join(",")}}`;
+            const type: DataType = {
+                kind: "vector",
+                element: { kind: "handle", handle: "mesh" },
+            };
+            meshValue = context.dataLowerer.leafValue(
+                `${context.dataTypes.cppType(type)}{${entries.map((entry) => entry.value.cpp).join(",")}}`,
+                type,
+            );
         } else {
             const meshes = context.compileValue(argumentAt(call, 1));
             if (
@@ -1416,21 +1477,37 @@ function compileResizeMeshGeometry(
                     argumentAt(call, 1),
                     "Shared geometry resize requires a typed Mesh array.",
                 );
-            meshCpp = meshes.cpp;
+            meshValue = meshes;
         }
     } else {
         const mesh = context.compileValue(argumentAt(call, 1));
         context.expectKind(mesh, "mesh", argumentAt(call, 1));
         context.expectSameEngine(engine, mesh, call);
-        meshCpp = mesh.cpp;
+        meshValue = mesh;
     }
-    meshCpp = captureMeshArgument(context, meshCpp, "const auto", "resize_meshes");
-    const positions = captureMeshArgument(context, context.compileTypedArrayArgument(
-        argumentAt(call, 2), "f32array"), "const bbl::js::F32Array", "mesh_positions");
-    const normals = captureMeshArgument(context, context.compileTypedArrayArgument(
-        argumentAt(call, 3), "f32array"), "const bbl::js::F32Array", "mesh_normals");
-    const indices = captureMeshArgument(context, context.compileTypedArrayArgument(
-        argumentAt(call, 4), "u32array"), "const bbl::js::U32Array", "mesh_indices");
+    const meshCpp = context.bindings.pinValueToTemporary(
+        meshValue,
+        "resize_meshes",
+        argumentAt(call, 1),
+    ).cpp;
+    const positions = compileMeshStream(
+        context,
+        argumentAt(call, 2),
+        "f32array",
+        "mesh_positions",
+    );
+    const normals = compileMeshStream(
+        context,
+        argumentAt(call, 3),
+        "f32array",
+        "mesh_normals",
+    );
+    const indices = compileMeshStream(
+        context,
+        argumentAt(call, 4),
+        "u32array",
+        "mesh_indices",
+    );
     const optional = compileMeshOptionalStreams(context, call).map(
         (stream) => stream.cpp,
     );
@@ -1450,27 +1527,54 @@ function compileUpdateMeshAttribute(
     context.expectArgumentCount(call, 3, 6);
     const engine = context.compileValue(argumentAt(call, 0));
     context.expectKind(engine, "engine", argumentAt(call, 0));
-    const engineCpp = captureMeshArgument(context, engine.cpp, "auto&", "attribute_engine");
+    const engineCpp = context.bindings.pinValueToTemporary(
+        engine,
+        "attribute_engine",
+        argumentAt(call, 0),
+    ).cpp;
     const mesh = context.compileValue(argumentAt(call, 1));
     context.expectKind(mesh, "mesh", argumentAt(call, 1));
     context.expectSameEngine(engine, mesh, call);
-    const meshCpp = captureMeshArgument(context, mesh.cpp, "const auto", "attribute_mesh");
-    const values = captureMeshArgument(context,
-        context.compileTypedArrayArgument(argumentAt(call, 2), "f32array"),
-        "const bbl::js::F32Array", "attribute_values");
+    const meshCpp = context.bindings.pinValueToTemporary(
+        mesh,
+        "attribute_mesh",
+        argumentAt(call, 1),
+    ).cpp;
+    const values = compileMeshStream(
+        context,
+        argumentAt(call, 2),
+        "f32array",
+        "attribute_values",
+    );
     const range = [3, 4, 5].map((index) => {
         const argument = call.arguments[index];
         if (!argument) return index === 4 ? "std::nullopt" : "0.0";
-        const value = context.dataLowerer.compileForSink(argument, {
-            kind: "optional", inner: {kind: "number"}, undefinedOnly: true,
-        });
-        const captured = captureMeshArgument(context, value,
-            "const bbl::js::Nullable<double>", "attribute_range");
+        const type: DataType = {
+            kind: "optional",
+            inner: { kind: "number" },
+            undefinedOnly: true,
+        };
+        const value = context.dataLowerer.compileForSink(argument, type);
+        const captured = context.bindings.pinValueToTemporary(
+            context.dataLowerer.leafValue(
+                `${context.dataTypes.cppType(type)}{${value}}`,
+                type,
+            ),
+            "attribute_range",
+            argument,
+        ).cpp;
         return captured + (index === 4 ? ".to_optional()" : ".value_or(0.0)");
     });
     context.reachFeature("mesh:update-attributes", call);
-    return {kind: "void", cpp: "bbl::update_mesh_" + attribute + "(" +
-        [engineCpp, meshCpp, values, ...range].join(", ") + ")"};
+    return {
+        kind: "void",
+        cpp:
+            "bbl::update_mesh_" +
+            attribute +
+            "(" +
+            [engineCpp, meshCpp, values, ...range].join(", ") +
+            ")",
+    };
 }
 
 function compileMarkMeshRenderableDirty(
@@ -1685,11 +1789,10 @@ function compileSetThinInstanceCount(
     const source = context.compileValue(argumentAt(call, 0));
     const mesh: Value =
         source.kind === "scene-node"
-            ? {
+            ? valueForKind("mesh", {
                   ...source,
-                  kind: "mesh",
                   cpp: `std::get<bbl::MeshHandle>(${source.cpp})`,
-              }
+              })
             : source;
     context.expectKind(mesh, "mesh", argumentAt(call, 0));
     const count = context.compileNumber(argumentAt(call, 1));

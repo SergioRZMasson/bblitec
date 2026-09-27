@@ -664,7 +664,8 @@ export class CallbackLowerer {
             );
             const closure = this.context.captureManagedClosureLines(
                 () => {
-                    const values = typeof inputs === "function" ? inputs() : inputs;
+                    const values =
+                        typeof inputs === "function" ? inputs() : inputs;
                     if (parameter) {
                         this.context.registerNativeBindingType(
                             parameter.name,
@@ -731,7 +732,8 @@ export class CallbackLowerer {
         try {
             compiled = this.context.captureManagedClosureLines(
                 () => {
-                    const values = typeof inputs === "function" ? inputs() : inputs;
+                    const values =
+                        typeof inputs === "function" ? inputs() : inputs;
                     if (parameter) {
                         this.context.registerNativeBindingType(
                             parameter.name,
@@ -924,11 +926,18 @@ export class CallbackLowerer {
             return this.compilePlatformCallback(
                 callback,
                 { cppType: `const ${infoType}&`, name: eventName },
-                () => [physicsEventInfoValue(
-                    event,
-                    eventName,
-                    this.context.registerNativeBinding(eventName, false, true, `const ${infoType}`),
-                )],
+                () => [
+                    physicsEventInfoValue(
+                        event,
+                        eventName,
+                        this.context.registerNativeBinding(
+                            eventName,
+                            false,
+                            true,
+                            `const ${infoType}`,
+                        ),
+                    ),
+                ],
                 undefined,
                 true,
                 false,

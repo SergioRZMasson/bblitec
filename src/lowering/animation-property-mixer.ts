@@ -256,7 +256,7 @@ bool update_weighted_property_animations(Engine& engine, PropertyAnimationManage
     };
     const auto find_bucket = [&](const PropertyAnimationGroupRecord& group, std::size_t index) -> PropertyAnimationBucket* {
         const auto& target = group.targets.at(index); const auto& track = group.clip.tracks.at(index);
-        const auto identity = target.resolve_object_identity ? target.resolve_object_identity() : PropertyAnimationIdentity{target.object_identity,{}};
+        const auto identity = target.resolve_object_identity ? target.resolve_object_identity(false) : PropertyAnimationIdentity{target.object_identity,{}};
         for (auto& bucket : manager.buckets)
             if (bucket.target.kind == target.kind && bucket.target.mesh == target.mesh && bucket.target.index == target.index &&
                 bucket.resolved_identity.key == identity.key && bucket.target.property == target.property &&
@@ -267,7 +267,7 @@ bool update_weighted_property_animations(Engine& engine, PropertyAnimationManage
         if (auto* bucket = find_bucket(group, index)) { bucket->target = group.targets.at(index); bucket->quaternion = group.clip.tracks.at(index).quaternion; return bucket; }
         const auto& track = group.clip.tracks.at(index); PropertyAnimationBucket bucket;
         bucket.target = group.targets.at(index);
-        bucket.resolved_identity = bucket.target.resolve_object_identity ? bucket.target.resolve_object_identity() : PropertyAnimationIdentity{bucket.target.object_identity,{}};
+        bucket.resolved_identity = bucket.target.resolve_object_identity ? bucket.target.resolve_object_identity(true) : PropertyAnimationIdentity{bucket.target.object_identity,{}};
         bucket.property = track.path; bucket.component = track.component; bucket.quaternion = track.quaternion;
         manager.buckets.push_back(std::move(bucket)); return &manager.buckets.back();
     };

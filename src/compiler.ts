@@ -2302,7 +2302,8 @@ class Compiler implements LoweringServices {
     ): Value | undefined {
         if (
             importedName === "parseNodeMaterialFromSnippet" &&
-            ((this.frameCallbackDepth > 0 && this.isRuntimeResourceConstruction()) ||
+            ((this.frameCallbackDepth > 0 &&
+                this.isRuntimeResourceConstruction()) ||
                 this.engineLifecycle.engineStartMark !== undefined ||
                 this.admissions.temporalSceneRegistration)
         ) {
@@ -3099,7 +3100,10 @@ class Compiler implements LoweringServices {
         if (prefix.endsWith("/")) {
             const candidates = this.staticAssetUrlCandidates();
             if (!candidates.includes(prefix))
-                this.staticAssetUrlCandidateCache = [...candidates, prefix].sort();
+                this.staticAssetUrlCandidateCache = [
+                    ...candidates,
+                    prefix,
+                ].sort();
         }
         return {
             kind: "data",
@@ -5518,7 +5522,13 @@ class Compiler implements LoweringServices {
             writable(target).engineCpp = value.engineCpp;
         }
         if (target.kind === "scene") {
-            for (const key of ["sceneEnvironmentState", "sceneTopologyState", "sceneCamera", "surfaceCanvas", "msaaSamples"] as const) {
+            for (const key of [
+                "sceneEnvironmentState",
+                "sceneTopologyState",
+                "sceneCamera",
+                "surfaceCanvas",
+                "msaaSamples",
+            ] as const) {
                 const metadata = value[key];
                 if (metadata === undefined) delete writable(target)[key];
                 else Object.assign(writable(target), { [key]: metadata });
@@ -6425,47 +6435,99 @@ class Compiler implements LoweringServices {
         const declaration = this.checker
             .getTypeAtLocation(expression)
             .getCallSignatures()[0]?.declaration;
-        if (!declaration || type.erasedParameters?.length || type.restParameter !== undefined)
-            this.fail(expression, "Stored intrinsics require one fixed native signature.");
+        if (
+            !declaration ||
+            type.erasedParameters?.length ||
+            type.restParameter !== undefined
+        )
+            this.fail(
+                expression,
+                "Stored intrinsics require one fixed native signature.",
+            );
         const parameters = type.parameters.map((parameter, index) => {
             const source = declaration.parameters[index];
             if (!source || !ts.isIdentifier(source.name))
-                this.fail(expression, "Stored intrinsic parameters require declared identifiers.");
-            return { source: source.name, type: parameter, name: this.allocateTemporaryCppName("intrinsic_argument") };
+                this.fail(
+                    expression,
+                    "Stored intrinsic parameters require declared identifiers.",
+                );
+            return {
+                source: source.name,
+                type: parameter,
+                name: this.allocateTemporaryCppName("intrinsic_argument"),
+            };
         });
-        const call = ts.factory.createCallExpression(expression, undefined, parameters.map(parameter => parameter.source));
+        const call = ts.factory.createCallExpression(
+            expression,
+            undefined,
+            parameters.map((parameter) => parameter.source),
+        );
         ts.setTextRange(call, expression);
         ts.setOriginalNode(call, expression);
         const body = this.captureManagedClosureLines(() => {
-            const bound = parameters.map(parameter => ({
+            const bound = parameters.map((parameter) => ({
                 name: parameter.source,
                 compileTime: true,
                 value: {
-                    ...this.dataLowerer.leafValue(parameter.name, parameter.type),
-                    nativeCaptures: [this.registerNativeBinding(parameter.name, false, false, this.dataTypes.cppType(parameter.type))],
+                    ...this.dataLowerer.leafValue(
+                        parameter.name,
+                        parameter.type,
+                    ),
+                    nativeCaptures: [
+                        this.registerNativeBinding(
+                            parameter.name,
+                            false,
+                            false,
+                            this.dataTypes.cppType(parameter.type),
+                        ),
+                    ],
                 },
             }));
             this.bindings.withBoundParameters(bound, () => {
-                const value = this.compileRegisteredIntrinsic(imported, call) ??
-                    this.fail(expression, `Stored Babylon Lite intrinsic '${imported}' is not supported.`);
+                const value =
+                    this.compileRegisteredIntrinsic(imported, call) ??
+                    this.fail(
+                        expression,
+                        `Stored Babylon Lite intrinsic '${imported}' is not supported.`,
+                    );
                 if (!type.result) {
                     this.emitDiscardedValue(value);
                     return;
                 }
-                if (type.result.kind === "promise" && value.kind !== "promise") {
+                if (
+                    type.result.kind === "promise" &&
+                    value.kind !== "promise"
+                ) {
                     const result = type.result.result;
                     const cpp = result
-                        ? this.dataLowerer.compileKnownValueForSink(value, result, expression)
+                        ? this.dataLowerer.compileKnownValueForSink(
+                              value,
+                              result,
+                              expression,
+                          )
                         : "bbl::js::PromiseVoid{}";
                     if (!result) this.emitDiscardedValue(value);
-                    this.emit(`return ${this.dataTypes.cppType(type.result)}::resolved(${cpp});`);
+                    this.emit(
+                        `return ${this.dataTypes.cppType(type.result)}::resolved(${cpp});`,
+                    );
                 } else {
-                    this.emit(`return ${this.dataLowerer.compileKnownValueForSink(value, type.result, expression)};`);
+                    this.emit(
+                        `return ${this.dataLowerer.compileKnownValueForSink(value, type.result, expression)};`,
+                    );
                 }
             });
         });
         this.reachJsData();
-        const closure = renderClosure(body, parameters.map(parameter => `[[maybe_unused]] ${this.dataTypes.cppType(parameter.type)} ${parameter.name}`).join(", "), type.result ? this.dataTypes.cppType(type.result) : "void");
+        const closure = renderClosure(
+            body,
+            parameters
+                .map(
+                    (parameter) =>
+                        `[[maybe_unused]] ${this.dataTypes.cppType(parameter.type)} ${parameter.name}`,
+                )
+                .join(", "),
+            type.result ? this.dataTypes.cppType(type.result) : "void",
+        );
         return `${this.dataTypes.cppType(type)}{${this.callbackIdentity(declaration, undefined)}u, ${closure}}`;
     }
 

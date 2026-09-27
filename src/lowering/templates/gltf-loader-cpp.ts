@@ -957,11 +957,11 @@ ${
             const auto* visible_defined = optional(setup, "visibleDefined");
             if (!visible_defined || visible_defined->as_boolean())
                 record.visible = required(setup, "visible").as_boolean();${
-                !nodeVisibility
-                    ? `
+                    !nodeVisibility
+                        ? `
             if (!record.visible) throw std::runtime_error("Prepared glTF visibility requires visibility support.");`
-                    : ""
-            }
+                        : ""
+                }
             // The pin's glTF mesh is an identity-TRS child of its node, so
             // the node's world is the record's parent world.
             record.parent_world = mesh_world;${
@@ -1167,6 +1167,7 @@ ${sourceMeshWalks ? "    load_source_mesh_walks(asset, document);" : ""}${
                 : ""
         }
     compose_gltf_scene_setup(asset, {${lowered.assetSceneSetupOrder.join(", ")}});
+    asset.has_synthetic_root = true;
     engine.assets.push_back(std::move(asset));
     return AssetHandle{static_cast<std::uint32_t>(engine.assets.size() - 1)};`,
     ]);

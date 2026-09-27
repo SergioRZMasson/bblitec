@@ -15,10 +15,11 @@ struct SystemFontFace {
 };
 
 /**
- * Resolve an installed normal-style face by family and CSS numeric weight.
+ * Resolve an installed face by family, CSS numeric weight and italic style.
  * Generic family names such as "sans-serif" and "monospace" are supported
  * where the platform font service supports them.
  */
-std::optional<SystemFontFace> find_system_font(std::string_view family, int weight);
+std::optional<SystemFontFace> find_system_font(std::string_view family, int weight,
+                                               bool italic = false);
 
 } // namespace bbl::pal

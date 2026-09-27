@@ -50,7 +50,9 @@ test("mesh CPU aliases survive GPU-only writes, clones and geometry replacement"
         "std::vector<float> mesh_cpu_normals(",
         "std::vector<float> mesh_cpu_uvs(",
         "std::vector<std::uint32_t> mesh_cpu_indices(",
-    ].map((signature) => cppFunction(scene, signature)).join("\n");
+    ]
+        .map((signature) => cppFunction(scene, signature))
+        .join("\n");
     const compiled = compileSource(`
         import {createEngine, createMeshFromData, getMeshGeometry, updateMeshPositions, resizeMeshGeometry, type Mesh} from "babylon-lite";
         const engine = await createEngine({});
@@ -77,7 +79,10 @@ test("mesh CPU aliases survive GPU-only writes, clones and geometry replacement"
     mkdirSync(directory, { recursive: true });
     const file = resolve(directory, "check.cpp");
     const executable = resolve(directory, "check.exe");
-    writeFileSync(file, `${factories}
+    writeFileSync(
+        file,
+        `#include <bblite/mesh_cpu_streams.hpp>
+${factories}
 #include <cassert>
 namespace bbl {
 ${lowerMeshGeometryAccess(context)}
@@ -128,11 +133,23 @@ int main() {
     const auto optional = get_mesh_geometry(engine, withEmpty);
     assert(optional && optional->uvs && optional->uvs->empty() && !optional->uvs2 && !optional->tangents && !optional->colors);
 }
-`);
+`,
+    );
     runNativeFixtureCompiler(native, [
-        "/nologo", "/std:c++20", "/W4", "/WX", "/permissive-", "/EHsc", "/MD", "/Gy",
-        `/I${resolve("native/include")}`, file, `/Fo${directory}/`, `/Fe${executable}`,
-        "/link", "/OPT:REF",
+        "/nologo",
+        "/std:c++20",
+        "/W4",
+        "/WX",
+        "/permissive-",
+        "/EHsc",
+        "/MD",
+        "/Gy",
+        `/I${resolve("native/include")}`,
+        file,
+        `/Fo${directory}/`,
+        `/Fe${executable}`,
+        "/link",
+        "/OPT:REF",
     ]);
     execFileSync(executable, { stdio: "pipe", timeout: 10000 });
 });
@@ -166,7 +183,9 @@ test("geometry snapshots preserve optional streams, caller ownership and source 
     writeFileSync(
         file,
         `#include <bblite/runtime.hpp>
+#include <bblite/mesh_cpu_streams.hpp>
 #include <bblite/js_data.hpp>
+#include "${resolve("test/fixtures/allocation-tracker.hpp")}"
 #include <stdexcept>
 using namespace bbl;
 namespace original {${source}}
@@ -184,7 +203,15 @@ if(!first||!second||!first->tangents.has_value()||!first->uvs2.has_value()||!fir
 first->positions[0]=42;first->tangents.value()[0]=8;first->indices[0]=7;
 if(second->positions[0]!=1||second->tangents.value()[0]!=1||geometry.vertices[0].position.x!=1||geometry.indices[0]!=0)throw std::runtime_error("caller ownership");
 auto modified=changed::get_mesh_geometry(engine,MeshHandle{0});if(!modified||modified->tangents.has_value())throw std::runtime_error("source optional predicate");
+const auto before_view=allocation_count;const MeshCpuStreamsView view(engine.meshes[0],&geometry);
+if(allocation_count!=before_view||view.positions[2]!=3||view.indices.source_at(1)!=1)throw std::runtime_error("borrowed CPU view");
+const auto copied=view.positions.copy();
+if(allocation_count!=before_view+1||copied[2]!=3)throw std::runtime_error("single CPU stream copy");
+const auto before_triangles=allocation_count;
 auto triangles=original::get_mesh_triangles(engine,MeshHandle{0});if(!triangles||triangles->positions[2]!=3||triangles->indices[1]!=1)throw std::runtime_error("triangle snapshot");
+if(allocation_count-before_triangles>7)throw std::runtime_error("triangle getter allocated unused streams or copied a buffer twice");
+geometry.has_uvs=false;const MeshCpuStreamsView absent_uvs(engine.meshes[0],&geometry);
+if(absent_uvs.uvs||absent_uvs.uvs.copy()[0]!=0.25f||original::get_mesh_geometry(engine,MeshHandle{0})->uvs)throw std::runtime_error("source presence versus raw packed lanes");
 }
 `,
     );

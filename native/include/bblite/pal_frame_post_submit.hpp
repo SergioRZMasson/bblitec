@@ -23,9 +23,11 @@ struct FramePostSubmitState {
 };
 struct FramePostSubmitRegistry {
     std::map<std::weak_ptr<Engine>, std::weak_ptr<FramePostSubmitState>,
-             std::owner_less<std::weak_ptr<Engine>>> values;
+             std::owner_less<std::weak_ptr<Engine>>>
+        values;
 };
-inline std::shared_ptr<FramePostSubmitState> find_frame_post_submit_state(const std::shared_ptr<Engine>& engine) {
+inline std::shared_ptr<FramePostSubmitState>
+find_frame_post_submit_state(const std::shared_ptr<Engine>& engine) {
     auto& values = js::realm_scratch<FramePostSubmitRegistry>().values;
     const auto found = values.find(engine);
     return found == values.end() ? nullptr : found->second.lock();

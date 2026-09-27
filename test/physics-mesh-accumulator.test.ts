@@ -165,17 +165,19 @@ test(
         root.children = [meshes[0]!, branch];
         meshes[0]!.children.push(meshes[2]!);
         const expected: { positions: number[]; indices: number[] }[] = [];
-        for (const [caseIndex, [node, children, collect]] of ([
-            [root, true, true],
-            [root, true, false],
-            [meshes[0]!, false, true],
-            [meshes[0]!, true, true],
-            [meshes[0]!, false, true],
-        ] as const).entries()) {
+        for (const [caseIndex, [node, children, collect]] of (
+            [
+                [root, true, true],
+                [root, true, false],
+                [meshes[0]!, false, true],
+                [meshes[0]!, true, true],
+                [meshes[0]!, false, true],
+            ] as const
+        ).entries()) {
             if (caseIndex === 4) {
                 meshes[0]!._cpuPositions = new Float32Array(vertices);
                 meshes[0]!._cpuPositions[0] = 7;
-                meshes[0]!._cpuIndices = new Uint32Array([1,0,2]);
+                meshes[0]!._cpuIndices = new Uint32Array([1, 0, 2]);
             }
             const accumulator = new MeshAccumulator(collect);
             accumulator.addNodeMeshes(node, children);

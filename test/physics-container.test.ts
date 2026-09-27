@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import HavokPhysics, { type HP_BodyId, type HP_ShapeId } from "@babylonjs/havok";
+import HavokPhysics, {
+    type HP_BodyId,
+    type HP_ShapeId,
+} from "@babylonjs/havok";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { emitUpstreamGenerated } from "../src/upstream-lower.js";
@@ -18,18 +21,35 @@ const tools = optionalNativeFixtureTools();
 test("Havok containers preserve leaf materials and reference-counted shape storage", async () => {
     const require = createRequire(import.meta.url);
     const hp = await HavokPhysics({
-        wasmBinary: new Uint8Array(readFileSync(require.resolve("@babylonjs/havok/lib/esm/HavokPhysics.wasm"))).buffer,
+        wasmBinary: new Uint8Array(
+            readFileSync(
+                require.resolve("@babylonjs/havok/lib/esm/HavokPhysics.wasm"),
+            ),
+        ).buffer,
     });
     const container = hp.HP_Shape_CreateContainer()[1];
-    const child = hp.HP_Shape_CreateSphere([0,0,0], .5)[1];
-    assert.equal(hp.HP_Shape_AddChild(container, child, [[0,0,0],[0,0,0,1],[1,1,1]]), hp.Result.RESULT_OK);
+    const child = hp.HP_Shape_CreateSphere([0, 0, 0], 0.5)[1];
+    assert.equal(
+        hp.HP_Shape_AddChild(container, child, [
+            [0, 0, 0],
+            [0, 0, 0, 1],
+            [1, 1, 1],
+        ]),
+        hp.Result.RESULT_OK,
+    );
     const before = hp.HP_Shape_GetMaterial(child);
     assert.equal(before[0], hp.Result.RESULT_OK);
-    assert.deepEqual(before[1].slice(0,3), [.5,.5,0]);
+    assert.deepEqual(before[1].slice(0, 3), [0.5, 0.5, 0]);
     assert.equal(before[1][3], hp.MaterialCombine.GEOMETRIC_MEAN);
     assert.equal(before[1][4], hp.MaterialCombine.GEOMETRIC_MEAN);
     assert.equal(
-        hp.HP_Shape_SetMaterial(container, [.8,.8,.6,hp.MaterialCombine.MINIMUM,hp.MaterialCombine.MAXIMUM]),
+        hp.HP_Shape_SetMaterial(container, [
+            0.8,
+            0.8,
+            0.6,
+            hp.MaterialCombine.MINIMUM,
+            hp.MaterialCombine.MAXIMUM,
+        ]),
         hp.Result.RESULT_NOTIMPLEMENTED,
     );
     assert.deepEqual(hp.HP_Shape_GetMaterial(child)[1], before[1]);
@@ -45,25 +65,44 @@ test("Havok containers preserve leaf materials and reference-counted shape stora
         [hp.MaterialCombine.GEOMETRIC_MEAN, hp.MaterialCombine.GEOMETRIC_MEAN],
     ]) {
         const world = hp.HP_World_Create()[1];
-        hp.HP_World_SetGravity(world, [0,0,0]);
-        const bodies: HP_BodyId[] = [], shapes: HP_ShapeId[] = [];
+        hp.HP_World_SetGravity(world, [0, 0, 0]);
+        const bodies: HP_BodyId[] = [],
+            shapes: HP_ShapeId[] = [];
         for (let index = 0; index < 2; ++index) {
-            const shape = hp.HP_Shape_CreateSphere([0,0,0], .5)[1];
+            const shape = hp.HP_Shape_CreateSphere([0, 0, 0], 0.5)[1];
             shapes.push(shape);
-            hp.HP_Shape_SetMaterial(shape, [0,0,index ? .8 : .2,hp.MaterialCombine.MINIMUM,modes[index]!]);
+            hp.HP_Shape_SetMaterial(shape, [
+                0,
+                0,
+                index ? 0.8 : 0.2,
+                hp.MaterialCombine.MINIMUM,
+                modes[index]!,
+            ]);
             const body = hp.HP_Body_Create()[1];
             bodies.push(body);
             hp.HP_Body_SetShape(body, shape);
-            hp.HP_Body_SetMotionType(body, index ? hp.MotionType.DYNAMIC : hp.MotionType.STATIC);
-            hp.HP_Body_SetQTransform(body, [[index ? 2 : 0,0,0],[0,0,0,1]]);
+            hp.HP_Body_SetMotionType(
+                body,
+                index ? hp.MotionType.DYNAMIC : hp.MotionType.STATIC,
+            );
+            hp.HP_Body_SetQTransform(body, [
+                [index ? 2 : 0, 0, 0],
+                [0, 0, 0, 1],
+            ]);
             if (index) {
-                hp.HP_Body_SetMassProperties(body, [[0,0,0],1,[1,1,1],[0,0,0,1]]);
+                hp.HP_Body_SetMassProperties(body, [
+                    [0, 0, 0],
+                    1,
+                    [1, 1, 1],
+                    [0, 0, 0, 1],
+                ]);
                 hp.HP_Body_SetLinearDamping(body, 0);
-                hp.HP_Body_SetLinearVelocity(body, [-2,0,0]);
+                hp.HP_Body_SetLinearVelocity(body, [-2, 0, 0]);
             }
             hp.HP_World_AddBody(world, body, false);
         }
-        for (let frame = 0; frame < 180; ++frame) hp.HP_World_Step(world, 1/120);
+        for (let frame = 0; frame < 180; ++frame)
+            hp.HP_World_Step(world, 1 / 120);
         velocities.push(hp.HP_Body_GetLinearVelocity(bodies[1]!)[1][0]);
         for (const body of bodies) {
             hp.HP_World_RemoveBody(world, body);
@@ -74,7 +113,7 @@ test("Havok containers preserve leaf materials and reference-counted shape stora
     }
     assert(velocities[0]! > 1);
     assert.equal(velocities[0], velocities[1]);
-    assert(Math.abs(velocities[2]! / velocities[0]! - .5) < 1e-5);
+    assert(Math.abs(velocities[2]! / velocities[0]! - 0.5) < 1e-5);
 });
 
 test("direct physics children retain omitted and explicit transform records", () => {

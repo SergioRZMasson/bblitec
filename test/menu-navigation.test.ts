@@ -41,7 +41,7 @@ test("retained button navigation helpers preserve focus, activeElement and click
     assert.match(cpp, /bbl::ui_focus\(/);
     assert.match(cpp, /bbl::ui_active_element\(/);
     assert.match(cpp, /bbl::ui_click\(/);
-    assert.match(cpp, /bbl::ui_on_event\([^\n]+"focus"/);
+    assert.match(cpp, /bbl::on_dom_pointer\([^\n]+"focus"/);
     assert.match(cpp, /bbl::js::array_index_of\(/);
 });
 
@@ -201,7 +201,10 @@ test("transparent button borders and backgrounds are not gradient text colors", 
         button.style.cssText = "border-color:transparent;background-color:transparent;";
         document.body.appendChild(button);
     `).cpp;
-    assert.match(cpp, /border-color:transparent;background-color:transparent/);
+    assert.match(
+        cpp,
+        /border-color:transparent;--bbl-background-color:transparent/,
+    );
     assert.doesNotMatch(cpp, /color:#fff/);
 });
 
@@ -229,7 +232,7 @@ test("canvas focus clears the previously focused retained button", () => {
     const source = readFileSync("src/lowering/scene-lowerer.ts", "utf8");
     assert.match(
         source,
-        /void focus_canvas\(Engine& engine\)[\s\S]*?engine\.ui_focused_element = \{\};[\s\S]*?\+\+engine\.ui_focus_revision;/,
+        /void focus_canvas\(Engine& engine\)[\s\S]*?ui_clear_focus\(engine\)[\s\S]*?engine\.canvas_focused = true;/,
     );
 });
 

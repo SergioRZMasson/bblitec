@@ -33,6 +33,7 @@ int main() {
         ui_append_child(engine, panel, button);
         ui_append_to_root(engine, panel);
         int input_focuses = 0, ancestor_focuses = 0, changes = 0, clicks = 0;
+        int input_blurs = 0, bubbled_blurs = 0;
         ui_on_event(engine, input, "focus", [&](const PlatformMouseEvent&) { ++input_focuses; });
         for (const auto ancestor : {panel, label})
             ui_on_event(engine, ancestor, "focus",
@@ -40,6 +41,15 @@ int main() {
         ui_on_event(engine, input, "input", [&](const PlatformMouseEvent&) { ++changes; });
         on_dom_pointer(engine, DomEventTarget::document(), "click", 1,
                        [&](const PlatformMouseEvent&) { ++clicks; });
+        on_dom_pointer(engine, DomEventTarget::node(input.value), "blur", 2,
+                       [&](const PlatformMouseEvent& event) {
+                           ++input_blurs;
+                           assert(!event.dom->bubbles && !event.dom->cancelable);
+                           assert(event.dom->related_target == DomEventTarget::node(button.value));
+                           assert(ui_active_element(engine).value == invalid_handle);
+                       });
+        on_dom_pointer(engine, DomEventTarget::document(), "blur", 3,
+                       [&](const PlatformMouseEvent&) { ++bubbled_blurs; });
         pal::UiRmlRuntime runtime(engine, window, 640, 480);
         const auto send = [&](SDL_Event event) {
             static_cast<void>(pal::handle_ui_rml_event(runtime, event));
@@ -80,10 +90,19 @@ int main() {
         assert(changes >= 21 && ui_active_element(engine) == input);
         // A source focus request still takes precedence during projection.
         ui_focus(engine, button);
+        assert(input_blurs == 1 && bubbled_blurs == 0);
         pal::update_ui_rml_runtime(runtime, 640, 480);
         assert(runtime.context->GetFocusElement() ==
                runtime.projected_elements.at(button.value).element);
         assert(ui_active_element(engine) == button && ancestor_focuses == 0);
+        off_dom_pointer(engine, DomEventTarget::node(input.value), "blur", 2);
+        ui_focus(engine, input);
+        ui_focus(engine, button);
+        assert(input_blurs == 1);
+        on_dom_pointer(engine, DomEventTarget::node(button.value), "blur", 4,
+                       [&](const PlatformMouseEvent&) { ui_focus(engine, input); });
+        assert(!ui_clear_focus(engine));
+        assert(ui_active_element(engine) == input);
     }
     SDL_DestroyWindow(window);
     SDL_Quit();

@@ -61,10 +61,23 @@ test("image controls retain transparent text, composed transforms, empty clips a
     assert.match(result.cpp, /bbl-background-size:contain/);
     assert.match(result.cpp, /bbl-background-image:inherit/);
     assert.match(result.cpp, /bbl-transform:rotate/);
-    assert.match(result.cpp, /transition:scale 80ms linear,bbl-transform 80ms linear/);
+    assert.match(
+        result.cpp,
+        /transition:scale 80ms linear,bbl-transform 80ms linear/,
+    );
     assert.match(result.cpp, /bbl-zero-clip:1/);
     assert.match(result.cpp, /top:0px;right:1px;bottom:auto;left:1px/);
     assert.match(result.cpp, /--bbl-outline:3px solid white/);
-    for (const declaration of ["background-image:linear-gradient(red,blue)", "background-size:20px 40px", "background-position:right bottom", "background-repeat:space", "scale:1 2", "clip:rect(1px,2px,3px,4px)"])
-        assert.throws(() => compile(`.panel{${declaration}}`), /Retained UI style property/);
+    for (const declaration of [
+        "background-image:linear-gradient(red,blue)",
+        "background-size:20px 40px",
+        "background-position:right bottom",
+        "background-repeat:space",
+        "scale:1 2",
+        "clip:rect(1px,2px,3px,4px)",
+    ])
+        assert.throws(
+            () => compile(`.panel{${declaration}}`),
+            /Retained UI style property/,
+        );
 });

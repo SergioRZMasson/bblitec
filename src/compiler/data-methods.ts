@@ -663,10 +663,11 @@ export function compileDataMethodCall(
                 "Tuple Array.map requires a local function or function literal callback.",
             );
         }
-        const storedCallback = lowerer.prepareCallbackValue(
+        const storedCallback = lowerer.context.requiresStaticDataIteration(
             callback,
-            "tuple_map",
-        );
+        )
+            ? undefined
+            : lowerer.prepareCallbackValue(callback, "tuple_map");
         return {
             kind: "tuple",
             cpp: "",
@@ -691,10 +692,15 @@ export function compileDataMethodCall(
                           "mapped_result",
                           callback,
                       )
-                    : lowerer.context.compileCallbackWithValues(
-                          callback,
-                          arguments_,
+                    : lowerer.context.asyncActivations.withStaticCollectionCallback(
                           call,
+                          callback,
+                          () =>
+                              lowerer.context.compileCallbackWithValues(
+                                  callback,
+                                  arguments_,
+                                  call,
+                              ),
                       );
             }),
         };

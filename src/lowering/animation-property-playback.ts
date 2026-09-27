@@ -129,22 +129,9 @@ ${lowerPinnedBody(source.file, source.declaration.body!.statements, {
             },
         },
     );
-    const groupValue = context.unwrapExpression(
-        context.variableInitializer(declaration, "group"),
-    );
-    if (!ts.isObjectLiteralExpression(groupValue))
-        context.contractError(groupValue, "Expected property group record.");
-    const evaluate = groupValue.properties.find(
-        (property) =>
-            ts.isPropertyAssignment(property) &&
-            context.propertyName(property.name) === "_evaluate",
-    );
-    if (
-        !evaluate ||
-        !ts.isPropertyAssignment(evaluate) ||
-        !ts.isArrowFunction(evaluate.initializer) ||
-        !ts.isBlock(evaluate.initializer.body)
-    )
+    const groupValue = context.objectInitializer(declaration, "group");
+    const evaluate = context.propertyInitializer(groupValue, "_evaluate");
+    if (!ts.isArrowFunction(evaluate) || !ts.isBlock(evaluate.body))
         context.contractError(
             groupValue,
             "Expected explicit property pose evaluator.",
@@ -159,16 +146,12 @@ ${lowerPinnedBody(source.file, source.declaration.body!.statements, {
         ["duration", { cpp: "group.clip.duration", type: "scalar" }],
         ["frame", { cpp: "frame", type: "scalar" }],
     ]);
-    const evaluateBody = lowerPinnedBody(
-        file,
-        evaluate.initializer.body.statements,
-        {
-            bindings: seekBindings,
-            calls: new Map([
-                ["applyAt", (args) => `apply_pose(${args.join(", ")})`],
-            ]),
-        },
-    );
+    const evaluateBody = lowerPinnedBody(file, evaluate.body.statements, {
+        bindings: seekBindings,
+        calls: new Map([
+            ["applyAt", (args) => `apply_pose(${args.join(", ")})`],
+        ]),
+    });
     const seek = context.functionDeclaration(groupModule, "goToFrame");
     const seekBody = lowerPinnedBody(
         seek.file,

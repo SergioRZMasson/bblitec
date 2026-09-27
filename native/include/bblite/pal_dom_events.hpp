@@ -334,10 +334,12 @@ inline Engine& dom_target_owner(DomEventTargetValue value) {
 inline UiElementHandle dom_target_element(DomEventTargetValue value) {
     const auto& engine = dom_target_owner(value);
     const auto element = value.target.kind == DomEventTargetKind::Element
-        ? UiElementHandle{value.target.element}
-        : value.target.kind == DomEventTargetKind::Canvas ? engine.primary_canvas : UiElementHandle{};
+                             ? UiElementHandle{value.target.element}
+                         : value.target.kind == DomEventTargetKind::Canvas ? engine.primary_canvas
+                                                                           : UiElementHandle{};
     if (element.value >= engine.ui_elements.size())
-        throw std::runtime_error("The event target has no retained element in its owning document.");
+        throw std::runtime_error(
+            "The event target has no retained element in its owning document.");
     const auto& record = engine.ui_elements[element.value];
     if (record.tag.empty() || record.tag.front() == '#')
         throw std::runtime_error("The event target is not an Element.");

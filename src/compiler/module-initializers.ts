@@ -99,8 +99,10 @@ function isContainerInitializer(initializer: ts.Expression): boolean {
 function hasArraySnapshot(declaration: ts.VariableDeclaration): boolean {
     if (!declaration.initializer) return false;
     const initializer = unwrapExpression(declaration.initializer);
-    return ts.isArrayLiteralExpression(initializer) &&
-        initializer.elements.some(ts.isSpreadElement);
+    return (
+        ts.isArrayLiteralExpression(initializer) &&
+        initializer.elements.some(ts.isSpreadElement)
+    );
 }
 
 /** An object literal declaring a method or a function-valued property. */
@@ -442,7 +444,11 @@ class ModuleInitializerPlanner {
                 if (
                     mutatedContainers &&
                     isConst &&
-                    !isMutatedContainer(declaration, symbol, mutatedContainers) &&
+                    !isMutatedContainer(
+                        declaration,
+                        symbol,
+                        mutatedContainers,
+                    ) &&
                     !hasArraySnapshot(declaration)
                 ) {
                     continue;

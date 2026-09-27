@@ -31,7 +31,7 @@ test("retained scrollbar styling preserves standard properties and typed pseudo-
     `);
     assert.match(
         result.cpp,
-        /ui_add_class_style[^\n]*scrollbar-width: thin; scrollbar-color: #345678 transparent/,
+        /ui_add_class_style[^\n]*scrollbar-width:thin;scrollbar-color:#345678 transparent/,
     );
     for (const part of ["Scrollbar", "Thumb", "Track", "Button", "Corner"]) {
         assert.match(
@@ -45,7 +45,7 @@ test("retained scrollbar styling preserves standard properties and typed pseudo-
     );
     assert.match(
         result.cpp,
-        /ui_add_style_rule[^\n]*background-clip: padding-box/,
+        /ui_add_style_rule[^\n]*background-clip:padding-box/,
     );
     assert.equal(
         uiStyleSelector({
@@ -111,6 +111,6 @@ test("assigning the background shorthand resets a previous solid clipping box", 
     `);
     assert.match(
         result.cpp,
-        /ui_set_style_property\([^\n]+"background-color", "blue"\);\s*bbl::ui_set_style_property\([^\n]+"background-clip", "border-box"\);/,
+        /ui_set_style_property\([^\n]+"--bbl-background-color", "blue"\);\s*bbl::ui_set_style_property\([^\n]+"background-clip", "border-box"\);/,
     );
 });

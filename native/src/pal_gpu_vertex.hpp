@@ -341,7 +341,7 @@ struct PinnedVertexInput {
 PinnedVertexInput pinned_vertex_input(std::string_view name);
 #endif
 
-#if BBLITE_PINNED_MATERIAL_VARIANTS
+#if BBLITE_PINNED_MATERIALS
 /** Whether a record draws through the pin's thin-instance arm: stamped by
  *  the scene setter or filled by the glTF EXT_mesh_gpu_instancing pool. */
 inline bool pinned_record_instanced(const MeshRecord& record) {

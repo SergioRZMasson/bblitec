@@ -14,10 +14,44 @@ import { doctoredContext } from "./doctored-store.js";
 import {
     nativeFixtureVcpkgRoot,
     optionalNativeFixtureTools,
+    runGeneratedProgram,
     runNativeFixtureCompiler,
 } from "./native-fixture.js";
 
 const module = "src/animation/weighted-pointer-mixer.ts";
+
+test("property identity probes allocate no retained owner while stored identities keep it alive", (t) => {
+    const native = optionalNativeFixtureTools(false);
+    if (!native) {
+        t.skip("Native compiler unavailable.");
+        return;
+    }
+    runGeneratedProgram(
+        native,
+        "property-animation-identity",
+        `
+#include <bblite/runtime.hpp>
+#include "${resolve("test/fixtures/allocation-tracker.hpp")}"
+#include <cassert>
+int main() {
+    auto owner = bbl::js::make_gc_shared<int>(42);
+    const auto allocations = allocation_count;
+    for (int index = 0; index < 10000; ++index) {
+        const auto identity = bbl::property_animation_identity(owner, false);
+        assert(identity.key == owner.get() && !identity.owner);
+    }
+    assert(allocation_count == allocations);
+    std::weak_ptr<int> weak = owner;
+    auto identity = bbl::property_animation_identity(owner);
+    assert(identity.owner);
+    owner.reset();
+    assert(!weak.expired());
+    identity = {};
+    assert(weak.expired());
+}`,
+    );
+});
+
 function contexts(): LoweringContext[] {
     return [
         new LoweringContext(),

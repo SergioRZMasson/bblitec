@@ -447,6 +447,71 @@ function tupleOption(
     );
 }
 
+type BillboardOption = {
+    field: string;
+    update: boolean;
+} & (
+    | {
+          kind: "vector";
+          arity: number;
+          cpp: string;
+          precision: "float" | "double";
+      }
+    | { kind: "number" | "boolean" }
+);
+
+const billboardOptions = new Map<string, BillboardOption>([
+    [
+        "position",
+        {
+            kind: "vector",
+            field: "position",
+            update: true,
+            arity: 3,
+            cpp: "bbl::Vec3d",
+            precision: "double",
+        },
+    ],
+    [
+        "sizeWorld",
+        {
+            kind: "vector",
+            field: "size_world",
+            update: true,
+            arity: 2,
+            cpp: "bbl::Vec2",
+            precision: "float",
+        },
+    ],
+    [
+        "pivot",
+        {
+            kind: "vector",
+            field: "pivot",
+            update: false,
+            arity: 2,
+            cpp: "bbl::Vec2",
+            precision: "float",
+        },
+    ],
+    [
+        "color",
+        {
+            kind: "vector",
+            field: "color",
+            update: true,
+            arity: 4,
+            cpp: "bbl::Vec4",
+            precision: "float",
+        },
+    ],
+    ["frame", { kind: "number", field: "frame", update: false }],
+    ["rotation", { kind: "number", field: "rotation", update: false }],
+    ["flipX", { kind: "boolean", field: "flip_x", update: false }],
+    ["flipY", { kind: "boolean", field: "flip_y", update: false }],
+    ["visible", { kind: "boolean", field: "visible", update: false }],
+]);
+
 /**
  * One billboard instance patch, shared by the index add, the stable-handle
  * add, and the update. `importedName` discriminates the update the way the
@@ -461,38 +526,43 @@ function billboardPropsCpp(
 ): string {
     const update = importedName === "updateBillboardSprite";
     for (const name of Object.keys(props?.recordProperties ?? {})) {
-        if (
-            ![
-                "position",
-                "sizeWorld",
-                "frame",
-                "rotation",
-                "pivot",
-                "color",
-                "flipX",
-                "flipY",
-                "visible",
-            ].includes(name)
-        ) {
+        const option = billboardOptions.get(name);
+        if (!option) {
             context.fail(
                 call,
                 `Billboard sprite option '${name}' is not lowered.`,
             );
         }
-        if (update && !["position", "sizeWorld", "color"].includes(name)) {
+        if (update && !option.update) {
             context.fail(
                 call,
                 `updateBillboardSprite option '${name}' is not lowered.`,
             );
         }
     }
-    const position = tupleOption(context, props, "position", call, 3, "double");
+    const vector = (name: string) => {
+        const option = billboardOptions.get(name);
+        if (option?.kind !== "vector")
+            return context.fail(
+                call,
+                `Billboard vector option '${name}' has no descriptor.`,
+            );
+        return tupleOption(
+            context,
+            props,
+            name,
+            call,
+            option.arity,
+            option.precision,
+        );
+    };
+    const position = vector("position");
     if (!update && !position) {
         context.fail(call, `${importedName}: position required.`);
     }
-    const sizeWorld = tupleOption(context, props, "sizeWorld", call, 2);
-    const pivot = tupleOption(context, props, "pivot", call, 2);
-    const color = tupleOption(context, props, "color", call, 4);
+    const sizeWorld = vector("sizeWorld");
+    const pivot = vector("pivot");
+    const color = vector("color");
     const frame = property(props, "frame");
     const rotation = property(props, "rotation");
     const flipX = property(props, "flipX");
@@ -527,67 +597,20 @@ function billboardPropsExpression(
     const members = retainedOptions(context, value, expression);
     const result = context.allocateTemporaryCppName("billboard_props");
     context.emit(`bbl::BillboardSpriteProps ${result}{};`);
-    const vectors = new Map([
-        [
-            "position",
-            {
-                field: "position",
-                arity: 3,
-                cpp: "bbl::Vec3d",
-                precision: "double" as const,
-            },
-        ],
-        [
-            "sizeWorld",
-            {
-                field: "size_world",
-                arity: 2,
-                cpp: "bbl::Vec2",
-                precision: "float" as const,
-            },
-        ],
-        [
-            "pivot",
-            {
-                field: "pivot",
-                arity: 2,
-                cpp: "bbl::Vec2",
-                precision: "float" as const,
-            },
-        ],
-        [
-            "color",
-            {
-                field: "color",
-                arity: 4,
-                cpp: "bbl::Vec4",
-                precision: "float" as const,
-            },
-        ],
-    ]);
-    const scalars = new Map([
-        ["frame", { field: "frame", kind: "number" }],
-        ["rotation", { field: "rotation", kind: "number" }],
-        ["flipX", { field: "flip_x", kind: "boolean" }],
-        ["flipY", { field: "flip_y", kind: "boolean" }],
-        ["visible", { field: "visible", kind: "boolean" }],
-    ]);
     for (const member of members) {
-        const vector = vectors.get(member.name),
-            scalar = scalars.get(member.name);
+        const option = billboardOptions.get(member.name);
         if (
-            (!vector && !scalar) ||
-            (importedName === "updateBillboardSprite" &&
-                !["position", "sizeWorld", "color"].includes(member.name))
+            !option ||
+            (importedName === "updateBillboardSprite" && !option.update)
         )
             context.fail(
                 expression,
                 `${importedName} option '${member.name}' is not lowered.`,
             );
         emitPresentOption(context, member, (present) => {
-            const field = vector?.field ?? scalar!.field;
+            const field = option.field;
             let cpp: string;
-            if (vector) {
+            if (option.kind === "vector") {
                 const entry =
                     present.value ??
                     (present.type &&
@@ -609,18 +632,18 @@ function billboardPropsExpression(
                     },
                     member.name,
                     call,
-                    vector.arity,
-                    vector.precision,
+                    option.arity,
+                    option.precision,
                 )!;
-                cpp = `${vector.cpp}{${parts.join(", ")}}`;
+                cpp = `${option.cpp}{${parts.join(", ")}}`;
             } else {
-                if (present.type?.kind !== scalar!.kind)
+                if (present.type?.kind !== option.kind)
                     context.fail(
                         expression,
-                        `Billboard option '${member.name}' requires ${scalar!.kind}.`,
+                        `Billboard option '${member.name}' requires ${option.kind}.`,
                     );
                 cpp =
-                    scalar!.kind === "number"
+                    option.kind === "number"
                         ? `static_cast<float>(${present.cpp})`
                         : present.cpp;
             }

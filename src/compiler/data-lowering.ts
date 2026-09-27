@@ -50,6 +50,7 @@ import { httpResponseProperty } from "./http.js";
 import { errorValue, thrownMessage } from "./error-values.js";
 import { renderClosure } from "./closure-captures.js";
 import { cppIdentifierPattern } from "../cpp-literals.js";
+import { pinOperand } from "./evaluation-order.js";
 import { sceneRelativeSourceLabel } from "../source-location.js";
 import { staticNumberValue } from "./option-helpers.js";
 import { typedArrayTable } from "./typed-array-tables.js";
@@ -194,15 +195,18 @@ interface DataLoweringContext extends Pick<
     | "expectArgumentCount"
     | "sourceFile"
     | "admissions"
+    | "asyncActivations"
     | "libraryGlobal"
     | "useNativeValue"
     | "registerNativeBinding"
+    | "registerNativeConstBinding"
     | "registerNativeBindingType"
     | "registerNativeTemporary"
     | "nativeBindingCheckpoint"
     | "takeNativeTemporary"
     | "nativeEmission"
     | "checker"
+    | "evaluationOrder"
     | "bindings"
     | "dataTypes"
     | "classLowerer"
@@ -239,6 +243,7 @@ interface DataLoweringContext extends Pick<
     | "enterRuntimeControlFlow"
     | "leaveRuntimeControlFlow"
     | "isInRuntimeControlFlow"
+    | "requiresStaticDataIteration"
     | "enterRuntimeIteration"
     | "leaveRuntimeIteration"
     | "recordArrayPush"
@@ -10948,6 +10953,9 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
             return "std::nullopt";
         }
         const optional =
+            (ts.isElementAccessExpression(unwrapped)
+                ? this.compileGuardableElementAccess(unwrapped)
+                : undefined) ??
             this.compileDataPath(unwrapped, "read") ??
             (ts.isCallExpression(unwrapped) ||
             ts.isIdentifier(unwrapped) ||
@@ -10972,40 +10980,15 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
         ) {
             return this.compileKnownValueForSink(optional, dataType, unwrapped);
         }
-        // A handle the expression already produced IS the value
-        // the inner sink takes. Falling through would compile the
-        // expression a second time, which for an intrinsic that
-        // emits a temporary means calling it twice -- so the
-        // already-compiled value is handed on instead.
-        //
-        // A handle that reports its own miss (a search, or a slot
-        // nothing filled) carries that as its found flag, and the
-        // optional is where a miss becomes absence: wrapping it
-        // unconditionally would make `undefined` read as a present
-        // invalid handle, which every guard downstream would then
-        // answer the wrong way.
+        // A missing indexed scalar and a missing handle both carry absence
+        // independently of their default-initialized native payload.
         if (
             optional &&
-            dataType.inner.kind === "handle" &&
-            optional.kind === dataType.inner.handle
-        ) {
-            const inner = this.compileKnownValueForSink(
-                optional,
-                dataType.inner,
-                unwrapped,
-            );
-            const found = presenceFlagCpp(optional);
-            if (found === undefined) {
-                return inner;
-            }
-            const cppType = this.context.dataTypes.cppType(dataType);
-            this.context.reachJsData();
-            return (
-                `(${found}` +
-                ` ? ${cppType}{${inner}}` +
-                ` : ${cppType}{std::nullopt})`
-            );
-        }
+            (presenceFlagCpp(optional) !== undefined ||
+                (dataType.inner.kind === "handle" &&
+                    optional.kind === dataType.inner.handle))
+        )
+            return this.compileKnownValueForSink(optional, dataType, unwrapped);
         // The same hazard the handle arm answers, for every other
         // inner type. The expression is already compiled, and for a
         // call whose body inlines, compiling it again emits that
@@ -11231,25 +11214,43 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                 );
                 const result =
                     this.context.allocateTemporaryCppName("spread_array");
-                const statements = unwrapped.elements.map((element) => {
+                this.context.emit({
+                    kind: "declaration",
+                    type: `bbl::js::Array<${cppType}>`,
+                    name: result,
+                    initializer: "{}",
+                });
+                this.context.registerNativeTemporary(result, dataType);
+                for (const element of unwrapped.elements) {
+                    let statement: string;
                     if (ts.isSpreadElement(element)) {
                         const iterable = spreadValue(element);
-                        return `bbl::js::array_append(${result}, ${iterable.cpp});`;
+                        statement = `bbl::js::array_append(${result}, ${iterable.cpp});`;
+                    } else {
+                        statement = `${result}.push_back(${this.compileForRetainedSink(element, dataType.element, "Array literal")});`;
                     }
-                    return `${result}.push_back(${this.compileForRetainedSink(element, dataType.element, "Array literal")});`;
-                });
-                return (
-                    `([&]() { bbl::js::Array<${cppType}> ${result}; ` +
-                    `${statements.join(" ")} return ${result}; }())`
-                );
+                    this.context.emit({ kind: "expression", code: statement });
+                }
+                return result;
             }
-            const elements = unwrapped.elements.map((element) =>
-                this.compileForRetainedSink(
+            const pins = this.context.evaluationOrder.operandsToPin(
+                unwrapped.elements,
+            );
+            const elements = unwrapped.elements.map((element, index) => {
+                const cpp = this.compileForRetainedSink(
                     element,
                     dataType.element,
                     "Array literal",
-                ),
-            );
+                );
+                return pins[index]
+                    ? pinOperand(
+                          this.context,
+                          this.leafValue(cpp, dataType.element),
+                          element,
+                          "array_member",
+                      ).cpp
+                    : cpp;
+            });
             return `bbl::js::Array<${this.context.dataTypes.cppType(dataType.element)}>{${elements.join(", ")}}`;
         }
         if (ts.isNewExpression(unwrapped) || ts.isCallExpression(unwrapped)) {

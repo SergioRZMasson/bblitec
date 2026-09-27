@@ -492,7 +492,7 @@ export class AsyncLowerer {
             !someAnalysisNode(body!, ts.isReturnStatement, {
                 functions: "skip",
             });
-        const declaredOutput = (): Value => {
+        const declaredOutput: Value = (() => {
             const signature =
                 context.checker.getSignatureFromDeclaration(declaration);
             const type = signature
@@ -504,8 +504,8 @@ export class AsyncLowerer {
             return type?.kind === "promise" && type.result
                 ? context.dataLowerer.leafValue("", type.result)
                 : { kind: "void", cpp: "" };
-        };
-        const rejectedOutput = rejectsOnly ? declaredOutput() : undefined;
+        })();
+        const rejectedOutput = rejectsOnly ? declaredOutput : undefined;
         const previousThrow = this.terminalThrow;
         this.terminalThrow = rejectsOnly
             ? {
@@ -580,7 +580,7 @@ export class AsyncLowerer {
         const output =
             rejectedOutput ??
             (result.value.abruptCompletion
-                ? (result.value.coroutineResult ?? declaredOutput())
+                ? (result.value.coroutineResult ?? declaredOutput)
                 : result.value.kind === "promise"
                   ? result.value.promiseResult!
                   : result.value);
@@ -985,6 +985,14 @@ export class AsyncLowerer {
                 `Promise.${operation} requires one represented iterable.`,
             );
         const argument = unwrapExpression(argumentAt(call, 0));
+        const compileInput = (input: ts.Expression): Value =>
+            settled
+                ? context.compileValue(input)
+                : context.asyncActivations.withOrderedAggregateInput(
+                      call,
+                      input,
+                      () => context.compileValue(input),
+                  );
         const pin = (value: Value): Value => {
             const promise = this.pinArgument(
                 this.asPromise(value, call),
@@ -1021,11 +1029,11 @@ export class AsyncLowerer {
                 return pin(
                     ts.isOmittedExpression(element)
                         ? { kind: "void", cpp: "" }
-                        : context.compileValue(element),
+                        : compileInput(element),
                 );
             });
         } else {
-            const value = context.compileValue(argument);
+            const value = compileInput(argument);
             if (value.kind === "tuple")
                 promises = (value.tupleElements ?? []).map(pin);
             else {

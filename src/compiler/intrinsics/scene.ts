@@ -152,7 +152,15 @@ export function compileSceneIntrinsic(
             // The pinned removal accepts the same union as addToScene. Mesh
             // retirement, light topology and child recursion retain their
             // concrete handle dispatch in the native implementation.
-            if (!["mesh", "light", "scene-node", "transform-node", "asset-root"].includes(resource.kind)) {
+            if (
+                ![
+                    "mesh",
+                    "light",
+                    "scene-node",
+                    "transform-node",
+                    "asset-root",
+                ].includes(resource.kind)
+            ) {
                 context.fail(
                     argumentAt(call, 1),
                     `removeFromScene supports mesh, light and scene-node values, received ${resource.kind}.`,
@@ -162,7 +170,11 @@ export function compileSceneIntrinsic(
             if (resource.kind === "light") {
                 context.sceneManifest.removeSceneLight(scene, resource);
             }
-            if (["scene-node", "transform-node", "asset-root"].includes(resource.kind))
+            if (
+                ["scene-node", "transform-node", "asset-root"].includes(
+                    resource.kind,
+                )
+            )
                 context.reachFeature("scene:node-transforms", call);
             context.reachFeature("scene:remove", call);
             return {

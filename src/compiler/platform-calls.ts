@@ -558,8 +558,15 @@ export class PlatformCalls {
                 type.inner.kind === "handle" &&
                 type.inner.handle === "ui-element"
             ) {
+                const owner = this.context.compileValue(callee.expression);
+                if (
+                    owner.kind === "ui-element" &&
+                    owner.dataType?.kind !== "optional" &&
+                    presenceFlagCpp(owner) === undefined
+                )
+                    return this.emitPlatformEventListener(call, owner);
                 const result = this.context.dataLowerer.optionalAccess(
-                    this.context.compileValue(callee.expression),
+                    owner,
                     call,
                     (element) =>
                         this.emitPlatformEventListener(call, element)
@@ -573,7 +580,8 @@ export class PlatformCalls {
         }
         const removing = callee.name.text === "removeEventListener";
         const uiElement =
-            preparedElement ?? this.ui.compileUiElementReceiver(callee.expression);
+            preparedElement ??
+            this.ui.compileUiElementReceiver(callee.expression);
         if (
             this.context.probeEmission(() =>
                 emitDomEventListener(

@@ -195,6 +195,27 @@ int main() {
         ui_set_text(display, label, "After full snapshot");
         assert(display.ui_only_text_changed_since(full_revision, 1));
         assert(ui_element(display, label).text_revision == 2);
+        const auto canvas = ui_create_element(source, "canvas");
+        ui_append_to_root(source, canvas);
+        ui_focus(source, canvas);
+        apply_document(display, std::move(*snapshot_document(source)), {});
+        assert(display.ui_focused_element == canvas && display.ui_focus_visible);
+        assert(display.ui_focus_revision == source.ui_focus_revision);
+        const auto canvas_since = source.ui_canvas_revision;
+        const auto before_draw = source.ui_revision;
+        ui_canvas_set_fill_style(source, canvas, "#123456");
+        ui_canvas_fill_rect(source, canvas, 0, 0, 20, 20);
+        auto canvas_snapshot = snapshot_document(source, source.ui_text_revision, canvas_since);
+        assert(source.ui_revision == before_draw);
+        assert(canvas_snapshot->text_updates && canvas_snapshot->text_updates->empty());
+        assert(canvas_snapshot->elements.empty() && canvas_snapshot->canvas_updates.size() == 1);
+        ui_canvas_clear_rect(source, canvas, 0, 0, 300, 150);
+        apply_document(display, std::move(*canvas_snapshot), {});
+        assert(ui_element(display, canvas).canvas->draws.size() == 1);
+        apply_document(display,
+                       std::move(*snapshot_document(source, source.ui_text_revision, canvas_since)),
+                       {});
+        assert(ui_element(display, canvas).canvas->draws.empty());
     }
     const auto initialize = [](WorkerRealm& realm) {
         auto& engine = window_document_engine();

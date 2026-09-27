@@ -513,7 +513,10 @@ export class ConditionLowerer {
             }
             return this.context.compileBoolean(unwrapped);
         }
-        if (ts.isPropertyAccessExpression(unwrapped) || ts.isElementAccessExpression(unwrapped)) {
+        if (
+            ts.isPropertyAccessExpression(unwrapped) ||
+            ts.isElementAccessExpression(unwrapped)
+        ) {
             // A record member in condition position: a boolean member is
             // its own truth (`result.hit`), and a member that carries a
             // found flag — a search result's maybe-absent record

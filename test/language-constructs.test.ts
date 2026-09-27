@@ -16,6 +16,60 @@ import {
 const native = optionalNativeFixtureTools(false);
 
 check(
+    "indexed-boolean-presence-in-optional-sinks",
+    `
+    const flags: boolean[] = [false, true];
+    interface State { flag: boolean | undefined; }
+    function retain(flag: boolean | undefined): State { return {flag}; }
+    const indices = new Float32Array([2, 0, 1]);
+    for (const index of indices) {
+        const selected = flags[index];
+        const state: State = {flag: selected};
+        const saved: Array<boolean | undefined> = [selected];
+        const result = retain(selected);
+        if (index === 2) {
+            if (state.flag !== undefined || saved[0] !== undefined || result.flag !== undefined)
+                throw new Error("missing scalar became present");
+        } else if (index === 0) {
+            if (state.flag !== false || saved[0] !== false || result.flag !== false)
+                throw new Error("false scalar became absent");
+        } else if (state.flag !== true || saved[0] !== true || result.flag !== true)
+            throw new Error("present scalar changed");
+    }
+`,
+);
+
+check(
+    "cyclic-class-record-materialization",
+    `
+    class World {
+        seed: number;
+        readonly light: Light;
+        readonly chunks = new Map<string, number>();
+        constructor(seed: number) { this.seed = seed; this.light = new Light(this); }
+    }
+    class Light {
+        readonly world: World;
+        constructor(world: World) { this.world = world; }
+        update(): void { this.world.seed++; this.world.chunks.set("origin", this.world.seed); }
+    }
+    class Renderer {
+        readonly world: World;
+        constructor(world: World) { this.world = world; }
+        render(): void { this.world.light.update(); }
+    }
+    const world = new World(3);
+    const renderer = new Renderer(world);
+    renderer.render();
+    if (world.seed !== 4 || renderer.world.seed !== 4 || world.light.world.seed !== 4 ||
+        world.chunks.get("origin") !== 4) throw new Error("cyclic owner alias");
+    world.seed = 8;
+    renderer.render();
+    if (world.seed !== 9 || world.light.world.seed !== 9) throw new Error("shared cyclic scalar");
+`,
+);
+
+check(
     "partial-record-replaced-data-fields",
     `
     function choose<T>(value: T): T { return value; }
@@ -98,7 +152,9 @@ check(
 `,
 );
 
-check("optional-call-comparison-evaluation-order", `
+check(
+    "optional-call-comparison-evaluation-order",
+    `
     const values: string[] = ["a", "b"];
     let calls = 0;
     function first(): string { calls++; values[0] = "x"; return "x"; }
@@ -111,7 +167,8 @@ check("optional-call-comparison-evaluation-order", `
     function take(index: number): string | undefined { log.push(index); return values.shift(); }
     const pair = take(1) === take(2);
     if (pair || log.join(",") !== "1,2" || values.length !== 0) throw new Error("two optional calls");
-`);
+`,
+);
 
 check(
     "conditional-numeric-tuple-array-identity",
@@ -2798,6 +2855,12 @@ check(
     if (box.first !== 7 || box.second !== 8) throw new Error("constructor argument order");
     const scaled = count * 2 - reg();
     if (scaled !== 7) throw new Error("nested arithmetic order " + scaled);
+    let item = 1;
+    function changeList(): number[] { item = 2; return [3]; }
+    const spread = [item, ...changeList(), item];
+    if (spread.join(",") !== "1,3,2") throw new Error("spread evaluation order " + spread.join(","));
+    const assigned = [item, item = 4];
+    if (assigned.join(",") !== "2,4") throw new Error("array assignment order " + assigned.join(","));
 `,
 );
 
@@ -3115,7 +3178,9 @@ check(
 `,
 );
 
-check("text distinguishes null and undefined in mixed primitive storage", `
+check(
+    "text distinguishes null and undefined in mixed primitive storage",
+    `
     function main(): void {
         const values: Array<number | null | undefined> = [];
         values.push(null);
@@ -3125,7 +3190,8 @@ check("text distinguishes null and undefined in mixed primitive storage", `
         if (String(values[1]) !== "undefined" || String(values[2]) !== "4") throw new Error("distinct spellings");
     }
     main();
-`);
+`,
+);
 
 check(
     "strict null and undefined equality follows the operand's type",
@@ -3185,7 +3251,9 @@ check(
 `,
 );
 
-check("strict equality distinguishes null and undefined in mixed primitive storage", `
+check(
+    "strict equality distinguishes null and undefined in mixed primitive storage",
+    `
     function main(): void {
         const values: Array<number | null | undefined> = [];
         values.push(null, undefined, 0);
@@ -3195,7 +3263,8 @@ check("strict equality distinguishes null and undefined in mixed primitive stora
         if (values[2] === undefined || values[2] === null || values[2] !== 0) throw new Error("stored zero");
     }
     main();
-`);
+`,
+);
 
 check(
     "enum members inside array and object literals",

@@ -1,16 +1,10 @@
 #pragma once
+#include "pal_gpu_common.hpp"
 #include <bblite/features/has_billboards.hpp>
 #if BBLITE_HAS_BILLBOARDS
 #include <bblite/upstream/billboard_system.hpp>
-#include <span>
 
 namespace bbl::pal {
-/** A draw-list-shaped borrow for backends that walk one interleaved mesh command. */
-template <class Command> struct BorrowedDrawList {
-    std::span<const Command> commands;
-    explicit BorrowedDrawList(const Command& command) : commands(&command, 1) {}
-};
-
 /** Merge retained GPU rows through the pin's center and transparent comparator. */
 template <class DrawList, class Billboards, class View>
 std::vector<upstream::BillboardOrderItem>

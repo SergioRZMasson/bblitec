@@ -133,18 +133,19 @@ struct OrderedStageItem {
     bool billboard;
     std::size_t index;
 };
-std::array<OrderedStageItem, 2> ordered_scene_billboards(
-    const StageDrawList&, const auto&, const std::vector<FixtureBillboardPass>& passes,
-    const auto&, const auto&) {
+std::array<OrderedStageItem, 2>
+ordered_scene_billboards(const StageDrawList&, const auto&,
+                         const std::vector<FixtureBillboardPass>& passes, const auto&,
+                         const auto&) {
     assert(passes.size() == 1);
     return {{{false, 0}, {true, 0}}};
 }
 void record_billboard_pass(SDL_GPUCommandBuffer*, const auto&, const auto&,
-                          const FixtureBillboardPass&, int) {
+                           const FixtureBillboardPass&, int) {
     draws.push_back("billboard-transparent");
 }
-void record_dawn_billboard_pass(WGPURenderPassEncoder, const auto&,
-                               const FixtureBillboardPass&, int) {
+void record_dawn_billboard_pass(WGPURenderPassEncoder, const auto&, const FixtureBillboardPass&,
+                                int) {
     draws.push_back("billboard-transparent");
 }
 int dawn_billboard_task_scene(const FixtureBillboardPass&, std::uint32_t) { return 0; }
@@ -170,6 +171,7 @@ struct Stages {
     }
 };
 struct SdlStages : Stages {
+    SDL_GPUGraphicsPipeline* bound_pipeline = nullptr;
     SDL_GPUCommandBuffer* command = nullptr;
     SDL_GPURenderPass* pass = nullptr;
     struct {
@@ -185,8 +187,7 @@ struct SdlStages : Stages {
     int* camera = nullptr;
     int matrix = 0, frame_view = 0;
     bool scene_matrix_bound = false;
-    static int write_billboard_scene_block(int, const Scene&, const Engine&, const int*, int,
-                                           int) {
+    static int write_billboard_scene_block(int, const Scene&, const Engine&, const int*, int, int) {
         return 0;
     }
     SDL_GPUTexture* swapchain = nullptr;
@@ -242,6 +243,7 @@ struct Graph {
     static void draw_task_billboards(BillboardDepthMode mode) { Stages::draw_billboards(mode); }
 };
 struct SdlGraph : Graph {
+    SDL_GPUGraphicsPipeline* bound_pipeline = nullptr;
     struct ShaderTaskTarget {
         SDL_GPUTextureFormat color, depth;
         SDL_GPUSampleCount samples;

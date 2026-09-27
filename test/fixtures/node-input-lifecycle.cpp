@@ -28,7 +28,8 @@ int main() {
             const auto& table = bbl::upstream::node_variant_inputs;
             for (const auto& row : table) {
                 if (row.variant == 1 && row.name == "rugMinWidth")
-                    assert(retained_scalar->uniforms->values[row.first_float] == retained_scalar->values[0]);
+                    assert(retained_scalar->uniforms->values[row.first_float] ==
+                           retained_scalar->values[0]);
             }
         }
         bbl::set_node_input_scalar(retained_scalar, 1.0 / 3.0);

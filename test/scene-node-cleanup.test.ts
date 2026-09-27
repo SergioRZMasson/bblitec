@@ -13,6 +13,7 @@ import { emitUpstreamGenerated } from "../src/upstream-lower.js";
 import {
     cppFunction,
     optionalNativeFixtureTools,
+    runGeneratedProgram,
     runNativeFixtureCompiler,
 } from "./native-fixture.js";
 
@@ -56,11 +57,12 @@ test("SceneNode removal dispatches retained nodes and snapshots children before 
         join(output, "upstream/include"),
         application,
     ]);
-    const file = join(output, "check.cpp"),
-        executable = join(output, "check.exe");
-    const sceneCore = new SceneLowerer(new LoweringContext()).lowerCore({transformNodes: true}).source;
-    writeFileSync(
-        file,
+    const sceneCore = new SceneLowerer(new LoweringContext()).lowerCore({
+        transformNodes: true,
+    }).source;
+    runGeneratedProgram(
+        native,
+        "scene-node-cleanup",
         `#include <bblite/runtime.hpp>
 #include <cassert>
 namespace bbl {
@@ -114,20 +116,6 @@ int main(){
 }
 `,
     );
-    runNativeFixtureCompiler(native, [
-        "/nologo",
-        "/std:c++20",
-        "/W4",
-        "/WX",
-        "/EHsc",
-        "/permissive-",
-        `/Fo:${output}\\`,
-        `/Fe:${executable}`,
-        "/I",
-        "native/include",
-        file,
-    ]);
-    execFileSync(executable, [], { stdio: "pipe" });
 });
 
 test("SceneNode thin-instance queries preserve optional matrices and material discrimination", (t) => {
@@ -232,23 +220,5 @@ test("splice spread retains receiver identity, argument order and filtered recor
         t.skip("Native fixture compiler unavailable.");
         return;
     }
-    const output = resolve("artifacts/array-splice-spread");
-    mkdirSync(output, { recursive: true });
-    const file = join(output, "check.cpp"),
-        executable = join(output, "check.exe");
-    writeFileSync(file, compiled.cpp);
-    runNativeFixtureCompiler(native, [
-        "/nologo",
-        "/std:c++20",
-        "/W4",
-        "/WX",
-        "/EHsc",
-        "/permissive-",
-        `/Fo:${output}\\`,
-        `/Fe:${executable}`,
-        "/I",
-        "native/include",
-        file,
-    ]);
-    execFileSync(executable, [], { stdio: "pipe" });
+    runGeneratedProgram(native, "array-splice-spread", compiled.cpp);
 });

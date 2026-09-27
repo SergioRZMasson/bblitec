@@ -56,9 +56,9 @@ export function readPhysicsProperty(
         if (property === "node")
             return {
                 ...handle(
-                "scene-node",
-                `bbl::upstream::physics_body_node(${owner.cpp})`,
-                owner,
+                    "scene-node",
+                    `bbl::upstream::physics_body_node(${owner.cpp})`,
+                    owner,
                 ),
                 engineCpp:
                     owner.engineCpp ??
@@ -185,33 +185,21 @@ export function compilePhysicsMethodCall(
         ].includes(kind)
     )
         return;
+    if (callee.questionDotToken && value.dataType?.kind === "optional")
+        return context.dataLowerer.optionalAccess(value, call, (receiver) => {
+            const result = compileReceiverCall(context, call, callee, receiver);
+            if (result && result.dataType?.kind !== "optional")
+                context.fail(
+                    call,
+                    "Optional physics calls require an optional result.",
+                );
+            return result;
+        });
     const receiver = context.bindings.pinValueToTemporary(
         value,
         "physics_receiver",
         callee.expression,
     );
-    if (callee.questionDotToken && receiver.dataType?.kind === "optional") {
-        const narrowed = context.dataLowerer.narrowOptional(
-            receiver,
-            callee.expression,
-            true,
-        );
-        let result: Value | undefined;
-        const lines = context.captureEmittedLines(() => {
-            result = compileReceiverCall(context, call, callee, narrowed);
-        });
-        if (!result) return;
-        const type = result.dataType;
-        if (type?.kind !== "optional")
-            context.fail(
-                call,
-                "Optional physics calls require an optional result.",
-            );
-        return {
-            ...result,
-            cpp: `([&]() -> ${context.dataTypes.cppType(type)} { if (!(${receiver.cpp}).has_value()) return std::nullopt; ${lines.join("\n")} return ${result.cpp}; }())`,
-        };
-    }
     return compileReceiverCall(
         context,
         call,
@@ -302,6 +290,7 @@ function compileReceiverCall(
         };
     const args = descriptor!.args.map((type, index) => {
         const expression = argumentAt(call, index + 1);
+        let cpp: string;
         if (type === transform) {
             const value = context.compileValue(expression);
             if (
@@ -316,18 +305,12 @@ function compileReceiverCall(
                 );
                 return `bbl::upstream::PhysicsNativeTransform{${saved.cpp}.at(0), ${saved.cpp}.at(1)}`;
             }
-            const cpp = context.dataLowerer.compileKnownValueForSink(
+            cpp = context.dataLowerer.compileKnownValueForSink(
                 value,
                 type,
                 expression,
             );
-            return context.bindings.pinValueToTemporary(
-                context.dataLowerer.leafValue(cpp, type),
-                "physics_argument",
-                expression,
-            ).cpp;
-        }
-        const cpp = context.dataLowerer.compileForSink(expression, type);
+        } else cpp = context.dataLowerer.compileForSink(expression, type);
         return context.bindings.pinValueToTemporary(
             context.dataLowerer.leafValue(cpp, type),
             "physics_argument",

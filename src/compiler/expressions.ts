@@ -27,6 +27,7 @@ import type { LoweringServices } from "./lowering-services.js";
 // native functions, user functions) is the resolution order a call site
 // observes.
 import ts from "typescript";
+import { projectAssetContainer } from "./data-sinks/resources.js";
 import { arrayFunctionValue } from "./native-function-values.js";
 import { hasDynamicObjectSpread, isJsonValue } from "./json-bridge.js";
 import { isHandleKind } from "./data-types.js";
@@ -1055,27 +1056,20 @@ export class ExpressionLowerer {
                     dataType,
                 };
             }
-            let lastEffect = -1;
-            for (
-                let index = unwrapped.elements.length - 1;
-                index >= 0;
-                --index
-            ) {
-                if (containsEvaluatedCall(unwrapped.elements[index]!)) {
-                    lastEffect = index;
-                    break;
-                }
-            }
+            const pins = this.context.evaluationOrder.operandsToPin(
+                unwrapped.elements,
+            );
             return {
                 kind: "tuple",
                 cpp: "",
                 tupleElements: unwrapped.elements.map((element, index) => {
                     const value = this.laneValue(element);
-                    return index < lastEffect
-                        ? this.context.bindings.pinValueToTemporary(
+                    return pins[index]
+                        ? pinOperand(
+                              this.context,
                               value,
-                              "array_member",
                               element,
+                              "array_member",
                           )
                         : this.builtLane(value, element);
                 }),
@@ -1974,30 +1968,17 @@ export class ExpressionLowerer {
         whenFalse: Value,
         node: ts.Node,
     ): Value {
-        // Racer's placement helper selects between a loaded AssetContainer
-        // and `{ entities: [cloneTransformNode(root)] }`. Both are the same
-        // native AssetHandle shape: clone_asset_root deliberately creates a
-        // mesh-only AssetRecord so addToScene, entities[0], and
-        // getContainerMeshes all consume it through the ordinary asset path.
-        const asAssetContainer = (value: Value): Value | undefined => {
-            if (value.kind === "asset") return value;
-            if (value.kind !== "record") return undefined;
-            const properties = value.recordProperties ?? {};
-            const names = Object.keys(properties);
-            const entities = properties.entities;
-            const root =
-                names.length === 1 &&
-                entities?.kind === "tuple" &&
-                entities.tupleElements?.length === 1
-                    ? entities.tupleElements[0]
-                    : undefined;
-            return root?.kind === "asset-root" && root.assetRootClone
-                ? { ...root, kind: "asset" }
-                : undefined;
-        };
         if (whenTrue.kind !== whenFalse.kind) {
-            const trueAsset = asAssetContainer(whenTrue);
-            const falseAsset = asAssetContainer(whenFalse);
+            const trueAsset = projectAssetContainer(
+                this.context,
+                whenTrue,
+                node,
+            );
+            const falseAsset = projectAssetContainer(
+                this.context,
+                whenFalse,
+                node,
+            );
             if (trueAsset && falseAsset) {
                 whenTrue = trueAsset;
                 whenFalse = falseAsset;
@@ -2578,12 +2559,15 @@ export class ExpressionLowerer {
             const callable = this.compileValue(callee);
             if (callable.kind === "callback") {
                 if (callable.intrinsicName) {
-                    return this.context.compileRegisteredIntrinsic(
-                        callable.intrinsicName,
-                        call,
-                    ) ?? this.context.fail(
-                        callee,
-                        `Babylon Lite intrinsic '${callable.intrinsicName}' is not supported by this prototype.`,
+                    return (
+                        this.context.compileRegisteredIntrinsic(
+                            callable.intrinsicName,
+                            call,
+                        ) ??
+                        this.context.fail(
+                            callee,
+                            `Babylon Lite intrinsic '${callable.intrinsicName}' is not supported by this prototype.`,
+                        )
                     );
                 }
                 const native =
@@ -3302,12 +3286,18 @@ export class ExpressionLowerer {
                       )
                     : result;
             }
-            const result = this.compileStaticTupleCallback(
-                local!,
-                values,
-                call,
-                method === "forEach",
-            );
+            const result =
+                this.context.asyncActivations.withStaticCollectionCallback(
+                    call,
+                    local!,
+                    () =>
+                        this.compileStaticTupleCallback(
+                            local!,
+                            values,
+                            call,
+                            method === "forEach",
+                        ),
+                );
             return method === "map"
                 ? this.context.bindings.pinValueToTemporary(
                       result,

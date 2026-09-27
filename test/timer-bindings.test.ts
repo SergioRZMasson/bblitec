@@ -45,10 +45,15 @@ test("callbacks observe completed lexical initializers and preserve failed initi
             const inner=setTimeout(()=>{nested++;clearTimeout(inner);},0);
         },0);
         let mutable=setTimeout(()=>{if(mutable!==23)throw new Error("mutable binding capture");},0);mutable=23;
-        setTimeout(()=>{
+        function complete(): void {
+            if(count<6||nested<1||repeated<2||named<2||timers.size!==0) {
+                setTimeout(complete, 1);
+                return;
+            }
             if(early!==1||failed!==1||count!==6||nested!==1||repeated!==2||named!==2||timers.size!==0)throw new Error("timer results");
             globalThis.close();
-        },40);
+        }
+        setTimeout(complete, 0);
     `,
         { fileName: join(directory, "entry.ts") },
     );
@@ -75,7 +80,7 @@ test("callbacks observe completed lexical initializers and preserve failed initi
         cpp,
     ]);
     const execution = spawnSync(exe, { encoding: "utf8", timeout: 10000 });
-    assert.ifError(execution.error);
+    assert.equal(execution.error, undefined, execution.stderr);
     assert.equal(execution.status, 0, execution.stderr);
     assert.equal(execution.stdout, "");
     assert.equal(execution.stderr, "");

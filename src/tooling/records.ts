@@ -19,6 +19,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 
 /**
  * Every regular file under `path` (or `path` itself when it is a file),
@@ -180,7 +181,9 @@ export function writeJsonRecord(
     mkdirSync(dirname(path), { recursive: true });
     const temporary = `${path}.${process.pid}.tmp`;
     writeFileSync(temporary, `${JSON.stringify(value, null, indent)}\n`);
-    for (let attempt = 0; ; attempt += 1) {
+    const deadline = performance.now() + 5000;
+    let waitCell: Int32Array | undefined;
+    for (;;) {
         try {
             renameSync(temporary, path);
             return;
@@ -189,7 +192,7 @@ export function writeJsonRecord(
             // Keep the old record intact while that handle closes.
             if (
                 process.platform !== "win32" ||
-                attempt >= 10 ||
+                performance.now() >= deadline ||
                 !(error instanceof Error) ||
                 !("code" in error) ||
                 (error.code !== "EPERM" &&
@@ -197,7 +200,13 @@ export function writeJsonRecord(
                     error.code !== "EBUSY")
             )
                 throw error;
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+            waitCell ??= new Int32Array(new SharedArrayBuffer(4));
+            Atomics.wait(
+                waitCell,
+                0,
+                0,
+                Math.min(50, deadline - performance.now()),
+            );
         }
     }
 }

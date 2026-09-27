@@ -3,6 +3,8 @@ import { suiteBrowserModule } from "../../dist/src/capture-suite-reference.js";
 import { applyObserveHooks } from "../../dist/src/tooling/observe-run.js";
 import {
     assertObservationProvenance,
+    loadPng,
+    observedImage,
     observedStep,
     requireObservations,
     sha256,
@@ -17,6 +19,7 @@ import {
  *   freePressed: string,
  *   kickHidden: boolean,
  *   camera: {alpha: number, beta: number},
+ *   hud: {hidden: boolean, labels: Array<{text: string, color: number[], bounds: number[]}>},
  * }} PlayroomState
  */
 
@@ -29,6 +32,46 @@ const transitions = [
     ["orbit-restored", ["ready", "aiming", "free", "aiming"]],
     ["watching", ["ready", "aiming", "watching"]],
 ];
+
+/**
+ * Count foreground glyph pixels in the source label's text bounds, not its full-width box.
+ * @param {ReturnType<typeof loadPng>} image
+ * @param {PlayroomState["hud"]["labels"][number]} label
+ */
+function labelPixels(image, label) {
+    const [left = 0, top = 0, width = 0, height = 0] = label.bounds;
+    assert.equal(
+        label.color.length,
+        3,
+        "browser label must have an RGB foreground",
+    );
+    assert(label.color.every(Number.isFinite));
+    assert(width > 0 && height > 0, "visible browser label has no text bounds");
+    let pixels = 0;
+    for (
+        let y = Math.max(0, Math.floor(top) - 3);
+        y < Math.min(image.height, Math.ceil(top + height) + 3);
+        ++y
+    ) {
+        for (
+            let x = Math.max(0, Math.floor(left) - 3);
+            x < Math.min(image.width, Math.ceil(left + width) + 3);
+            ++x
+        ) {
+            const offset = (y * image.width + x) * 4;
+            if (
+                label.color.every((channel, index) => {
+                    const value = image.data[offset + index];
+                    return (
+                        value !== undefined && Math.abs(value - channel) <= 12
+                    );
+                })
+            )
+                ++pixels;
+        }
+    }
+    return pixels;
+}
 
 /** @param {PluginContext} context */
 export function check(context) {
@@ -59,6 +102,25 @@ export function check(context) {
         assert.equal(state.startupHidden, phase !== "ready");
         assert.equal(state.kickHidden, phase !== "aiming");
         assert.equal(state.freePressed, String(phase === "free"));
+        assert.equal(
+            state.hud.hidden,
+            phase === "ready",
+            `${id}: browser HUD visibility`,
+        );
+        if (phase !== "ready")
+            assert.equal(
+                state.hud.labels[0]?.text,
+                "throw 1 / 3",
+                `${id}: browser throw counter`,
+            );
+        /** @type {number[]} */
+        let expectedGlyphPixels = [];
+        if (id === "aiming") {
+            const image = loadPng(observedImage(context, step.image));
+            expectedGlyphPixels = state.hud.labels.map((label) =>
+                labelPixels(image, label),
+            );
+        }
         for (const result of context.phase(id)) {
             const where = `${result.backend}:${id}`;
             const states = [...result.log.matchAll(/dataset gamePhase=(\w+)/g)]
@@ -91,6 +153,23 @@ export function check(context) {
                 state.dataset.constraintCount,
                 `${where}: physics constraints`,
             );
+            if (id === "aiming") {
+                assert.equal(state.hud.labels[1]?.text, "0 points");
+                const image = loadPng(result.image);
+                for (const [index, label] of state.hud.labels.entries()) {
+                    const expectedPixels = expectedGlyphPixels[index];
+                    assert(expectedPixels !== undefined);
+                    const actualPixels = labelPixels(image, label);
+                    assert(
+                        expectedPixels > 40,
+                        `${id}: browser '${label.text}' has no visible glyphs`,
+                    );
+                    assert(
+                        actualPixels >= expectedPixels * 0.5,
+                        `${where}: '${label.text}' is not visibly rendered (${actualPixels}/${expectedPixels} foreground pixels)`,
+                    );
+                }
+            }
         }
     }
     const aiming = /** @type {PlayroomState} */ (

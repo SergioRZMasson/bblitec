@@ -16,8 +16,11 @@ struct WGPUBufferImpl {
 };
 std::vector<unsigned> bound;
 unsigned instances_drawn = 0, pipeline_binds = 0;
-extern "C" void SDLCALL SDL_BindGPUIndexBuffer(SDL_GPURenderPass*, const SDL_GPUBufferBinding*, SDL_GPUIndexElementSize) {}
-extern "C" void SDLCALL SDL_DrawGPUIndexedPrimitives(SDL_GPURenderPass*, Uint32 count, Uint32 instances, Uint32 first, Sint32 base, Uint32 first_instance) {
+extern "C" void SDLCALL SDL_BindGPUIndexBuffer(SDL_GPURenderPass*, const SDL_GPUBufferBinding*,
+                                               SDL_GPUIndexElementSize) {}
+extern "C" void SDLCALL SDL_DrawGPUIndexedPrimitives(SDL_GPURenderPass*, Uint32 count,
+                                                     Uint32 instances, Uint32 first, Sint32 base,
+                                                     Uint32 first_instance) {
     assert(count == 6 && first == 0 && base == 0 && first_instance == 0);
     instances_drawn = instances;
 }
@@ -114,7 +117,8 @@ int main() {
             }
     assert(pipeline_binds == 0);
     // A matrix pool only repeats a node graph that actually consumes it.
-    for (const auto& view : {upstream::node_plain, upstream::node_instanced, upstream::NodeVariantEntry{0,1,true}}) {
+    for (const auto& view :
+         {upstream::node_plain, upstream::node_instanced, upstream::NodeVariantEntry{0, 1, true}}) {
         const bool instanced = node_variant_instanced(view);
         const bool matrix_layout = view.attribute_count > 1;
         std::vector<SDL_GPUVertexAttribute> sdl_attributes;
@@ -124,14 +128,17 @@ int main() {
             assert(append_variant_attribute(input.name, input.location, sdl_attributes));
             assert(append_variant_attribute(input.name, input.location, dawn_attributes));
             if (const auto* row = upstream::pinned_instance_attribute(input.name)) {
-                assert(sdl_attributes.back().buffer_slot == 1 && sdl_attributes.back().offset == row->offset);
+                assert(sdl_attributes.back().buffer_slot == 1 &&
+                       sdl_attributes.back().offset == row->offset);
                 assert(dawn_attributes.instance_matrix.back().offset == row->offset);
             }
         }
         std::array<SDL_GPUVertexBufferDescription, vertex_streams.size()> sdl_layouts{};
         std::array<WGPUVertexBufferLayout, vertex_streams.size()> dawn_layouts{};
-        assert(fill_variant_vertex_buffers(sdl_attributes, sdl_layouts) == (matrix_layout ? 2u : 1u));
-        assert(fill_variant_vertex_layouts(dawn_attributes, dawn_layouts) == (matrix_layout ? 2u : 1u));
+        assert(fill_variant_vertex_buffers(sdl_attributes, sdl_layouts) ==
+               (matrix_layout ? 2u : 1u));
+        assert(fill_variant_vertex_layouts(dawn_attributes, dawn_layouts) ==
+               (matrix_layout ? 2u : 1u));
         assert(sdl_layouts[1].input_rate == SDL_GPU_VERTEXINPUTRATE_INSTANCE);
         assert(dawn_layouts[1].stepMode == WGPUVertexStepMode_Instance);
         assert(sdl_layouts[1].pitch == upstream::pinned_instance_group_stride("ti-matrix"));
@@ -140,12 +147,14 @@ int main() {
         record.instance_colors.clear();
         bound.clear();
         node_sdl_draw(engine, sdl, view);
-        const std::vector<unsigned> expected = instanced ? std::vector<unsigned>{1,2} : std::vector<unsigned>{1};
+        const std::vector<unsigned> expected =
+            instanced ? std::vector<unsigned>{1, 2} : std::vector<unsigned>{1};
         assert(bound == expected && instances_drawn == (instanced ? 7u : 1u));
         bound.clear();
         WGPURenderPipeline pipeline = nullptr;
         encode_variant_draw(nullptr, nullptr, pipeline, nullptr, nullptr, &dawn_vertices,
-                            instanced ? instance_streams_for(record,dawn) : InstanceStreams{}, &dawn_vertices, 6);
+                            instanced ? instance_streams_for(record, dawn) : InstanceStreams{},
+                            &dawn_vertices, 6);
         assert(bound == expected && instances_drawn == (instanced ? 7u : 1u));
     }
 }

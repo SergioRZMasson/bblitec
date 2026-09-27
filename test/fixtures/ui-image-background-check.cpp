@@ -46,7 +46,8 @@ int main() try {
             "width:20px;height:20px;transform:translateX(5px);decorator:linear-gradient(red, blue);background-color:#abcdef;");
         ui_append_to_root(engine, normal);
         const auto warning = ui_create_element(engine, "div");
-        ui_set_attribute(engine, warning, "style",
+        ui_set_attribute(
+            engine, warning, "style",
             "position:absolute;left:50%;top:50%;padding:10px;background-color:black;--bbl-absolute-inline:1;");
         ui_set_attribute(engine, warning, "hidden", "");
         ui_append_to_root(engine, warning);

@@ -93,6 +93,7 @@ function literalTagValue(
 
 /** The pinned type name each handle kind is declared as. */
 const pinnedHandleTypes: Record<string, HandleKind> = {
+    AssetContainer: "asset",
     AudioEngine: "audio-engine",
     AudioInputSource: "audio-source",
     EngineContext: "engine",
@@ -3388,10 +3389,16 @@ export class DataTypeRegistry {
     public usesJsonStorage(): boolean {
         if (this.emittedJsonType) return true;
         const seen = new Set<string>();
-        return [...this.emittedNamedTypes].some((name) =>
-            this.structsByName.has(name) && containsDataKind(
-                {kind:"struct",name}, "json", (record) => this.structFieldTypes(record), true, seen,
-            ),
+        return [...this.emittedNamedTypes].some(
+            (name) =>
+                this.structsByName.has(name) &&
+                containsDataKind(
+                    { kind: "struct", name },
+                    "json",
+                    (record) => this.structFieldTypes(record),
+                    true,
+                    seen,
+                ),
         );
     }
 

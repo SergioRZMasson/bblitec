@@ -41,7 +41,7 @@ test("a bound element read is present and true in a boolean sink", () => {
     // between them changed.
     assert.match(
         result.cpp,
-        /\.visible = \(v_bblite_element_found_\d+ && v_shown\);/,
+        /\.visible = \(v_bblite_element_found_\d+ \? bbl::js::Nullable<bool>\{v_shown\} : bbl::js::Nullable<bool>\{std::nullopt\}\);/,
     );
     assert.doesNotMatch(result.cpp, /\.visible = bbl::js::array_at_or_default/);
 });

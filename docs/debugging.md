@@ -55,6 +55,8 @@ the browser compositor, never offline PNG resizing.
 they must not appear on the user's desktop. A `platform:window` scene paces on the desktop compositor
 clock, which stops while the console session is locked: a run with a frame budget or capture fails after
 30 s without a heartbeat, naming the clock's last status; an unbounded run waits for the display.
+Screenshot/render-capture runs also have a five-minute execution backstop for initialization failures
+that keep repainting without reaching readiness.
 
 ## Captured state and its limits
 

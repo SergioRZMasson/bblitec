@@ -416,7 +416,11 @@ async function materializeAsset(
                     decoders,
                 ),
                 source,
-                { cameras: asset.gltfCameras === true, nodeTransforms, boneControl },
+                {
+                    cameras: asset.gltfCameras === true,
+                    nodeTransforms,
+                    boneControl,
+                },
                 decoders,
             ),
         );
@@ -514,7 +518,11 @@ async function materializeAsset(
             : await packageGltfLoadPlan(
                   bytes,
                   source,
-                  { cameras: asset.gltfCameras === true, nodeTransforms, boneControl },
+                  {
+                      cameras: asset.gltfCameras === true,
+                      nodeTransforms,
+                      boneControl,
+                  },
                   decoders,
               ),
     );

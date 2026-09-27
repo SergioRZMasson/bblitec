@@ -189,6 +189,14 @@ type PrimaryCanvasContext = Pick<
 export function primaryCanvasIds(
     context: PrimaryCanvasContext,
 ): ReadonlySet<string> {
+    const ids = engineCanvasIds(context);
+    return ids.size > 0 ? ids : new Set([HOST_PRIMARY_CANVAS_ID]);
+}
+
+/** Explicit document IDs flowing into reached engine-creation syntax, without a host default. */
+export function engineCanvasIds(
+    context: PrimaryCanvasContext,
+): ReadonlySet<string> {
     const cached = primaryCanvasIdsByEntry.get(context.sourceFile);
     if (cached) return cached;
     const calls: ts.CallExpression[] = [];
@@ -247,10 +255,8 @@ export function primaryCanvasIds(
         )
             collect(canvas);
     }
-    const primary: ReadonlySet<string> =
-        ids.size > 0 ? ids : new Set([HOST_PRIMARY_CANVAS_ID]);
-    primaryCanvasIdsByEntry.set(context.sourceFile, primary);
-    return primary;
+    primaryCanvasIdsByEntry.set(context.sourceFile, ids);
+    return ids;
 }
 
 /** The id a library `document.getElementById(id)` call looks up. */

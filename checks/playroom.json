@@ -25,7 +25,7 @@
     "viewport": [1280, 720],
     "golden": false,
     "reloadEachStep": true,
-    "state": "(() => { const canvas = document.getElementById('renderCanvas'); return {dataset:{...canvas.dataset},viewport:{width:canvas.width,height:canvas.height},startupHidden:document.getElementById('playroom-startup').hidden,freePressed:document.getElementById('playroom-free').getAttribute('aria-pressed'),kickHidden:document.getElementById('playroom-kick').hidden,camera:window.__playroomObserveCamera()}; })()",
+    "state": "(() => { const canvas = document.getElementById('renderCanvas'); const labels=['playroom-throw-count','playroom-score'].map(id=>{const element=document.getElementById(id);const range=document.createRange();range.selectNodeContents(element);const box=range.getBoundingClientRect();return {text:element.textContent,color:getComputedStyle(element).color.match(/[\\d.]+/g).slice(0,3).map(Number),bounds:[box.x,box.y,box.width,box.height]};});return {dataset:{...canvas.dataset},viewport:{width:canvas.width,height:canvas.height},startupHidden:document.getElementById('playroom-startup').hidden,freePressed:document.getElementById('playroom-free').getAttribute('aria-pressed'),kickHidden:document.getElementById('playroom-kick').hidden,camera:window.__playroomObserveCamera(),hud:{hidden:document.querySelector('.playroom-hud').hidden,labels}}; })()",
     "hooks": [
       { "marker": "await startEngine(engine);", "position": "before", "inject": "window.__playroomObserveCamera = () => ({ alpha: game.camera.alpha, beta: game.camera.beta });" }
     ],

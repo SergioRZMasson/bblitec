@@ -22,8 +22,9 @@ Check them before adding an implementation. Source rejection does not imply miss
 - RAF runs on the owner repaint clock, returns cancellable IDs and needs no engine.
 - Error/unhandled-rejection listeners support removal, once and preventDefault before engine creation.
   Events borrow dispatch; names are Error, stack/location are absent. Rejectionhandled is unsupported.
-- Resolution and reduced-motion matchMedia queries retain identity/current matches and zero-argument change
-  listeners with identity-based removal. Wider queries and event payloads refuse. ResizeObserver entries are unavailable.
+- Resolution, reduced-motion and pointer/hover matchMedia queries retain identity/current matches and
+  zero-argument change listeners with identity-based removal. Pointer/hover admits conjunctions and
+  follows SDL device capabilities. Wider queries and event payloads refuse. ResizeObserver entries are unavailable.
   Device-pixel-ratio-only backing-store resizes and MediaQueryList lifetime remain limited.
 - MutationObserver supports microtask attribute notifications, static attribute filters and disconnect.
   Mutation records, old values, child-list changes and subtree observation refuse.
@@ -60,13 +61,16 @@ Bounded runs fail when a rendering canvas reports a nonempty `data-error`.
 Queries use current attributes/order, including detached subtrees. Single queries return null; lists
 are ordered snapshots. Dynamic traversal into innerHTML throws without an authored markup tree.
 Generated boxes are excluded. Root documentElement/head/body identities are distinct.
+Window applications create the implicit engine canvas before entry evaluation; explicitly authored host canvases are reused.
 
 Common input dispatch preserves target/capture/bubble, callback identity, removal, once, capture,
 passive, stopPropagation and stopImmediatePropagation. Passive listeners cannot cancel defaults.
 UI runs before cameras; preventDefault suppresses default UI actions and camera propagation.
 Touch contacts retain independent IDs and their initial targets through release or cancellation;
 only the primary contact emits compatibility mouse events. Focus loss cancels active contacts.
-Window keyboard listeners precede default actions. Focus/form callbacks use per-element dispatch.
+Window keyboard listeners precede default actions. Element focus/blur preserves listener identity,
+removal, non-bubbling dispatch and related targets; form callbacks use per-element dispatch.
+Native canvas `tabIndex` reads as zero; keyboard focus targets the SDL surface rather than HTML tab order.
 
 Checkbox activation updates checked before input/change. Programmatic control writes are silent.
 Color inputs use an RGB/hex popup: preview emits input, Apply emits change, Cancel restores the value.
@@ -115,6 +119,8 @@ mixed currentColor/literal paints and internal SVG queries refuse.
 Supports backing dimensions, scale, full clear, fillRect, bounded paths/fill/stroke, putImageData,
 destination-rectangle canvas drawImage and bounded fillText. Offscreen pixels are premultiplied RGBA.
 Closed canvas producers can bake getImageData; mutable module/engine inputs refuse.
+Retained canvas commands follow DOM stacking, visibility and clipping; Window snapshots publish canvas
+changes independently of text and layout updates.
 
 The primary canvas is the element the program passes to createEngine, found by the id it is looked up
 by (the host document's `renderCanvas` otherwise); a program that looks it up by several ids refuses.
@@ -174,6 +180,9 @@ sources, load/error events and distinct DOMException values are unsupported.
 
 Normal line height uses the current font's metrics and inherits as a keyword; explicit numeric and
 length values retain their respective inheritance rules.
+
+CSS font-family lists retain their order. Installed named faces load on demand at the requested weight and style;
+an unavailable list uses the default UI face with a diagnostic.
 
 Fonts use DirectWrite on Windows and FreeType with CoreText, Fontconfig or Android system-font discovery
 on macOS/iOS, Linux and Android. Android resolves generic families through its font matcher and named

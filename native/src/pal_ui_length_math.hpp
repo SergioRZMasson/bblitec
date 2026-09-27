@@ -156,7 +156,8 @@ class UiLengthMath {
             return {number, true};
         if (unit == "rem") {
             if (!root_font_size || !std::isfinite(*root_font_size) || *root_font_size <= 0)
-                throw std::runtime_error("Root-relative CSS math requires the computed root font size.");
+                throw std::runtime_error(
+                    "Root-relative CSS math requires the computed root font size.");
             root_relative = true;
             return {number * *root_font_size, true};
         }
@@ -200,7 +201,8 @@ class UiLengthMath {
 public:
     UiLengthMath(std::string_view expression, double viewport_width, double viewport_height,
                  std::optional<double> root_font = std::nullopt)
-        : source(expression), width(viewport_width), height(viewport_height), root_font_size(root_font) {}
+        : source(expression), width(viewport_width), height(viewport_height),
+          root_font_size(root_font) {}
     bool uses_root_font() const { return root_relative; }
     std::pair<std::string, std::size_t> resolve() {
         const auto value = atom();
@@ -211,8 +213,8 @@ public:
 };
 
 inline std::string rml_css_length_math(std::string value, double width, double height,
-                                      std::optional<double> root_font = std::nullopt,
-                                      std::string_view property_name = {}) {
+                                       std::optional<double> root_font = std::nullopt,
+                                       std::string_view property_name = {}) {
     char quote = 0;
     std::string property(property_name);
     std::size_t declaration_start = 0;
@@ -258,7 +260,8 @@ inline std::string rml_css_length_math(std::string value, double width, double h
         const auto [replacement, consumed] = math.resolve();
         if (math.uses_root_font() &&
             (property == "font" || property == "font-size" || property.starts_with("--")))
-            throw std::runtime_error("Root-relative CSS math in font sizing or custom properties is not represented.");
+            throw std::runtime_error(
+                "Root-relative CSS math in font sizing or custom properties is not represented.");
         value.replace(index, consumed, replacement);
         index += replacement.size() - 1;
     }

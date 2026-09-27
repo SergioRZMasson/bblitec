@@ -891,9 +891,11 @@ test("emits the opt-in bone-control chunk only when it is reached", () => {
         source,
         /gltf_set_bone_visibility\(owner\.bone_overrides, node, visible,/,
     );
-    // A skinned file with no animations carries no skin runtime here, so
-    // that pairing is refused by name rather than silently empty.
-    assert.match(source, /if \(!animated && !skin_json\.empty\(\)\)/);
+    assert.match(
+        source,
+        /const bool retained_pose = animated \|\| !required\(mesh_plan, "animationBindings"\)\.is_null\(\);/,
+    );
+    assert.match(source, /if \(retained_pose\) \{/);
 });
 
 test("generates engine API wrappers over the PAL", () => {

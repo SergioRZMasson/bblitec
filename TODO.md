@@ -13,6 +13,7 @@ Internal work, qualification, performance and refusal defects. Capability gaps a
 
 - [ ] Qualify `playroom` startup parity and declared controls on both backends without changing its source, references or gates.
 - [ ] Qualify retained data-mesh CPU aliases and GPU-only attribute writes across device recovery.
+- [ ] Move mixed mesh/billboard ordering into a generated draw plan after retaining source deferred-build completion order and prior stable binding order; keep equal-order/depth and camera-less refusals until those inputs and ordering-neutrality coverage exist.
 - [ ] One captured-spawn variant beside `runChecked` for `package-demo.ts`, `package-output.ts`, `shipping-profile.ts` and `patch-inventory.ts`.
 - [ ] Move the scene180 uniform plugin onto `webgpu-recorder.init.js` and share one `observedState` helper in `checks/plugins/support.mjs`.
 - [ ] Read `test/native-fixture.ts` unit lists from the `pal_*_scene_all.cpp` includes and share one camera test fixture.

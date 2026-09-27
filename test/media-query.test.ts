@@ -22,6 +22,8 @@ test("Window media queries retain typed nullable values, live matches and change
         const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)") ?? fallback();
         if (fallbacks !== 0 || reduced.matches) throw new Error("initial motion state");
         if (!window.matchMedia("(prefers-reduced-motion: no-preference)").matches) throw new Error("live direct read");
+        if (matchMedia("(hover: none) and (pointer: coarse)").matches ||
+            !matchMedia("(pointer: fine) and (hover: hover)").matches) throw new Error("native input capabilities");
         interface State { query: MediaQueryList | null; changes: number; }
         const state: State = {query: reduced, changes: 0};
         function clear(): void { state.query = null; }

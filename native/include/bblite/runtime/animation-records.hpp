@@ -53,10 +53,13 @@ template <class Owner> struct PropertyAnimationIdentityOwner {
     void gc_trace(const js::TraceVisitor& visitor) const { visitor(value); }
 };
 
-template <class Owner> PropertyAnimationIdentity property_animation_identity(Owner owner) {
+template <class Owner>
+PropertyAnimationIdentity property_animation_identity(Owner owner, bool retain = true) {
     const auto* key = owner.get();
+    if (!retain)
+        return {key, {}};
     return {key, js::make_closure(PropertyAnimationIdentityOwner<Owner>{std::move(owner)},
-                                 [](PropertyAnimationIdentityOwner<Owner>&) {})};
+                                  [](PropertyAnimationIdentityOwner<Owner>&) {})};
 }
 
 struct PropertyAnimationTarget {
@@ -76,7 +79,7 @@ struct PropertyAnimationTarget {
     // The mixer keys the pin's resolved (object, property) pair.
     const void* object_identity = nullptr;
     std::string property{};
-    js::Callback<PropertyAnimationIdentity()> resolve_object_identity;
+    js::Callback<PropertyAnimationIdentity(bool)> resolve_object_identity{};
     void gc_trace(const js::TraceVisitor& visitor) const {
         visitor(write_scalar);
         visitor(resolve_object_identity);
@@ -205,7 +208,10 @@ struct PropertyAnimationBucket {
     double total_weight = 0;
     /** `refX`..`refW`, JavaScript numbers. */
     std::array<double, 4> reference{0.0, 0.0, 0.0, 1.0};
-    void gc_trace(const js::TraceVisitor& visitor) const { visitor(target); visitor(resolved_identity); }
+    void gc_trace(const js::TraceVisitor& visitor) const {
+        visitor(target);
+        visitor(resolved_identity);
+    }
 };
 
 /**

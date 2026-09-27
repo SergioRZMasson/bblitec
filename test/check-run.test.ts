@@ -12,6 +12,7 @@ import { runCheck } from "../src/tooling/check-run.js";
 import { getScene } from "../src/scene-registry.js";
 import {
     measuredStampPath,
+    measuredRunTimeout,
     runMeasured,
     spawnNativeMeasured,
 } from "../src/tooling/native-run.js";
@@ -101,7 +102,18 @@ test("a measured run refuses a missing executable and names its stamp beside its
     assert.equal(measuredStampPath({}), undefined);
 });
 
-test("a measured run is bounded only by its caller; the Window clock fails a stalled one", () => {
+test("captures have a startup backstop and explicit run bounds remain authoritative", () => {
+    assert.equal(measuredRunTimeout({}), undefined);
+    assert.equal(measuredRunTimeout({ screenshot: "shot.png" }), 300_000);
+    assert.equal(measuredRunTimeout({ capture: "capture.json" }), 300_000);
+    assert.equal(
+        measuredRunTimeout({ screenshot: "shot.png", timeoutMs: 1234 }),
+        1234,
+    );
+    assert.equal(
+        measuredRunTimeout({ screenshot: "shot.png", timeoutMs: 0 }),
+        0,
+    );
     // A fake renderer that never finishes, killed at the caller's bound.
     const started = Date.now();
     assert.throws(
@@ -117,8 +129,7 @@ test("a measured run is bounded only by its caller; the Window clock fails a sta
         /Native renderer did not complete: .*\(killed after 1000 ms\)/,
     );
     assert.ok(Date.now() - started < 30_000);
-    // No tool timeout remains for Window-host scenes: a bounded run whose
-    // compositor clock stops fails natively (test/window-frame-clock.test.ts).
+    // The timeout is based on requested outputs, not a renderer or scene name.
     assert.doesNotMatch(
         readFileSync("src/tooling/native-run.ts", "utf8"),
         /platform:window/,

@@ -1,7 +1,7 @@
 import ts from "typescript";
 
 import { dataTypesEqual, doubleLiteral, type DataType } from "../data-types.js";
-import type { Value } from "../types.js";
+import { presenceFlagCpp, type Value } from "../types.js";
 
 import type { DataSinkHost, DataSinkOperations } from "./contracts.js";
 
@@ -91,6 +91,24 @@ function valueOptional(
             `const auto ${source} = (${value.cpp}).to_optional(); if (!${source}) return std::nullopt; ` +
             `${lines.join("\n")} return ${converted}; }())`
         );
+    }
+    const found = presenceFlagCpp(value);
+    if (found !== undefined) {
+        let inner = "";
+        const lines = lowerer.context.captureEmittedLines(() => {
+            inner = lowerer.compileKnownValueForSink(
+                value,
+                dataType.inner,
+                node,
+            );
+        });
+        const cppType = lowerer.context.dataTypes.cppType(dataType);
+        if (lines.length)
+            return (
+                `([&]() -> ${cppType} { if (!(${found})) return std::nullopt; ` +
+                `${lines.join("\n")} return ${inner}; }())`
+            );
+        return `(${found} ? ${cppType}{${inner}} : ${cppType}{std::nullopt})`;
     }
     return lowerer.compileKnownValueForSink(value, dataType.inner, node);
 }

@@ -113,7 +113,9 @@ async function composeImportedMesh(outputPath: string, source: string) {
 test("PBR profiles retain composed indices across imported and runtime materials", async () => {
     const outputPath = resolve("artifacts/runtime-pbr-composition");
     writeImportedMeshFixture(outputPath);
-    const { result, composed } = await composeImportedMesh(outputPath, `
+    const { result, composed } = await composeImportedMesh(
+        outputPath,
+        `
         import {createEngine, loadGltf, createBox, createPbrMaterial, createStandardMaterial} from "@babylonjs/lite";
         const engine = await createEngine({});
         createPbrMaterial({metallicFactor: 0});
@@ -126,11 +128,15 @@ test("PBR profiles retain composed indices across imported and runtime materials
         }
         const last = createBox(engine);
         last.material = createPbrMaterial({metallicFactor: 0});
-    `);
+    `,
+    );
     assert.deepEqual(composed.scenePbrMaterialIndices, [0, 3, 4]);
     assert.deepEqual(result.manifest.runtimeMaterialProfiles, [1, 2]);
-    const selectors = new Set(composed.pinnedVariants.flatMap((variant) =>
-        variant.selectors.map((selector) => selector.materialIndex)));
+    const selectors = new Set(
+        composed.pinnedVariants.flatMap((variant) =>
+            variant.selectors.map((selector) => selector.materialIndex),
+        ),
+    );
     assert.ok(selectors.has(3) && selectors.has(4));
     assert.match(result.cpp, /\.roughness_factor =.*\?/);
 });
@@ -138,7 +144,9 @@ test("PBR profiles retain composed indices across imported and runtime materials
 test("runtime shadow caster lists compose node material caster views", async () => {
     const outputPath = resolve("artifacts/node-dynamic-caster");
     writeImportedMeshFixture(outputPath);
-    const {result, composed} = await composeImportedMesh(outputPath, `
+    const { result, composed } = await composeImportedMesh(
+        outputPath,
+        `
         import {createEngine,loadGltf,createSceneContext,createDirectionalLight,createPcfDirectionalShadowGenerator,
             parseNodeMaterialFromSnippet,createBox,addToScene,setShadowTaskCasterMeshes,type Mesh} from "@babylonjs/lite";
         import {SCENE60_NME_JSON} from "../../corpus/babylon-lite/lab/lite/src/shared/scene60-nme.js";
@@ -158,7 +166,8 @@ test("runtime shadow caster lists compose node material caster views", async () 
             addToScene(scene, mesh);
         }
         setShadowTaskCasterMeshes(shadow, meshes);
-    `);
+    `,
+    );
     assert.equal(result.manifest.shadowGenerators[0]?.dynamicCasters, true);
     assert.equal(composed.nodeVariants.length, 1);
     assert.equal(composed.nodeVariants[0]?.composed.caster?.kind, "pcf");

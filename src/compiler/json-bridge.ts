@@ -293,17 +293,30 @@ export function isJsonRootedExpression(
         const owner = context.unwrap(unwrapped.expression);
         const representedType = (node: ts.Expression): DataType | undefined => {
             const source = context.unwrap(node);
-            if (ts.isIdentifier(source)) return context.bindings.lookupOptional(source)?.dataType;
-            if (!ts.isPropertyAccessExpression(source) && !ts.isElementAccessExpression(source)) return undefined;
+            if (ts.isIdentifier(source))
+                return context.bindings.lookupOptional(source)?.dataType;
+            if (
+                !ts.isPropertyAccessExpression(source) &&
+                !ts.isElementAccessExpression(source)
+            )
+                return undefined;
             let parent = representedType(source.expression);
             if (parent?.kind === "optional") parent = parent.inner;
             if (parent?.kind === "map") return parent.value;
-            if (parent?.kind === "vector" || parent?.kind === "span") return parent.element;
-            const key = ts.isPropertyAccessExpression(source) ? source.name.text
-                : ts.isStringLiteral(source.argumentExpression) ? source.argumentExpression.text : undefined;
+            if (parent?.kind === "vector" || parent?.kind === "span")
+                return parent.element;
+            const key = ts.isPropertyAccessExpression(source)
+                ? source.name.text
+                : ts.isStringLiteral(source.argumentExpression)
+                  ? source.argumentExpression.text
+                  : undefined;
             return parent?.kind === "struct" && key !== undefined
-                ? context.dataTypes.structFields(parent.name, source).find(field => field.sourceName === key)?.type
-                : parent?.kind === "json" ? parent : undefined;
+                ? context.dataTypes
+                      .structFields(parent.name, source)
+                      .find((field) => field.sourceName === key)?.type
+                : parent?.kind === "json"
+                  ? parent
+                  : undefined;
         };
         const type = representedType(owner);
         if (type?.kind === "json") return true;

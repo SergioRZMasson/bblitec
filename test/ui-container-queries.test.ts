@@ -19,7 +19,7 @@ test("container rules preserve conditions across source and host emission", () =
     assert.match(result.cpp, /container-type:inline-size/);
     assert.match(
         result.cpp,
-        /800\.0, "display:grid;grid-template-columns:1fr"[^\n]*320\.0\);/,
+        /800\.0, "display:grid;grid-template-columns:1fr;--bbl-authored-display:1;"[^\n]*320\.0\);/,
     );
     assert.match(result.cpp, /"small"[^\n]*200\.0\);/);
     assert.match(result.cpp, /UiMotionPreference::Reduce[^\n]*320\.0\);/);

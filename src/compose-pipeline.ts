@@ -1158,16 +1158,18 @@ export async function composeScenePipeline({
         const castsEsmShadow = result.manifest.shadowGenerators.some(
             (generator) =>
                 pinnedShadowFilter(generator.kind) === "esm" &&
-                (generator.dynamicCasters || generator.casters.some(
-                    (caster) => caster.nodeMaterial === index,
-                )),
+                (generator.dynamicCasters ||
+                    generator.casters.some(
+                        (caster) => caster.nodeMaterial === index,
+                    )),
         );
         const castsPcfShadow = result.manifest.shadowGenerators.some(
             (generator) =>
                 pinnedShadowFilter(generator.kind) === "pcf" &&
-                (generator.dynamicCasters || generator.casters.some(
-                    (caster) => caster.nodeMaterial === index,
-                )),
+                (generator.dynamicCasters ||
+                    generator.casters.some(
+                        (caster) => caster.nodeMaterial === index,
+                    )),
         );
         const composed = await composeNodeMaterial(graph, label, {
             hasInstances: material.hasInstances,

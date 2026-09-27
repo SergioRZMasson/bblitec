@@ -148,6 +148,17 @@ int main() {
     engine.assets.emplace_back(); engine.meshes.emplace_back();
     engine.assets[0].meshes.push_back(bbl::MeshHandle{0});
     const bbl::AssetHandle asset{0};
+    assert(bbl::cloned_asset_container(bbl::SceneNodeHandle{asset}) == asset);
+    bool refused = false;
+    try { (void)bbl::cloned_asset_container(bbl::SceneNodeHandle{bbl::MeshHandle{0}}); }
+    catch (const std::runtime_error&) { refused = true; }
+    assert(refused);
+    refused = false;
+    try { (void)bbl::asset_container_root(engine, asset); }
+    catch (const std::runtime_error&) { refused = true; }
+    assert(refused);
+    engine.assets[0].has_synthetic_root = true;
+    assert(bbl::asset_container_root(engine, asset) == asset);
     engine.lights.emplace_back();
     engine.lights[0].position = {-.5f,.25f,1};
     bbl::set_light_asset_parent(engine, bbl::LightHandle{0}, asset);
@@ -219,6 +230,43 @@ test("asset records returned through Promise.all retain imported root identity",
         const clone = cloneTransformNode(selected.root);
         clone.position.set(3, 0, 5);
     `);
-    assert.match(result.cpp, /clone_asset_root/);
-    assert.match(result.cpp, /set_asset_root_position/);
+    assert.match(result.cpp, /clone_scene_node/);
+    assert.match(result.cpp, /set_scene_node_position/);
+});
+
+test("a widened cloned root is checked when projected to an asset container", () => {
+    const result = compileSource(`
+        import {createEngine, createSceneContext, loadGltf, cloneTransformNode,
+            addToScene, getContainerMeshes, type SceneNode} from "@babylonjs/lite";
+        const engine = await createEngine({});
+        const scene = createSceneContext(engine);
+        const first = await loadGltf(engine, "first.glb");
+        const second = await loadGltf(engine, "second.glb");
+        const placements: Array<{root: SceneNode}> = [];
+        placements.push({root: first.entities[0]!});
+        placements.push({root: second.entities[0]!});
+        for (const placement of placements) {
+            const container = performance.now() > 0
+                ? {entities: [cloneTransformNode(placement.root)]}
+                : first;
+            container.entities[0]!.position.set(1, 2, 3);
+            addToScene(scene, container);
+            console.log(getContainerMeshes(container).length);
+        }
+    `);
+    assert.match(result.cpp, /cloned_asset_container/);
+    assert.match(result.cpp, /clone_scene_node/);
+});
+
+test("stored asset containers check the actual loader's synthetic-root ownership", () => {
+    const result = compileSource(`
+        import {createEngine, loadGltf, type AssetContainer} from "@babylonjs/lite";
+        const engine = await createEngine({});
+        const containers: AssetContainer[] = [];
+        containers.push(await loadGltf(engine, "first.glb"));
+        const index = Math.floor(performance.now()) % containers.length;
+        containers[index]!.entities[0]!.position.set(1, 2, 3);
+    `);
+    assert.match(result.cpp, /bbl::asset_container_root\(/);
+    assert.match(result.cpp, /bbl::set_asset_root_position\(/);
 });

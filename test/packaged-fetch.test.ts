@@ -24,8 +24,8 @@ test("packaged fetch owns responses, snapshots selections and rejects missing or
     writeFileSync(join(files, "document.json"), '{"answer":42}');
     writeFileSync(join(files, "missing.bin"), "exists only while compiling");
     const moduleFiles = join(publicDir, "module-files");
-    mkdirSync(moduleFiles, {recursive: true});
-    writeFileSync(join(moduleFiles, "sound.bin"), Buffer.from([7,8,9]));
+    mkdirSync(moduleFiles, { recursive: true });
+    writeFileSync(join(moduleFiles, "sound.bin"), Buffer.from([7, 8, 9]));
     const result = compileSource(
         `
         const worker=new Worker(new URL("./worker.ts",import.meta.url),{type:"module"});
@@ -89,7 +89,11 @@ test("packaged fetch owns responses, snapshots selections and rejects missing or
     assert.ok(result.manifest.features.includes("platform:packaged-fetch"));
     assert.ok(!result.manifest.features.includes("platform:http"));
     assert.ok(!result.manifest.runtimeSources.includes("src/pal_http.cpp"));
-    assert(result.manifest.assets.some(asset => asset.source.endsWith("sound.bin")));
+    assert(
+        result.manifest.assets.some((asset) =>
+            asset.source.endsWith("sound.bin"),
+        ),
+    );
     for (const asset of result.manifest.assets) {
         if (asset.source.endsWith("missing.bin")) continue;
         const output = join(directory, asset.output);

@@ -8,10 +8,13 @@ test("callbacks passed through helpers keep per-evaluation identity and removal"
     const directory = resolve("artifacts/dom-callback-factories");
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, "worker.ts"), "self.close();");
-    writeFileSync(join(directory, "layout.ts"), `
+    writeFileSync(
+        join(directory, "layout.ts"),
+        `
         const first = [{name: "first"}, {name: "second"}];
         export const layout: readonly {name: string}[] = [...first, ...[3].map(value => ({name: String(value)}))];
-    `);
+    `,
+    );
     const result = compileSource(
         `
         import {layout} from "./layout.js";
@@ -20,6 +23,14 @@ test("callbacks passed through helpers keep per-evaluation identity and removal"
         await Promise.resolve();
         if (layout.length !== 3 || layout[2]!.name !== "3") throw new Error("module initialization before host coroutine");
         if (!document.getElementById("prebuilt")) throw new Error("host initialization before entry");
+        const prebuilt = document.getElementById("prebuilt") as HTMLElement | null;
+        let prebuiltCalls = 0;
+        const prebuiltCallback = () => { prebuiltCalls++; };
+        prebuilt?.addEventListener("click", prebuiltCallback);
+        document.getElementById("prebuilt")!.click();
+        prebuilt?.removeEventListener("click", prebuiltCallback);
+        document.getElementById("prebuilt")!.click();
+        if (prebuiltCalls !== 1) throw new Error("known-present optional listener");
         const originalFetch = globalThis.fetch;
         const wrappedFetch: typeof fetch = async (input, init) => originalFetch.call(globalThis, input, init);
         globalThis.fetch = wrappedFetch;
@@ -122,6 +133,17 @@ test("callbacks passed through helpers keep per-evaluation identity and removal"
         element("second-target").style.opacity = String(0.5);
         if (other.hidden || other.dataset.mode !== "active")
             throw new Error("helper DOM property assignment");
+        let blurs = 0;
+        const blurred = () => { blurs++; };
+        target.addEventListener("blur", blurred);
+        target.focus(); other.focus();
+        if (blurs !== 1) throw new Error("synchronous element blur");
+        target.removeEventListener("blur", blurred);
+        target.focus(); other.focus();
+        if (blurs !== 1) throw new Error("removed element blur");
+        const canvas = document.createElement("canvas");
+        function canvasTabIndex(value: HTMLCanvasElement): number { return value.tabIndex; }
+        if (canvasTabIndex(canvas) !== 0) throw new Error("native canvas focus contract");
         log.textContent = "complete";
         globalThis.close();
     `,
@@ -129,7 +151,7 @@ test("callbacks passed through helpers keep per-evaluation identity and removal"
             fileName: join(directory, "entry.ts"),
             nativeHostUi: {
                 sourcePath: "test/dom-callback-factories.test.ts",
-                elements: [{tag: "div", attributes: {id: "prebuilt"}}],
+                elements: [{ tag: "div", attributes: { id: "prebuilt" } }],
             },
         },
     );

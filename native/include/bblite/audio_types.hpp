@@ -15,14 +15,21 @@ struct AudioEngineHandle {
     js::Set<AudioSourceHandle> sources{};
     bool operator==(const AudioEngineHandle& other) const { return context == other.context; }
     [[nodiscard]] std::uint32_t identity() const { return context.value; }
-    void gc_trace(const js::TraceVisitor& visitor) const { visitor(main_bus); visitor(sources); }
+    void gc_trace(const js::TraceVisitor& visitor) const {
+        visitor(main_bus);
+        visitor(sources);
+    }
 };
 
 struct AudioSourceState {
     pal::AudioNodeHandle input;
     pal::AudioNodeHandle volume;
     AudioEngineHandle engine;
-    void gc_trace(const js::TraceVisitor& visitor) const { visitor(input); visitor(volume); visitor(engine); }
+    void gc_trace(const js::TraceVisitor& visitor) const {
+        visitor(input);
+        visitor(volume);
+        visitor(engine);
+    }
 };
 
 } // namespace bbl

@@ -223,14 +223,22 @@ test("static skeletons retain source bindings and live node hierarchies only whe
             delete primitive.targets;
     const ordinary = await gltfMeshPlan(input.document, input.bin);
     assert.equal(ordinary.animationBindings, null);
-    const controlled = await gltfMeshPlan(input.document, input.bin, undefined, {
-        boneControl: true,
-        nodeTransforms: true,
-    });
+    const controlled = await gltfMeshPlan(
+        input.document,
+        input.bin,
+        undefined,
+        {
+            boneControl: true,
+            nodeTransforms: true,
+        },
+    );
     assert.equal(controlled.animation, null);
     assert(controlled.hierarchy);
     assert.deepEqual(
-        controlled.animationBindings?.skeletons.map(({ meshes, joints }) => ({ meshes, joints })),
+        controlled.animationBindings?.skeletons.map(({ meshes, joints }) => ({
+            meshes,
+            joints,
+        })),
         [{ meshes: [0], joints: [2] }],
     );
     assert.equal(controlled.hierarchy.nodes[1]?.parent, 0);
@@ -238,12 +246,18 @@ test("static skeletons retain source bindings and live node hierarchies only whe
     const morphed = fixture();
     morphed.document.animations = [];
     await assert.rejects(
-        gltfMeshPlan(morphed.document, morphed.bin, undefined, { nodeTransforms: true, boneControl: true }),
+        gltfMeshPlan(morphed.document, morphed.bin, undefined, {
+            nodeTransforms: true,
+            boneControl: true,
+        }),
         /morphed primitives/,
     );
     const animated = fixture();
     await assert.rejects(
-        gltfMeshPlan(animated.document, animated.bin, undefined, { nodeTransforms: true, boneControl: true }),
+        gltfMeshPlan(animated.document, animated.bin, undefined, {
+            nodeTransforms: true,
+            boneControl: true,
+        }),
         /animations/,
     );
 });
@@ -313,26 +327,32 @@ test("native binding transport keeps source targets, exclusions and matrix bits"
     const cases = [];
     for (const { context, staticSkin } of [
         { context: new LoweringContext(), staticSkin: false },
-        { context: doctoredContext(
-            module,
-            "const mesh = meshes[mi];",
-            "const mesh = meshes[meshes.length - 1 - mi];",
-        ), staticSkin: false },
-        { context: doctoredContext(
-            module,
-            "const skeleton = mesh?.skeleton;",
-            "const skeleton = undefined;",
-        ), staticSkin: false },
+        {
+            context: doctoredContext(
+                module,
+                "const mesh = meshes[mi];",
+                "const mesh = meshes[meshes.length - 1 - mi];",
+            ),
+            staticSkin: false,
+        },
+        {
+            context: doctoredContext(
+                module,
+                "const skeleton = mesh?.skeleton;",
+                "const skeleton = undefined;",
+            ),
+            staticSkin: false,
+        },
         { context: new LoweringContext(), staticSkin: true },
     ]) {
         const input = fixture(true, true);
         if (staticSkin) input.document.animations = [];
         const bytes = await packageGltfMeshPlan(
-                input.document,
-                input.bin,
-                context,
-                { boneControl: staticSkin },
-            );
+            input.document,
+            input.bin,
+            context,
+            { boneControl: staticSkin },
+        );
         const meshPlan = packagedGltfMeshPlan(input.document),
             plan = meshPlan.animationBindings!;
         const accessorBits: Record<number, number[]> = {};

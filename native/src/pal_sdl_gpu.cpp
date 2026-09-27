@@ -605,8 +605,7 @@ class SdlSceneRun {
 #if BBLITE_NODE_SHADOWS
                      caster,
 #endif
-                     esm,
-                     geometry, geometry_variant, target] {
+                     esm, geometry, geometry_variant, target] {
                 static_cast<void>(node_variant_pipeline(state, variant, kind, shadow_pass, caster,
                                                         esm, geometry, geometry_variant, target));
             });
@@ -2392,8 +2391,8 @@ public:
 #endif
                                              pinned_lights_block(draw_context, engine);
 #endif
+                        SDL_GPUGraphicsPipeline* bound_pipeline = nullptr;
                         const auto draw_list = [&](const auto& list) {
-                            SDL_GPUGraphicsPipeline* bound_pipeline = nullptr;
                             for (const upstream::RenderDrawCommand& draw : list.commands) {
                                 if (!upstream::render_item_draws_now(draw.item, engine))
                                     continue;
@@ -2646,6 +2645,7 @@ public:
                                                      pass_blocks.pass(draw_context, pass_task),
                                                      draw_context, engine, draw_camera, draw_matrix,
                                                      *draw_pass_matrices.view));
+                            bound_pipeline = nullptr;
                         }
 #endif
 #if BBLITE_HAS_BILLBOARDS
@@ -2661,6 +2661,7 @@ public:
                                     record_billboard_pass(command, task_pass, engine,
                                                           state.billboard_passes[item.index],
                                                           block);
+                                    bound_pipeline = nullptr;
                                     scene_matrix_bound = false;
                                 } else {
                                     draw_list(BorrowedDrawList{
@@ -3699,8 +3700,8 @@ public:
                 write_pass_scene_block(pass_blocks.scene(scene), scene, engine, camera, matrix);
             std::vector<std::uint8_t> pass_lights_block = pinned_lights_block(scene, engine);
 #endif
+            SDL_GPUGraphicsPipeline* bound_pipeline = nullptr;
             const auto draw_render_list = [&](const auto& list) {
-                SDL_GPUGraphicsPipeline* bound_pipeline = nullptr;
                 for (const upstream::RenderDrawCommand& draw : list.commands) {
                     if (!upstream::render_item_draws_now(draw.item, engine))
                         continue;
@@ -3942,6 +3943,7 @@ public:
             };
 #endif
             for (const upstream::RenderStage stage : render_plan.stages) {
+                bound_pipeline = nullptr;
                 switch (stage) {
                 case upstream::RenderStage::skybox:
                     // The sub-order comes from the shared
@@ -3974,6 +3976,7 @@ public:
                         if (item.billboard) {
                             record_billboard_pass(command, pass, engine,
                                                   state.billboard_passes[item.index], block);
+                            bound_pipeline = nullptr;
                             scene_matrix_bound = false;
                         } else {
                             draw_render_list(BorrowedDrawList{
@@ -4061,6 +4064,7 @@ public:
                                                          sizeof(overlay_matrix));
                 scene_matrix_bound = true;
                 for (const upstream::RenderStage stage : overlay_plans[layer].stages) {
+                    bound_pipeline = nullptr;
                     switch (stage) {
                     case upstream::RenderStage::opaque:
                         draw_render_list(overlay_plans[layer].draw_lists.opaque);

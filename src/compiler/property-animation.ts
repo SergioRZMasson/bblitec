@@ -254,18 +254,22 @@ export class PropertyAnimationTargetLowerer {
                 code: `${fieldCpp} = static_cast<double>(${argument});`,
             });
         });
+        const retain = context.allocateTemporaryCppName(
+            "retain_animation_owner",
+        );
         const resolveIdentity = context.captureManagedClosureLines(() => {
+            context.registerNativeBinding(retain, false, true, "bool");
             context.useNativeValue(retained);
             for (const check of ownerChecks)
                 context.emit({ kind: "expression", code: check });
             context.emit({
                 kind: "expression",
-                code: `return bbl::property_animation_identity(${identityCpp});`,
+                code: `return bbl::property_animation_identity(${identityCpp}, ${retain});`,
             });
         });
         return (
             `bbl::PropertyAnimationTarget{bbl::PropertyAnimationTargetKind::callback, {}, 0u, ` +
-            `${renderClosure(closure, `float ${argument}`)}, nullptr, ${context.cppString(property)}, ${renderClosure(resolveIdentity, "", "bbl::PropertyAnimationIdentity")}}`
+            `${renderClosure(closure, `float ${argument}`)}, nullptr, ${context.cppString(property)}, ${renderClosure(resolveIdentity, `bool ${retain}`, "bbl::PropertyAnimationIdentity")}}`
         );
     }
 }

@@ -2565,9 +2565,8 @@ public:
                         bound_pipeline = nullptr;
                         transmission_copied = true;
                     }
-                    upstream::RenderDrawList single;
-                    single.commands.push_back(draw);
-                    draw_list_into(pass, single, state.sample_count, bound_pipeline);
+                    draw_list_into(pass, BorrowedDrawList{draw}, state.sample_count,
+                                   bound_pipeline);
                 }
             };
 #if BBLITE_PINNED_BACKGROUNDS

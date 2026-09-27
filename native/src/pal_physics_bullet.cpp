@@ -489,7 +489,7 @@ void sync_constraint_membership(PhysicsWorldState& owner) {
         // Immovable pairs have no simulation island. Keep their ownership and
         // collision filter, but submit rows only after a side becomes dynamic.
         hinge.joint->setEnabled(!hinge.parent->body->isStaticOrKinematicObject() ||
-                                 !hinge.child->body->isStaticOrKinematicObject());
+                                !hinge.child->body->isStaticOrKinematicObject());
         const auto changed = [](const btTransform& before, const btTransform& after) {
             return before.getOrigin() != after.getOrigin() || before.getBasis() != after.getBasis();
         };

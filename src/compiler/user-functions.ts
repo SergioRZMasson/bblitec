@@ -85,6 +85,47 @@ export interface CallbackInvocationOptions {
     frameDriven?: true;
 }
 
+const directCallBindingCache = new EmissionWeakMap<
+    ts.TypeChecker,
+    WeakMap<ts.Node, WeakMap<ts.Identifier, boolean>>
+>();
+
+export function bindingIsOnlyCalledDirectly(
+    checker: ts.TypeChecker,
+    name: ts.Identifier,
+    scope: ts.Node,
+): boolean {
+    let scopes = directCallBindingCache.get(checker);
+    if (!scopes)
+        directCallBindingCache.set(checker, (scopes = new EmissionWeakMap()));
+    let bindings = scopes.get(scope);
+    if (!bindings) scopes.set(scope, (bindings = new EmissionWeakMap()));
+    const cached = bindings.get(name);
+    if (cached !== undefined) return cached;
+    const symbol = declaredSymbol(checker, name);
+    const onlyCalled =
+        !!symbol &&
+        !someAnalysisNode(
+            scope,
+            (node) => {
+                if (
+                    !ts.isIdentifier(node) ||
+                    node === name ||
+                    declaredSymbol(checker, node) !== symbol
+                )
+                    return false;
+                const parent = node.parent;
+                return (
+                    !ts.isCallExpression(parent) ||
+                    unwrapExpression(parent.expression) !== node
+                );
+            },
+            { types: "skip" },
+        );
+    bindings.set(name, onlyCalled);
+    return onlyCalled;
+}
+
 function generationKnownPrimitive(value: Value): boolean {
     return (
         value.kind === "json-null" ||
@@ -1899,6 +1940,7 @@ export class UserFunctionLowerer {
         context: UserFunctionContext,
         argument: ts.Expression,
         expected?: ts.Type,
+        parameter?: ts.ParameterDeclaration,
     ): Value {
         if (
             context.browserErasure.isBrowserOnlyExpression(argument) &&
@@ -1916,7 +1958,16 @@ export class UserFunctionLowerer {
         const value = context.compileValue(argument);
         if (
             value.kind === "callback" &&
-            value.callbackRecordOwner?.repeatedCallbackEvaluation
+            value.callbackRecordOwner?.repeatedCallbackEvaluation &&
+            !(
+                parameter &&
+                ts.isIdentifier(parameter.name) &&
+                bindingIsOnlyCalledDirectly(
+                    this.checker,
+                    parameter.name,
+                    parameter.parent,
+                )
+            )
         ) {
             const type = expected
                 ? context.dataTypes.fromTsType(expected, argument)
@@ -4789,12 +4840,17 @@ export class UserFunctionLowerer {
         let returned = context.compileValue(expression);
         // Mutable arrays in returned records retain their declared storage,
         // including empty arrays and tuple fields written through aliases.
-        const signature = context.checker.getSignatureFromDeclaration(ir.declaration);
+        const signature = context.checker.getSignatureFromDeclaration(
+            ir.declaration,
+        );
         if (signature) {
-            const resultType = context.checker.getReturnTypeOfSignature(signature);
+            const resultType =
+                context.checker.getReturnTypeOfSignature(signature);
             returned = context.bindings.materializeDeclaredRecordContainers(
-                returned, context.checker.getAwaitedType(resultType) ?? resultType,
-                expression, `return_${ir.name}_array`,
+                returned,
+                context.checker.getAwaitedType(resultType) ?? resultType,
+                expression,
+                `return_${ir.name}_array`,
             );
         }
         if (returned.kind === "number" && returned.staticNumber === undefined) {
@@ -5447,6 +5503,7 @@ export class UserFunctionLowerer {
                     context,
                     argument,
                     ir.parameters[index]?.type,
+                    ir.parameters[index]?.declaration,
                 ),
                 (built) =>
                     context.evaluationOrder.calleeChanges(

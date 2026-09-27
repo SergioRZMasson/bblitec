@@ -66,6 +66,16 @@ const serviceNames = new Set([
     "pointerlockchange",
     "load",
     "DOMContentLoaded",
+    "gamepadconnected",
+    "gamepaddisconnected",
+    "touchstart",
+    "touchmove",
+    "touchend",
+    "touchcancel",
+    "animationstart",
+    "animationend",
+    "animationiteration",
+    "animationcancel",
 ]);
 
 /** These names already carry a distinct native payload/service contract. */
@@ -304,8 +314,10 @@ export function emitDomEventListener(
         );
     }
     if (
-        (type === "focus" || type === "blur" || type === "resize") &&
-        target !== "bbl::DomEventTarget::window()"
+        (type === "resize" && target !== "bbl::DomEventTarget::window()") ||
+        ((type === "focus" || type === "blur") &&
+            (target === "bbl::DomEventTarget::document()" ||
+                target === "bbl::DomEventTarget::canvas()"))
     )
         return false;
     const keyboard = type === "keydown" || type === "keyup";

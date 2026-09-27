@@ -4,11 +4,25 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { compileSource } from "../src/compiler.js";
+import { isCustomDomEventName } from "../src/compiler/dom-listeners.js";
 import {
     nativeFixtureVcpkgRoot,
     optionalNativeFixtureTools,
     runNativeFixtureCompiler,
 } from "./native-fixture.js";
+
+test("standard gamepad and touch service events are not CustomEvent payloads", () => {
+    for (const name of [
+        "gamepadconnected",
+        "gamepaddisconnected",
+        "touchstart",
+        "touchmove",
+        "touchend",
+        "touchcancel",
+    ])
+        assert.equal(isCustomDomEventName(name), false, name);
+    assert.equal(isCustomDomEventName("score"), true);
+});
 
 test("CustomEvent dispatch shares detail identity through Event helpers and honors listener lifetime", (t) => {
     const result = compileSource(`

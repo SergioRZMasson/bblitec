@@ -55,6 +55,7 @@ import {
     readNodeInputProperty,
     type NodeInputContext,
 } from "./node-input-surface.js";
+import { numberConstantValue } from "./number-intrinsics.js";
 import { readFrozenParticleProperty } from "./particle-buffer.js";
 import { recordAt } from "./record-access.js";
 import { staticFetchProperty } from "./static-fetch.js";
@@ -936,6 +937,7 @@ export const propertyRules: readonly PropertyRule[] = [
     {
         owner: "mesh",
         property: "visible",
+        feature: "mesh:visible",
         value: "data",
         dataType: {
             kind: "optional",
@@ -943,6 +945,7 @@ export const propertyRules: readonly PropertyRule[] = [
             undefinedOnly: true,
         },
         record: ["meshes", "visible.source_value()"],
+        helperReturnsFreshData: true,
     },
     {
         owner: "mesh",
@@ -2347,6 +2350,14 @@ export class PropertyAccessLowerer {
         );
         if (
             owner.kind === "ui-element" &&
+            (owner.uiTag === "canvas" || sourceIsCanvas) &&
+            property === "tabIndex"
+        ) {
+            // Native keyboard input targets the always-focusable SDL surface.
+            return numberConstantValue(0);
+        }
+        if (
+            owner.kind === "ui-element" &&
             (owner.uiCanvas || sourceIsCanvas) &&
             !owner.uiCanvasContext &&
             (property === "width" || property === "height")
@@ -2772,9 +2783,18 @@ export class PropertyAccessLowerer {
         expression: ts.PropertyAccessExpression,
     ): Value | undefined {
         const read = this.readOwnerProperty(owner, expression);
-        const value = read && owner.nativeCaptures
-            ? { ...read, nativeCaptures: [...new Set([...(read.nativeCaptures ?? []), ...owner.nativeCaptures])] }
-            : read;
+        const value =
+            read && owner.nativeCaptures
+                ? {
+                      ...read,
+                      nativeCaptures: [
+                          ...new Set([
+                              ...(read.nativeCaptures ?? []),
+                              ...owner.nativeCaptures,
+                          ]),
+                      ],
+                  }
+                : read;
         return value && ts.isOptionalChain(expression)
             ? this.propertyWithOwnerPresence(owner, value, expression)
             : value;
@@ -3235,21 +3255,38 @@ export class PropertyAccessLowerer {
         const sceneNodeTransform = sceneNodeTransformDescriptor(
             expression.name.text,
         );
-        if (["scene-node", "transform-node", "asset-root"].includes(owner.kind)) {
+        if (
+            ["scene-node", "transform-node", "asset-root"].includes(owner.kind)
+        ) {
             const property = expression.name.text;
             if (property === "visible" || property === "thinInstances") {
                 this.context.reachFeature("scene:node-transforms", expression);
                 const engineCpp = this.context.requireEngine(owner, expression);
-                if (property === "visible") return {
-                    kind: "data",
-                    cpp: `bbl::scene_node_visibility(${engineCpp}, ${owner.cpp}).source_value()`,
-                    dataType: {kind: "optional", inner: {kind: "boolean"}, undefinedOnly: true},
-                    engineCpp,
-                };
+                if (property === "visible") {
+                    this.context.reachFeature("mesh:visible", expression);
+                    return {
+                        kind: "data",
+                        cpp: `bbl::scene_node_visibility(${engineCpp}, ${owner.cpp}).source_value()`,
+                        dataType: {
+                            kind: "optional",
+                            inner: { kind: "boolean" },
+                            undefinedOnly: true,
+                        },
+                        engineCpp,
+                        freshData: true,
+                    };
+                }
                 this.context.reachFeature("mesh:thin-instances", expression);
-                return {kind: "data", engineCpp,
+                return {
+                    kind: "data",
+                    engineCpp,
                     cpp: `bbl::scene_node_thin_instance_pool(${engineCpp}, ${owner.cpp})`,
-                    dataType: {kind: "optional", inner: {kind: "handle", handle: "thin-instance-pool"}, undefinedOnly: true}};
+                    dataType: {
+                        kind: "optional",
+                        inner: { kind: "handle", handle: "thin-instance-pool" },
+                        undefinedOnly: true,
+                    },
+                };
             }
         }
         if (

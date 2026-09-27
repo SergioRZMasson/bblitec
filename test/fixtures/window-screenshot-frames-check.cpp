@@ -201,25 +201,29 @@ int main() {
     captures.clear();
     presentation_count = 0;
     final_presentation = 0;
-    assert(run_window_application([](WorkerRealm& realm) {
-        window_defer_capture_until_canvas_ready();
-        auto& engine = window_document_engine();
-        const auto canvas = ui_create_element(engine, "canvas");
-        ui_set_attribute(engine, canvas, "style", "width:40px;height:40px;");
-        ui_append_to_root(engine, canvas);
-        request_ready_frame(realm, canvas, window_canvas(canvas)->rendering_context());
-    }, engine_options) == 0);
+    assert(run_window_application(
+               [](WorkerRealm& realm) {
+                   window_defer_capture_until_canvas_ready();
+                   auto& engine = window_document_engine();
+                   const auto canvas = ui_create_element(engine, "canvas");
+                   ui_set_attribute(engine, canvas, "style", "width:40px;height:40px;");
+                   ui_append_to_root(engine, canvas);
+                   request_ready_frame(realm, canvas, window_canvas(canvas)->rendering_context());
+               },
+               engine_options) == 0);
     assert(captures == std::vector<std::string>{final_path});
     assert(final_presentation >= 13);
     captures.clear();
-    assert(run_window_application([](WorkerRealm& realm) {
-        window_defer_capture_until_canvas_ready();
-        auto& engine = window_document_engine();
-        const auto canvas = ui_create_element(engine, "canvas");
-        ui_append_to_root(engine, canvas);
-        static_cast<void>(window_canvas(canvas));
-        ui_set_attribute(engine, canvas, "data-error", "fixture startup failure");
-        request_frame(realm);
-    }, engine_options) == 1);
+    assert(run_window_application(
+               [](WorkerRealm& realm) {
+                   window_defer_capture_until_canvas_ready();
+                   auto& engine = window_document_engine();
+                   const auto canvas = ui_create_element(engine, "canvas");
+                   ui_append_to_root(engine, canvas);
+                   static_cast<void>(window_canvas(canvas));
+                   ui_set_attribute(engine, canvas, "data-error", "fixture startup failure");
+                   request_frame(realm);
+               },
+               engine_options) == 1);
     assert(captures.empty());
 }

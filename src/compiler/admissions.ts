@@ -163,7 +163,8 @@ export class AdmissionRecorder {
         this.deferredAdmissionFailures.push({
             capability: "node-geometry",
             node,
-            message: message ??
+            message:
+                message ??
                 "Node geometry views require static imported mesh transforms; mutation, cloning and unproven transform aliases are not represented.",
         });
     }

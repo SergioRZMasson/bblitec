@@ -107,6 +107,7 @@ const resourceMetadataFields = {
     ],
     "physics-viewer": ["shaderVariant"],
     "scene-node": [
+        "sceneNodeClone",
         "sceneMeshIndex",
         "sceneMeshProfileIndex",
         "runtimeMeshStreams",

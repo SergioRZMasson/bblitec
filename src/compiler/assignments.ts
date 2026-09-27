@@ -2594,16 +2594,31 @@ function emitTargetPropertyAssignment(
     )
         return true;
 
-    if (property === "visible" && ["scene-node", "transform-node", "asset-root"].includes(target.kind)) {
+    if (
+        property === "visible" &&
+        ["scene-node", "transform-node", "asset-root"].includes(target.kind)
+    ) {
         requireSimpleAssignment(context, expression, "SceneNode visible");
         context.reachFeature("scene:node-transforms", expression);
         const engine = context.requireEngine(target, expression);
-        const node = context.allocateTemporaryCppName("scene_node_visibility_target");
-        context.emit({kind: "declaration", type: "const auto", name: node, initializer: target.cpp});
-        const value = context.compileForDataSink(expression.right, {
-            kind: "optional", inner: {kind: "boolean"}, undefinedOnly: true,
+        const node = context.allocateTemporaryCppName(
+            "scene_node_visibility_target",
+        );
+        context.emit({
+            kind: "declaration",
+            type: "const auto",
+            name: node,
+            initializer: target.cpp,
         });
-        context.emit({kind: "expression", code: `bbl::scene_node_visibility(${engine}, ${node}) = ${value};`});
+        const value = context.compileForDataSink(expression.right, {
+            kind: "optional",
+            inner: { kind: "boolean" },
+            undefinedOnly: true,
+        });
+        context.emit({
+            kind: "expression",
+            code: `bbl::scene_node_visibility(${engine}, ${node}) = ${value};`,
+        });
         return true;
     }
     const recordField = recordFieldAssignments.find(

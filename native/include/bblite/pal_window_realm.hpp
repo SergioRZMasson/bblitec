@@ -24,6 +24,13 @@ struct ScreenMetrics {
     bool operator==(const ScreenMetrics&) const = default;
 };
 ScreenMetrics window_screen_metrics();
+enum class PointerPrecision { None, Coarse, Fine };
+struct InputCapabilities {
+    PointerPrecision pointer = PointerPrecision::None;
+    bool hover = false;
+    bool operator==(const InputCapabilities&) const = default;
+};
+InputCapabilities window_input_capabilities();
 const void* window_screen_identity();
 UiClientRect window_element_size(UiElementHandle element);
 void window_on_application_error(bool rejection, std::uint64_t identity,
@@ -55,7 +62,8 @@ private:
 class MediaQueryList {
 public:
     MediaQueryList(std::string query, double (*read_pixel_ratio)(),
-                   bool (*read_motion_preference)());
+                   bool (*read_motion_preference)(),
+                   InputCapabilities (*read_input_capabilities)() = nullptr);
     [[nodiscard]] bool matches() const;
     [[nodiscard]] const std::string& media() const noexcept { return media_; }
     void add_change_listener(js::Callback<void()> callback);
@@ -72,13 +80,15 @@ public:
     void gc_trace(const js::TraceVisitor& visitor) const { visitor(listeners_); }
 
 private:
-    enum class Feature { Resolution, ReducedMotion };
+    enum class Feature { Resolution, ReducedMotion, Input };
     Feature feature_ = Feature::Resolution;
     std::string media_;
     double resolution_ = 0;
     bool reduce_ = false;
     double (*read_pixel_ratio_)();
     bool (*read_motion_preference_)();
+    InputCapabilities (*read_input_capabilities_)();
+    std::vector<std::variant<PointerPrecision, bool>> input_conditions_;
     bool matches_ = false;
     PlatformEventListeners<void()> listeners_;
 };
@@ -92,6 +102,7 @@ public:
     void disconnect();
     void notify(UiElementHandle element, const std::string& attribute);
     void gc_trace(const js::TraceVisitor& visitor) const { visitor(callback_); }
+
 private:
     friend std::shared_ptr<MutationObserver> create_mutation_observer(Callback callback);
     std::weak_ptr<MutationObserver> self_;

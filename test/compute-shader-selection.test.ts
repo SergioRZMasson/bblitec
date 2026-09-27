@@ -33,7 +33,7 @@ async function main(){
     );
 });
 
-test("stored shader callbacks borrow their owned native argument", () => {
+test("shader mapping callbacks borrow their owned native argument", () => {
     const result = compileSource(`
 import {createEngine,createComputeShader,prepareComputeShader} from '@babylonjs/lite';
 async function main(){
@@ -41,6 +41,11 @@ async function main(){
  const shader=createComputeShader(engine,{computeSource:'@compute @workgroup_size(1) fn main() {}',bindings:[]});
  await Promise.allSettled([shader].map(item=>prepareComputeShader(item)));
 }void main();`);
-    assert.match(result.cpp, /auto& \w+_item = \w+arg_0;/);
-    assert.doesNotMatch(result.cpp, /auto \w+_item = \w+arg_0;/);
+    const borrowed = /auto& (\w+_item) = (\w+_shader);/.exec(result.cpp);
+    assert.ok(borrowed);
+    assert.match(
+        result.cpp,
+        new RegExp(`prepare_compute_shader\\(${borrowed[1]}\\)`),
+    );
+    assert.doesNotMatch(result.cpp, /auto \w+_item = /);
 });

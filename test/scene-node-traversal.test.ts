@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -8,6 +7,7 @@ import { sceneNodeTraversalSource } from "../src/lowering/scene-node-transforms.
 import { emitUpstreamGenerated } from "../src/upstream-lower.js";
 import {
     optionalNativeFixtureTools,
+    runGeneratedProgram,
     runNativeFixtureCompiler,
 } from "./native-fixture.js";
 
@@ -63,12 +63,9 @@ test("node children preserve interleaved live order and concrete clone identity"
         t.skip("Native fixture compiler unavailable.");
         return;
     }
-    const output = resolve("artifacts/scene-node-traversal-runtime");
-    mkdirSync(output, { recursive: true });
-    const file = join(output, "check.cpp"),
-        executable = join(output, "check.exe");
-    writeFileSync(
-        file,
+    runGeneratedProgram(
+        native,
+        "scene-node-traversal-runtime",
         `#include <bblite/runtime.hpp>
 #include <cassert>
 namespace bbl {
@@ -106,20 +103,6 @@ int main(){
 }
 `,
     );
-    runNativeFixtureCompiler(native, [
-        "/nologo",
-        "/std:c++20",
-        "/W4",
-        "/WX",
-        "/EHsc",
-        "/permissive-",
-        `/Fo:${output}\\`,
-        `/Fe:${executable}`,
-        "/I",
-        "native/include",
-        file,
-    ]);
-    execFileSync(executable, [], { stdio: "pipe" });
 });
 
 test("declined hierarchy traversal probes evaluate a data owner only once", (t) => {
@@ -136,23 +119,5 @@ test("declined hierarchy traversal probes evaluate a data owner only once", (t) 
         for(const child of branch().children) sum+=child;
         if(hits!==1||sum!==5) throw new Error("wrong iteration");
     `);
-    const output = resolve("artifacts/scene-node-children-data");
-    mkdirSync(output, { recursive: true });
-    const file = join(output, "check.cpp"),
-        executable = join(output, "check.exe");
-    writeFileSync(file, compiled.cpp);
-    runNativeFixtureCompiler(native, [
-        "/nologo",
-        "/std:c++20",
-        "/W4",
-        "/WX",
-        "/EHsc",
-        "/permissive-",
-        `/Fo:${output}\\`,
-        `/Fe:${executable}`,
-        "/I",
-        "native/include",
-        file,
-    ]);
-    execFileSync(executable, [], { stdio: "pipe" });
+    runGeneratedProgram(native, "scene-node-children-data", compiled.cpp);
 });

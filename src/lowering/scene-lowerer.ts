@@ -745,7 +745,11 @@ export class SceneLowerer {
             header: "",
             source: `// ${this.context.provenance(modulePath, `${createName}, ${addName}, ${beforeName}, ${disposeName}, ${registerName}`, `${transformNodeModulePath}#cloneTransformNode, cloneMeshNode`)}
 #include <bblite/runtime.hpp>
+${options.geometryAccess ? "#include <bblite/mesh_cpu_streams.hpp>" : ""}
 #include <bblite/features/has_ui.hpp>
+#if BBLITE_HAS_UI
+#include <bblite/pal_ui.hpp>
+#endif
 #include <bblite/features/has_shadows.hpp>
 #include <bblite/features/has_sprites.hpp>
 ${options.text ? "#include <bblite/upstream_text_records.hpp>" : ""}
@@ -1835,74 +1839,28 @@ std::vector<float> mesh_cpu_positions(
     const Engine& engine,
     MeshHandle mesh) {
     const auto& record = ${recordAt("engine.meshes", "mesh")};
-    if (record.cpu_streams) {
-        const auto& positions = record.cpu_streams->positions;
-        return positions ? static_cast<const std::vector<float>&>(*positions)
-                         : std::vector<float>{};
-    }
-    const ModelGeometry& geometry =
-        engine.geometries.at(record.geometry);
-    std::vector<float> result;
-    result.reserve(geometry.vertices.size() * 3);
-    for (const ModelVertex& vertex : geometry.vertices) {
-        result.push_back(vertex.position.x);
-        result.push_back(vertex.position.y);
-        result.push_back(vertex.position.z);
-    }
-    return result;
+    return MeshCpuStreamsView(record, record.cpu_streams ? nullptr : &engine.geometries.at(record.geometry)).positions.copy();
 }
 
 std::vector<float> mesh_cpu_normals(
     const Engine& engine,
     MeshHandle mesh) {
     const auto& record = ${recordAt("engine.meshes", "mesh")};
-    if (record.cpu_streams) {
-        const auto& normals = record.cpu_streams->normals;
-        return normals ? static_cast<const std::vector<float>&>(*normals)
-                       : std::vector<float>{};
-    }
-    const ModelGeometry& geometry =
-        engine.geometries.at(record.geometry);
-    std::vector<float> result;
-    result.reserve(geometry.vertices.size() * 3);
-    for (const ModelVertex& vertex : geometry.vertices) {
-        result.push_back(vertex.normal.x);
-        result.push_back(vertex.normal.y);
-        result.push_back(vertex.normal.z);
-    }
-    return result;
+    return MeshCpuStreamsView(record, record.cpu_streams ? nullptr : &engine.geometries.at(record.geometry)).normals.copy();
 }
 
 std::vector<float> mesh_cpu_uvs(
     const Engine& engine,
     MeshHandle mesh) {
     const auto& record = ${recordAt("engine.meshes", "mesh")};
-    if (record.cpu_streams) {
-        const auto& uvs = record.cpu_streams->uvs;
-        return uvs ? static_cast<const std::vector<float>&>(*uvs)
-                   : std::vector<float>{};
-    }
-    const ModelGeometry& geometry =
-        engine.geometries.at(record.geometry);
-    std::vector<float> result;
-    result.reserve(geometry.vertices.size() * 2);
-    for (const ModelVertex& vertex : geometry.vertices) {
-        result.push_back(vertex.uv.x);
-        result.push_back(vertex.uv.y);
-    }
-    return result;
+    return MeshCpuStreamsView(record, record.cpu_streams ? nullptr : &engine.geometries.at(record.geometry)).uvs.copy();
 }
 
 std::vector<std::uint32_t> mesh_cpu_indices(
     const Engine& engine,
     MeshHandle mesh) {
     const auto& record = ${recordAt("engine.meshes", "mesh")};
-    if (record.cpu_streams) {
-        const auto& indices = record.cpu_streams->indices;
-        return indices ? static_cast<const std::vector<std::uint32_t>&>(*indices)
-                       : std::vector<std::uint32_t>{};
-    }
-    return engine.geometries.at(record.geometry).indices;
+    return MeshCpuStreamsView(record, record.cpu_streams ? nullptr : &engine.geometries.at(record.geometry)).indices.copy_raw();
 }
 
 js::Array<double> asset_root_world_matrix_array(Engine& engine, AssetHandle asset) {
@@ -2269,6 +2227,7 @@ AssetHandle clone_asset_root(Engine& engine, AssetHandle asset) {
     const std::vector<MeshHandle> source_meshes = source.meshes;
     const auto clone_animation = source.clone_mesh_animation;
     AssetRecord clone;
+    clone.has_synthetic_root = source.has_synthetic_root;
     clone.source_mesh_walks = source.source_mesh_walks;
     clone.root_position = source.root_position;
     clone.root_rotation = source.root_rotation;
@@ -2596,14 +2555,10 @@ void set_canvas_cursor(Engine& engine, std::string cursor) {
 }
 
 void focus_canvas(Engine& engine) {
-    engine.canvas_focused = true;
 #if BBLITE_HAS_UI
-    // Canvas focus replaces DOM focus, just as button focus replaces canvas
-    // focus. Otherwise a stale button still reports activeElement and paints
-    // its focus-visible outline after the source has focused the canvas.
-    engine.ui_focused_element = {};
-    ++engine.ui_focus_revision;
+    if (!ui_clear_focus(engine)) return;
 #endif
+    engine.canvas_focused = true;
 }
 
 void request_pointer_lock(Engine& engine) {

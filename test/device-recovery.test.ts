@@ -56,10 +56,8 @@ test("unchanged device-loss scene retains polling predicates, GPU identities and
     )?.[1];
     assert.ok(predicate);
     assert.match(
-        result.cpp,
-        new RegExp(
-            `\\n\\w+ ${predicate}\\([^\\n]*\\) \\{\\n[^}]*canvas_dataset\\([^\\n]+"preLossReady"`,
-        ),
+        cppFunction(result.cpp, `bool ${predicate}(`),
+        /canvas_dataset_value\([^\n]+"preLossReady"/,
     );
     assert.ok(
         result.manifest.scenePbrMaterials?.some(

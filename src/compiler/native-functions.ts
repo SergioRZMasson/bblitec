@@ -32,6 +32,7 @@ import { MATH_MEMBERS, mathMemberCall } from "./math-intrinsics.js";
 import { classMemberTable, classMethod } from "./class-members.js";
 import type { Value } from "./types.js";
 import {
+    bindingIsOnlyCalledDirectly,
     borrowsReferenceParameter,
     isSupportedFunction,
     parameterIsReadOnly,
@@ -265,10 +266,14 @@ export function captureDataFunctionBody(
                 );
             const used = cppIdentifiers(captured.value.join("\n"));
             return {
-                parameterDeclarations: parameterDeclarations.map((declaration, index) => {
-                    const name = parameterNames.get(index);
-                    return name && !used.has(name) ? `[[maybe_unused]] ${declaration}` : declaration;
-                }),
+                parameterDeclarations: parameterDeclarations.map(
+                    (declaration, index) => {
+                        const name = parameterNames.get(index);
+                        return name && !used.has(name)
+                            ? `[[maybe_unused]] ${declaration}`
+                            : declaration;
+                    },
+                ),
                 lines: captured.value,
             };
         } finally {
@@ -1987,26 +1992,14 @@ export class NativeFunctionLowerer {
                     ts.isIdentifier(callback.parent.name)
                   ? callback.parent.name
                   : undefined;
-            const symbol = name
-                ? declaredSymbol(this.context.checker, name)
-                : undefined;
-            if (!name || !symbol) return false;
-            return !someAnalysisNode(declaration, (node) => {
-                if (
-                    ts.isIdentifier(node) &&
-                    node !== name &&
-                    declaredSymbol(this.context.checker, node) === symbol
-                ) {
-                    const parent = node.parent;
-                    if (
-                        !ts.isCallExpression(parent) ||
-                        this.context.unwrap(parent.expression) !== node
-                    ) {
-                        return true;
-                    }
-                }
-                return false;
-            });
+            return (
+                !!name &&
+                bindingIsOnlyCalledDirectly(
+                    this.context.checker,
+                    name,
+                    declaration,
+                )
+            );
         };
 
         const found = someAnalysisNode(declaration, (node) => {

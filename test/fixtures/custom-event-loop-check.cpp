@@ -12,32 +12,40 @@ int main() {
     loop.run([&] {
         auto event = create_custom_event("update", js::JsonValue::null_value(), true, true);
         auto copy = event;
-        on_dom_custom(engine, DomEventTarget::window(), "update", 1,
+        on_dom_custom(
+            engine, DomEventTarget::window(), "update", 1,
             [&](const auto& value) {
                 assert(value.dom->phase == 1);
                 assert(value.dom->target == DomEventTarget::document());
                 assert(value.dom->current_target == DomEventTarget::window());
                 order += "C";
-            }, true);
-        on_dom_custom(engine, DomEventTarget::document(), "update", 2,
+            },
+            true);
+        on_dom_custom(
+            engine, DomEventTarget::document(), "update", 2,
             [&](const auto& value) {
                 order += "A";
                 value.prevent_default();
                 assert(copy.is_default_prevented());
                 off_dom_custom(engine, DomEventTarget::document(), "update", 3);
                 on_dom_custom(engine, DomEventTarget::document(), "update", 4,
-                    [&](const auto&) { order += "L"; });
+                              [&](const auto&) { order += "L"; });
                 bool rejected = false;
-                try { static_cast<void>(dispatch_custom_event(engine, DomEventTarget::window(), copy)); }
-                catch (const std::logic_error&) { rejected = true; }
+                try {
+                    static_cast<void>(
+                        dispatch_custom_event(engine, DomEventTarget::window(), copy));
+                } catch (const std::logic_error&) {
+                    rejected = true;
+                }
                 assert(rejected);
                 loop.queue_microtask([&] { order += "M"; });
                 throw std::runtime_error("listener failure");
-            }, false, true);
+            },
+            false, true);
         on_dom_custom(engine, DomEventTarget::document(), "update", 3,
-            [&](const auto&) { assert(false); });
+                      [&](const auto&) { assert(false); });
         on_dom_custom(engine, DomEventTarget::window(), "update", 5,
-            [&](const auto&) { order += "B"; });
+                      [&](const auto&) { order += "B"; });
         assert(!dispatch_custom_event(engine, DomEventTarget::document(), event));
         assert(order == "CAB" && errors == 1);
         assert(!event.dom->dispatching && !event.dom->current_target && event.dom->path.empty());
@@ -58,7 +66,11 @@ int main() {
         assert(&dom_target_owner(target) == &owner);
     }
     const auto refuses = [](auto operation) {
-        try { operation(); } catch (const std::logic_error&) { return true; }
+        try {
+            operation();
+        } catch (const std::logic_error&) {
+            return true;
+        }
         return false;
     };
     assert(refuses([&] { static_cast<void>(custom_event_target(retained)); }));

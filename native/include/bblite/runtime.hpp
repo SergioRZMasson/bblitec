@@ -238,7 +238,8 @@ public:
             });
         if (duplicate != entries_.end())
             return;
-        entries_.push_back(Entry{identity, next_sequence_++, std::move(callback), true, once, false});
+        entries_.push_back(
+            Entry{identity, next_sequence_++, std::move(callback), true, once, false});
     }
 
     void remove(std::size_t identity) {
@@ -2073,7 +2074,8 @@ struct MeshVisibility {
     MeshVisibility(std::nullopt_t) {}
     MeshVisibility(bool visible) : value(visible) {}
     MeshVisibility(js::Nullable<bool> visible) {
-        if (visible.has_value()) value = *visible;
+        if (visible.has_value())
+            value = *visible;
     }
     operator bool() const { return value.value_or(true); }
     bool operator==(bool visible) const { return value && *value == visible; }
@@ -3216,6 +3218,7 @@ struct GltfAnimationRuntimeState;
 
 struct AssetRecord {
     std::vector<MeshHandle> meshes;
+    bool has_synthetic_root = false;
     // Source traversals, separate from loader-order storage.
     // A cloned root shares the indices and maps them to its own mesh handles.
     std::shared_ptr<const AssetMeshWalks> source_mesh_walks{};
@@ -3585,6 +3588,7 @@ struct UiElementRecord {
         /** Premultiplied RGBA backing pixels populated by putImageData. */
         std::vector<std::uint8_t> pixels;
         std::uint64_t pixel_revision = 0;
+        std::uint64_t draw_revision = 0;
         bool image_smoothing_enabled = true;
         std::string font = "10px sans-serif";
         std::string text_baseline = "alphabetic";
@@ -3960,6 +3964,7 @@ struct Engine {
     /** Any tree/text/style/listener mutation invalidates the PAL projection. */
     std::uint64_t ui_revision = 0;
     std::uint64_t ui_text_revision = 0;
+    std::uint64_t ui_canvas_revision = 0;
     std::uint64_t ui_style_revision = 0;
     bool ui_only_text_changed_since(std::uint64_t revision, std::uint64_t text_revision) const {
         return revision <= ui_revision && text_revision <= ui_text_revision &&
@@ -5539,13 +5544,18 @@ create_mesh_from_data(Engine& engine, const std::string& name, const std::vector
                       const std::vector<float>& uvs, const std::vector<float>& uvs2,
                       const std::vector<float>& tangents, const std::vector<float>& colors);
 MeshHandle create_retained_mesh_from_data(Engine& engine, const std::string& name,
-    const js::F32Array& positions, const js::F32Array& normals, const js::U32Array& indices,
-    const std::optional<js::F32Array>& uvs, const std::optional<js::F32Array>& uvs2,
-    const std::optional<js::F32Array>& tangents, const std::optional<js::F32Array>& colors);
+                                          const js::F32Array& positions,
+                                          const js::F32Array& normals, const js::U32Array& indices,
+                                          const std::optional<js::F32Array>& uvs,
+                                          const std::optional<js::F32Array>& uvs2,
+                                          const std::optional<js::F32Array>& tangents,
+                                          const std::optional<js::F32Array>& colors);
 void update_mesh_positions(Engine& engine, MeshHandle mesh, const std::vector<float>& positions,
-                           double vertex_offset, std::optional<double> vertex_count, double source_vertex_offset);
+                           double vertex_offset, std::optional<double> vertex_count,
+                           double source_vertex_offset);
 void update_mesh_uvs(Engine& engine, MeshHandle mesh, const std::vector<float>& uvs,
-                     double vertex_offset, std::optional<double> vertex_count, double source_vertex_offset);
+                     double vertex_offset, std::optional<double> vertex_count,
+                     double source_vertex_offset);
 void resize_mesh_geometry(Engine& engine, MeshHandle mesh, const std::vector<float>& positions,
                           const std::vector<float>& normals,
                           const std::vector<std::uint32_t>& indices,
@@ -5557,20 +5567,25 @@ void resize_shared_mesh_geometry(
     const std::vector<float>& normals, const std::vector<std::uint32_t>& indices,
     const std::vector<float>& uvs = {}, const std::vector<float>& uvs2 = {},
     const std::vector<float>& tangents = {}, const std::vector<float>& colors = {});
-void resize_retained_mesh_geometry(Engine& engine, MeshHandle mesh,
-    const js::F32Array& positions, const js::F32Array& normals, const js::U32Array& indices,
-    const std::optional<js::F32Array>& uvs, const std::optional<js::F32Array>& uvs2,
-    const std::optional<js::F32Array>& tangents, const std::optional<js::F32Array>& colors);
+void resize_retained_mesh_geometry(Engine& engine, MeshHandle mesh, const js::F32Array& positions,
+                                   const js::F32Array& normals, const js::U32Array& indices,
+                                   const std::optional<js::F32Array>& uvs,
+                                   const std::optional<js::F32Array>& uvs2,
+                                   const std::optional<js::F32Array>& tangents,
+                                   const std::optional<js::F32Array>& colors);
 void resize_shared_retained_mesh_geometry(Engine& engine, std::span<const MeshHandle> meshes,
-    const js::F32Array& positions, const js::F32Array& normals, const js::U32Array& indices,
-    const std::optional<js::F32Array>& uvs, const std::optional<js::F32Array>& uvs2,
-    const std::optional<js::F32Array>& tangents, const std::optional<js::F32Array>& colors);
+                                          const js::F32Array& positions,
+                                          const js::F32Array& normals, const js::U32Array& indices,
+                                          const std::optional<js::F32Array>& uvs,
+                                          const std::optional<js::F32Array>& uvs2,
+                                          const std::optional<js::F32Array>& tangents,
+                                          const std::optional<js::F32Array>& colors);
 // The matrices parameter is a non-const lvalue reference on purpose: the
 // record keeps aliasing the caller's array for later per-frame updates
 // (the pinned setThinInstances adopts the array by reference), so a
 // temporary here would dangle. The compiler only passes named bindings.
 void set_thin_instances(Engine& engine, MeshHandle mesh, std::vector<float>& matrices,
-                       double count);
+                        double count);
 void set_thin_instances(Engine& engine, MeshHandle mesh, js::F32Array& matrices, double count);
 [[nodiscard]] js::F32Array thin_instance_matrices(Engine& engine, MeshHandle mesh);
 HierarchyInstancePoolHandle create_hierarchy_instance_pool(Engine& engine, AssetHandle root,
@@ -5638,7 +5653,8 @@ AssetHandle load_gltf(Engine& engine, const std::string& path, bool load_cameras
 BoneHandle get_bone_by_name(Engine& engine, SkeletonHandle skeleton, const std::string& name);
 void set_bone_visible(Engine& engine, SkeletonHandle skeleton, BoneHandle bone, bool visible);
 void set_bone_world_pose_deferred(Engine& engine, SkeletonHandle skeleton, BoneHandle bone,
-    double px, double py, double pz, double rx, double ry, double rz, double rw);
+                                  double px, double py, double pz, double rx, double ry, double rz,
+                                  double rw);
 void bake_skeleton(Engine& engine, SkeletonHandle skeleton);
 // The scene-authored skeleton surface (`src/skeleton/create-skeleton.ts`
 // and `src/skeleton/update-skeleton-bone-matrices.ts`), defined by the
@@ -6121,6 +6137,18 @@ AssetHandle clone_asset_root(Engine& engine, AssetHandle asset);
 MeshHandle clone_mesh_node(Engine& engine, MeshHandle mesh);
 SceneNodeHandle clone_scene_node(Engine& engine, const SceneNodeHandle& node);
 
+inline AssetHandle cloned_asset_container(const SceneNodeHandle& node) {
+    if (const auto* asset = std::get_if<AssetHandle>(&node))
+        return *asset;
+    throw std::runtime_error("An asset container requires a cloned asset-root hierarchy.");
+}
+
+inline AssetHandle asset_container_root(Engine& engine, AssetHandle asset) {
+    if (!engine.assets.at(asset.value).has_synthetic_root)
+        throw std::runtime_error("This asset container has no represented synthetic root.");
+    return asset;
+}
+
 /** Live ordered view of the concrete node's public traversal list. */
 class SceneNodeChildrenView {
     Engine* engine_;
@@ -6444,8 +6472,10 @@ struct MeshCpuGeometry {
     js::U32Array indices;
     js::Nullable<js::F32Array> uvs, uvs2, tangents, colors;
 };
-[[nodiscard]] std::optional<MeshCpuGeometry> get_mesh_geometry(const Engine& engine, MeshHandle mesh);
-[[nodiscard]] std::optional<MeshCpuGeometry> get_mesh_triangles(const Engine& engine, MeshHandle mesh);
+[[nodiscard]] std::optional<MeshCpuGeometry> get_mesh_geometry(const Engine& engine,
+                                                               MeshHandle mesh);
+[[nodiscard]] std::optional<MeshCpuGeometry> get_mesh_triangles(const Engine& engine,
+                                                                MeshHandle mesh);
 [[nodiscard]] std::vector<float> mesh_cpu_normals(const Engine& engine, MeshHandle mesh);
 [[nodiscard]] std::vector<float> mesh_cpu_uvs(const Engine& engine, MeshHandle mesh);
 [[nodiscard]] std::vector<std::uint32_t> mesh_cpu_indices(const Engine& engine, MeshHandle mesh);

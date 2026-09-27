@@ -236,7 +236,6 @@ export function lowerFramePostSubmit(context: LoweringContext): string {
                     [
                         "encoder",
                         "hooks",
-                        "dispatch",
                         "previousTaskResolver",
                         "entry",
                     ].includes(name)

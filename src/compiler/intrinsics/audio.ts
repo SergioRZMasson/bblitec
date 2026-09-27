@@ -31,11 +31,11 @@ function sourceDisposer(context: AudioIntrinsicContext): string {
     const existing = sourceDisposers.get(context);
     if (existing) return existing;
     const name = context.allocateTemporaryCppName("dispose_audio_source");
-    const lowered = lowerAudioSourceDisposal(name);
-    context.nativeEmission.registerNativeFunction(
-        lowered.prototype,
-        lowered.lines,
-    );
+    for (const lowered of lowerAudioSourceDisposal(name))
+        context.nativeEmission.registerNativeFunction(
+            lowered.prototype,
+            lowered.lines,
+        );
     const cpp = `bblscene::${name}`;
     sourceDisposers.set(context, cpp);
     return cpp;

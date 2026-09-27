@@ -10,16 +10,12 @@ export function lowerNodeInputScalarSetter(context: LoweringContext): string {
         path,
         "parseNodeMaterialFromSnippet",
     );
-    const setters: ts.SetAccessorDeclaration[] = [];
-    const visit = (node: ts.Node): void => {
-        if (
+    const setters = context.findNodes(
+        declaration,
+        (node): node is ts.SetAccessorDeclaration =>
             ts.isSetAccessorDeclaration(node) &&
-            node.name.getText(file) === "value"
-        )
-            setters.push(node);
-        ts.forEachChild(node, visit);
-    };
-    visit(declaration);
+            node.name.getText(file) === "value",
+    );
     const setter = setters[0];
     if (setters.length !== 1 || !setter?.body)
         return context.contractError(

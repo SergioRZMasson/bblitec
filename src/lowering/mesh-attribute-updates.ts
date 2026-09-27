@@ -68,20 +68,19 @@ export function lowerMeshAttributeUpdates(context: LoweringContext): string {
                 "sourceVertexOffset",
             ])
                 bind(value, value, "scalar");
-            bind(
-                "vertexCount",
-                name === "writeVertexAttributeRange"
-                    ? "vertexCount.value()"
-                    : "vertexCount",
-                name === "writeVertexAttributeRange" ? "scalar" : "opaque",
-                "!vertexCount.has_value()",
-            );
             if (name === "writeVertexAttributeRange")
                 bindings.set("vertexCount", {
                     cpp: "vertexCount.value()",
                     type: "scalar",
                     nullish: "!vertexCount.has_value()",
                 });
+            else
+                bind(
+                    "vertexCount",
+                    "vertexCount",
+                    "opaque",
+                    "!vertexCount.has_value()",
+                );
             const geometry = `engine.geometries.at(${recordAt("engine.meshes", "mesh")}.geometry)`;
             bind("mesh._gpu", geometry);
             bind(
@@ -122,8 +121,7 @@ export function lowerMeshAttributeUpdates(context: LoweringContext): string {
             const calls = new Map<string, (args: readonly string[]) => string>([
                 [
                     "Number.isInteger",
-                    (args) =>
-                        `(std::isfinite(${args[0]}) && std::trunc(${args[0]}) == ${args[0]})`,
+                    (args) => `bbl::js::number_is_integer(${args[0]})`,
                 ],
                 [
                     "writeVertexAttributeRange",

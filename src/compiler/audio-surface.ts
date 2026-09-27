@@ -321,35 +321,24 @@ export function compileAudioMethodCall(
         const value = context.compileValue(callee.expression);
         if (value.kind === "json-null") return value;
         if (value.dataType?.kind === "optional") {
-            const owner = context.bindings.pinValueToTemporary(
+            return context.dataLowerer.optionalAccess(
                 value,
-                "optional_audio_receiver",
-                callee.expression,
+                call,
+                (receiver) => {
+                    const result = compileAudioReceiverMethod(
+                        context,
+                        call,
+                        callee,
+                        receiver,
+                    );
+                    if (result && result.kind !== "void")
+                        context.fail(
+                            call,
+                            "Optional audio calls currently require a void result.",
+                        );
+                    return result;
+                },
             );
-            const receiver = context.dataLowerer.narrowOptional(
-                owner,
-                callee.expression,
-                true,
-            );
-            let result: Value | undefined;
-            const lines = context.captureEmittedLines(() => {
-                result = compileAudioReceiverMethod(
-                    context,
-                    call,
-                    callee,
-                    receiver,
-                );
-            });
-            if (!result) return undefined;
-            if (result.kind !== "void")
-                context.fail(
-                    call,
-                    "Optional audio calls currently require a void result.",
-                );
-            return {
-                kind: "void",
-                cpp: `([&]() { if ((${owner.cpp}).has_value()) { ${lines.join("\n")} ${result.cpp}; } }())`,
-            };
         }
         return compileAudioReceiverMethod(context, call, callee, value);
     }

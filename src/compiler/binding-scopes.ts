@@ -1525,6 +1525,44 @@ export class BindingScopes {
         return cppName;
     }
 
+    private materializeRecordFieldCell(
+        value: Value,
+        mapped: DataType,
+        node: ts.Expression,
+        label: string,
+    ): Value {
+        const dataType =
+            this.context.dataTypes.markStoredObjectReferences(mapped);
+        const storage = this.context.allocateTemporaryCppName(label);
+        const initial = this.context.dataLowerer.compileKnownValueForSink(
+            value,
+            dataType,
+            node,
+        );
+        this.context.emit({
+            kind: "declaration",
+            type: "auto",
+            name: storage,
+            initializer: `bbl::js::make_gc_shared<${this.context.dataTypes.cppType(dataType)}>(${initial})`,
+        });
+        const represented = this.context.dataLowerer.leafValue(
+            `(*${storage})`,
+            dataType,
+        );
+        if (mapped.kind === "struct" && represented.kind !== "data")
+            this.context.fail(
+                node,
+                "A retained record field requires native data storage.",
+            );
+        const metadata = {
+            sharedStorageCpp: storage,
+            nativeLvalue: true as const,
+        };
+        return represented.kind === "data"
+            ? { ...represented, ...metadata, sharedRecordContainer: true }
+            : { ...represented, ...metadata };
+    }
+
     /** A partial compiler record still owns its declared arrays and nullable fields. */
     public materializeDeclaredRecordContainers(
         value: Value,
@@ -1544,60 +1582,23 @@ export class BindingScopes {
         ) {
             const mapped = this.context.dataTypes.fromStoredTsType(type, node);
             if (mapped?.kind === "struct") {
-                const dataType = this.context.dataTypes.markStoredObjectReferences(mapped);
-                const storage = this.context.allocateTemporaryCppName(label);
-                const initial = this.context.dataLowerer.compileKnownValueForSink(value, dataType, node);
-                this.context.emit({
-                    kind: "declaration",
-                    type: "auto",
-                    name: storage,
-                    initializer: `bbl::js::make_gc_shared<${this.context.dataTypes.cppType(dataType)}>(${initial})`,
-                });
-                const represented = this.context.dataLowerer.leafValue(`(*${storage})`, dataType);
-                if (represented.kind !== "data")
-                    this.context.fail(node, "A retained record field requires native data storage.");
-                return {
-                    ...represented,
-                    sharedStorageCpp: storage,
-                    sharedRecordContainer: true,
-                    nativeLvalue: true,
-                };
+                return this.materializeRecordFieldCell(
+                    value,
+                    mapped,
+                    node,
+                    label,
+                );
             }
         }
         if (field && value.kind === "json-null" && present !== type) {
             const mapped = this.context.dataTypes.fromStoredTsType(type, node);
             if (mapped?.kind === "optional") {
-                const dataType =
-                    this.context.dataTypes.markStoredObjectReferences(mapped);
-                const storage = this.context.allocateTemporaryCppName(label);
-                const initial =
-                    this.context.dataLowerer.compileKnownValueForSink(
-                        value,
-                        dataType,
-                        node,
-                    );
-                this.context.emit({
-                    kind: "declaration",
-                    type: "auto",
-                    name: storage,
-                    initializer: `bbl::js::make_gc_shared<${this.context.dataTypes.cppType(dataType)}>(${initial})`,
-                });
-                const represented = this.context.dataLowerer.leafValue(
-                    `(*${storage})`,
-                    dataType,
+                return this.materializeRecordFieldCell(
+                    value,
+                    mapped,
+                    node,
+                    label,
                 );
-                return represented.kind === "data"
-                    ? {
-                          ...represented,
-                          sharedStorageCpp: storage,
-                          sharedRecordContainer: true,
-                          nativeLvalue: true,
-                      }
-                    : {
-                          ...represented,
-                          sharedStorageCpp: storage,
-                          nativeLvalue: true,
-                      };
             }
         }
         if (field && value.kind === "tuple" && present.getProperty("push")) {
@@ -1786,6 +1787,7 @@ export class BindingScopes {
         label: string,
         preserveIdentity = false,
         node?: ts.Expression,
+        materialized = new Map<object, Value>(),
     ): Value {
         if (
             record.retainedNativeRecord ||
@@ -1799,6 +1801,9 @@ export class BindingScopes {
         if (record.sceneNodeVector) {
             return this.bindSceneNodeVector(record);
         }
+        const identity = record.recordProperties ?? record;
+        const existing = materialized.get(identity);
+        if (existing) return existing;
         const stored = node && this.referenceRecordValue(record, node);
         if (stored) {
             // Choose the whole-object home before boxing individual fields.
@@ -1817,6 +1822,13 @@ export class BindingScopes {
             };
         }
         const properties: Record<string, Value> = {};
+        const result = preserveIdentity
+            ? record
+            : valueForKind(record.kind, {
+                  ...record,
+                  recordProperties: properties,
+              });
+        materialized.set(identity, result);
         const classFields = this.context.classOf(record) !== undefined;
         const scalarFields = Object.entries(
             record.recordProperties ?? {},
@@ -1865,6 +1877,8 @@ export class BindingScopes {
                     property,
                     `${label}_${name}`,
                     preserveIdentity,
+                    undefined,
+                    materialized,
                 );
                 continue;
             }
@@ -2034,12 +2048,8 @@ export class BindingScopes {
                 writable((writable(record).recordProperties ??= {})),
                 properties,
             );
-            return record;
         }
-        return valueForKind(record.kind, {
-            ...record,
-            recordProperties: properties,
-        });
+        return result;
     }
 
     private isMutableRecordContainer(dataType: DataType): boolean {
@@ -2066,8 +2076,15 @@ export function cameraVectorProperties(
                 cpp: `${record}.${axis}`,
                 dataType: { kind: "number" },
                 engineCpp: vector.owner.engineCpp,
-                ...(vector.owner.nativeCaptures ? { nativeCaptures: vector.owner.nativeCaptures } : {}),
-                ...(vector.owner.nativeCompanionCaptures ? { nativeCompanionCaptures: vector.owner.nativeCompanionCaptures } : {}),
+                ...(vector.owner.nativeCaptures
+                    ? { nativeCaptures: vector.owner.nativeCaptures }
+                    : {}),
+                ...(vector.owner.nativeCompanionCaptures
+                    ? {
+                          nativeCompanionCaptures:
+                              vector.owner.nativeCompanionCaptures,
+                      }
+                    : {}),
             } satisfies Value,
         ]),
     );
@@ -2095,8 +2112,12 @@ export function sceneNodeVectorProperties(
                 cpp: `${vector}.${name}`,
                 dataType: { kind: "number" },
                 engineCpp: engine,
-                ...(owner.nativeCaptures ? { nativeCaptures: owner.nativeCaptures } : {}),
-                ...(owner.nativeCompanionCaptures ? { nativeCompanionCaptures: owner.nativeCompanionCaptures } : {}),
+                ...(owner.nativeCaptures
+                    ? { nativeCaptures: owner.nativeCaptures }
+                    : {}),
+                ...(owner.nativeCompanionCaptures
+                    ? { nativeCompanionCaptures: owner.nativeCompanionCaptures }
+                    : {}),
                 ...(freshData ? { freshData: true } : {}),
             } satisfies Value,
         ]),

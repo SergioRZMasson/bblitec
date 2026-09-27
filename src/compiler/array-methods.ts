@@ -174,15 +174,19 @@ export function compileArrayValueMethod(
         };
     }
     if (call.arguments.some(ts.isSpreadElement)) {
-        const arguments_ = lowerer.compileFunctionArguments(call, {
-            kind: "function",
-            restParameter: 2,
-            parameters: [
-                { kind: "number" },
-                { kind: "number" },
-                { kind: "vector", element: type.element },
-            ],
-        }, "Array.splice");
+        const arguments_ = lowerer.compileFunctionArguments(
+            call,
+            {
+                kind: "function",
+                restParameter: 2,
+                parameters: [
+                    { kind: "number" },
+                    { kind: "number" },
+                    { kind: "vector", element: type.element },
+                ],
+            },
+            "Array.splice",
+        );
         lowerer.invalidateAliases(owner.cpp);
         return {
             kind: "data",

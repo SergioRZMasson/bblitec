@@ -111,7 +111,8 @@ export function parseUiSelectorSequence(
                         return undefined;
                     tests.push({ kind: name, name: "", value: "" });
                 } else if (
-                    name === "empty" || name === "root" ||
+                    name === "empty" ||
+                    name === "root" ||
                     name === "only-child" ||
                     name === "only-of-type"
                 ) {

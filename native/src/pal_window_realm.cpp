@@ -101,13 +101,21 @@ struct DocumentSnapshot {
         UiElementHandle element;
         std::string text;
     };
+    struct CanvasUpdate {
+        UiElementHandle element;
+        UiElementRecord::CanvasState state;
+    };
     std::optional<std::vector<TextUpdate>> text_updates;
+    std::vector<CanvasUpdate> canvas_updates;
     Engine::DocumentRoots document_roots;
     std::vector<UiElementRecord> elements;
     std::vector<ListenerNames> listeners;
     std::vector<UiElementHandle> roots;
     std::vector<UiStyleRule> styles;
     std::uint64_t style_revision = 0;
+    UiElementHandle focused_element{};
+    std::uint64_t focus_revision = 0;
+    bool focus_visible = true;
     std::set<std::string> dom_event_types;
     std::set<std::uint32_t> dom_pointer_elements;
 };
@@ -116,9 +124,11 @@ struct LayoutSnapshot {
     std::uint32_t width = 0, height = 0;
     double pixel_ratio = 1;
     ScreenMetrics screen;
+    InputCapabilities input;
     bool equals(const LayoutSnapshot& other) const {
         return width == other.width && height == other.height && pixel_ratio == other.pixel_ratio &&
-               screen == other.screen && rectangles.size() == other.rectangles.size() &&
+               screen == other.screen && input == other.input &&
+               rectangles.size() == other.rectangles.size() &&
                std::equal(rectangles.begin(), rectangles.end(), other.rectangles.begin(),
                           [](const auto& left, const auto& right) {
                               return left.left == right.left && left.top == right.top &&
@@ -202,9 +212,12 @@ struct WindowDocument {
     explicit WindowDocument(std::shared_ptr<WindowServices> host, EngineOptions options)
         : host(std::move(host)) {
         engine.options = std::move(options);
-        engine.ui_attribute_changed = [this](UiElementHandle element, const std::string& attribute) {
-            for (const auto& observer : mutation_observers) observer->notify(element, attribute);
-            if (attribute == "data-ready" || attribute == "data-error") update_capture_ready();
+        engine.ui_attribute_changed = [this](UiElementHandle element,
+                                             const std::string& attribute) {
+            for (const auto& observer : mutation_observers)
+                observer->notify(element, attribute);
+            if (attribute == "data-ready" || attribute == "data-error")
+                update_capture_ready();
         };
         engine.ui_measure_element = [](Engine& owner, UiElementHandle element) {
             if (&owner != &window_document_engine())
@@ -216,10 +229,13 @@ struct WindowDocument {
     std::shared_ptr<WindowServices> host;
     bool wait_for_canvas_ready = false;
     void update_capture_ready() {
-        if (!wait_for_canvas_ready) return;
-        host->capture_ready->store(std::any_of(canvases.begin(), canvases.end(), [this](const auto& entry) {
-            return ui_get_attribute(engine, UiElementHandle{entry.first}, "data-ready") == "true";
-        }));
+        if (!wait_for_canvas_ready)
+            return;
+        host->capture_ready->store(
+            std::any_of(canvases.begin(), canvases.end(), [this](const auto& entry) {
+                return ui_get_attribute(engine, UiElementHandle{entry.first}, "data-ready") ==
+                       "true";
+            }));
         std::string failure;
         for (const auto& [index, canvas] : canvases) {
             static_cast<void>(canvas);
@@ -235,6 +251,8 @@ struct WindowDocument {
     Engine engine;
     std::uint64_t published_revision = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t published_text_revision = 0;
+    std::uint64_t published_canvas_revision = 0;
+    std::uint64_t published_focus_revision = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t published_input_revision = 0;
     std::shared_ptr<const LayoutSnapshot> layout;
     std::unordered_map<std::uint32_t, std::shared_ptr<CanvasElement>> canvases;
@@ -260,7 +278,8 @@ WindowDocument& current_document() {
 }
 
 std::unique_ptr<DocumentSnapshot>
-snapshot_document(const Engine& engine, std::optional<std::uint64_t> text_since = std::nullopt) {
+snapshot_document(const Engine& engine, std::optional<std::uint64_t> text_since = std::nullopt,
+                  std::uint64_t canvas_since = 0) {
     auto snapshot = std::make_unique<DocumentSnapshot>();
     if (text_since) {
         auto& updates = snapshot->text_updates.emplace();
@@ -268,6 +287,8 @@ snapshot_document(const Engine& engine, std::optional<std::uint64_t> text_since 
             const auto& record = engine.ui_elements[index];
             if (record.text_revision > *text_since)
                 updates.push_back({UiElementHandle{index}, record.text});
+            if (record.canvas && record.canvas->draw_revision > canvas_since)
+                snapshot->canvas_updates.push_back({UiElementHandle{index}, *record.canvas});
         }
         return snapshot;
     }
@@ -305,6 +326,9 @@ snapshot_document(const Engine& engine, std::optional<std::uint64_t> text_since 
     snapshot->document_roots = engine.ui_document_roots;
     snapshot->styles = engine.ui_host_style_rules;
     snapshot->style_revision = engine.ui_style_revision;
+    snapshot->focused_element = engine.ui_focused_element;
+    snapshot->focus_revision = engine.ui_focus_revision;
+    snapshot->focus_visible = engine.ui_focus_visible;
     if (engine.dom_input) {
         snapshot->dom_event_types = engine.dom_input->event_types;
         snapshot->dom_pointer_elements = engine.dom_input->pointer_elements;
@@ -319,6 +343,8 @@ void apply_document(Engine& engine, DocumentSnapshot snapshot,
     if (snapshot.text_updates) {
         for (auto& update : *snapshot.text_updates)
             ui_set_text(engine, update.element, std::move(update.text));
+        for (auto& update : snapshot.canvas_updates)
+            engine.ui_elements.at(update.element.value).canvas = std::move(update.state);
         return;
     }
     engine.ui_elements = std::move(snapshot.elements);
@@ -326,6 +352,9 @@ void apply_document(Engine& engine, DocumentSnapshot snapshot,
     engine.ui_document_roots = snapshot.document_roots;
     engine.ui_host_style_rules = std::move(snapshot.styles);
     engine.ui_style_revision = snapshot.style_revision;
+    engine.ui_focused_element = snapshot.focused_element;
+    engine.ui_focus_revision = snapshot.focus_revision;
+    engine.ui_focus_visible = snapshot.focus_visible;
     if (!snapshot.dom_event_types.empty()) {
         auto& input = dom_input(engine);
         input.event_types = std::move(snapshot.dom_event_types);
@@ -542,13 +571,16 @@ void update_window_document() {
     // Snapshot source state on its owner before taking the presentation lock.
     const auto input_revision = doc.engine.dom_input ? doc.engine.dom_input->revision : 0;
     const auto text_since = doc.published_input_revision == input_revision &&
+                                    doc.published_focus_revision == doc.engine.ui_focus_revision &&
                                     doc.engine.ui_only_text_changed_since(
                                         doc.published_revision, doc.published_text_revision)
                                 ? std::optional(doc.published_text_revision)
                                 : std::nullopt;
     auto snapshot = doc.published_revision != doc.engine.ui_revision ||
-                            doc.published_input_revision != input_revision
-                        ? snapshot_document(doc.engine, text_since)
+                            doc.published_input_revision != input_revision ||
+                            doc.published_canvas_revision != doc.engine.ui_canvas_revision ||
+                            doc.published_focus_revision != doc.engine.ui_focus_revision
+                        ? snapshot_document(doc.engine, text_since, doc.published_canvas_revision)
                         : nullptr;
     std::unique_lock lock(host.mutex);
     if (host.stopping)
@@ -558,6 +590,8 @@ void update_window_document() {
         const auto revision = ++host.requested;
         doc.published_revision = doc.engine.ui_revision;
         doc.published_text_revision = doc.engine.ui_text_revision;
+        doc.published_canvas_revision = doc.engine.ui_canvas_revision;
+        doc.published_focus_revision = doc.engine.ui_focus_revision;
         doc.published_input_revision = input_revision;
         host.wake.notify_all();
         host.wake.wait(lock, [&] { return host.stopping || host.completed >= revision; });
@@ -592,6 +626,13 @@ double window_device_pixel_ratio() {
     update_window_document();
     const auto& doc = current_document();
     return doc.layout ? doc.layout->pixel_ratio : 1;
+}
+InputCapabilities window_input_capabilities() {
+    update_window_document();
+    const auto& layout = current_document().layout;
+    if (!layout)
+        throw std::logic_error("Window input has no layout snapshot.");
+    return layout->input;
 }
 UiClientRect window_viewport_size() {
     update_window_document();
@@ -687,10 +728,12 @@ std::shared_ptr<ResizeObserver> create_resize_observer(ResizeObserver::Callback 
     observer->self_ = observer;
     return observer;
 }
-void MutationObserver::observe(UiElementHandle element, std::optional<std::vector<std::string>> filter) {
+void MutationObserver::observe(UiElementHandle element,
+                               std::optional<std::vector<std::string>> filter) {
     if (observed_.empty()) {
         auto owner = self_.lock();
-        if (!owner) throw std::logic_error("MutationObserver requires its Window realm factory.");
+        if (!owner)
+            throw std::logic_error("MutationObserver requires its Window realm factory.");
         current_document().mutation_observers.push_back(std::move(owner));
     }
     observed_.insert_or_assign(element.value, std::move(filter));
@@ -698,11 +741,16 @@ void MutationObserver::observe(UiElementHandle element, std::optional<std::vecto
 void MutationObserver::disconnect() {
     observed_.clear();
     pending_ = false;
-    std::erase_if(current_document().mutation_observers, [this](const auto& observer) { return observer.get() == this; });
+    std::erase_if(current_document().mutation_observers,
+                  [this](const auto& observer) { return observer.get() == this; });
 }
 void MutationObserver::notify(UiElementHandle element, const std::string& attribute) {
     const auto entry = observed_.find(element.value);
-    if (entry == observed_.end() || (entry->second && std::find(entry->second->begin(), entry->second->end(), attribute) == entry->second->end()) || pending_) return;
+    if (entry == observed_.end() ||
+        (entry->second && std::find(entry->second->begin(), entry->second->end(), attribute) ==
+                              entry->second->end()) ||
+        pending_)
+        return;
     pending_ = true;
     EventLoop::current().queue_microtask([weak = self_] {
         if (auto owner = weak.lock(); owner && owner->pending_) {
@@ -717,8 +765,9 @@ std::shared_ptr<MutationObserver> create_mutation_observer(MutationObserver::Cal
     return observer;
 }
 std::shared_ptr<MediaQueryList> create_media_query(std::string query) {
-    auto media = js::make_gc_shared<MediaQueryList>(std::move(query), window_device_pixel_ratio,
-                                                    system_reduced_motion);
+    auto media =
+        js::make_gc_shared<MediaQueryList>(std::move(query), window_device_pixel_ratio,
+                                           system_reduced_motion, window_input_capabilities);
     current_document().media.push_back(media);
     return media;
 }
@@ -933,6 +982,18 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
                 next_layout.height = height;
                 const auto density = SDL_GetWindowDisplayScale(window.get());
                 next_layout.pixel_ratio = density > 0 ? density : 1;
+                if (SDL_HasMouse()) {
+                    next_layout.input = {PointerPrecision::Fine, true};
+                } else {
+                    int count = 0;
+                    auto* touches = SDL_GetTouchDevices(&count);
+                    if (!touches)
+                        throw std::runtime_error(std::string("SDL_GetTouchDevices: ") +
+                                                 SDL_GetError());
+                    SDL_free(touches);
+                    next_layout.input = {
+                        count > 0 ? PointerPrecision::Coarse : PointerPrecision::None, false};
+                }
                 const auto pixel_density = SDL_GetWindowPixelDensity(window.get());
                 update_engine_canvas_metrics(display, width, height, next_layout.pixel_ratio,
                                              pixel_density > 0 ? pixel_density : 1);
@@ -1177,22 +1238,24 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
                         services->completed > 0 && frames.size() == services->canvases.size();
                 }
                 services->wake.notify_all();
-                const bool source_ready = services->capture_ready->load() &&
-                    std::all_of(frames.begin(), frames.end(), [](const auto& canvas) {
-                        return canvas.frame.capture_ready;
-                    });
-                const bool capture_ready = !final_screenshot_saved && (
-                    capture_frame_count && !frames.empty()
-                        ? std::all_of(frames.begin(), frames.end(),
-                                      [&](const auto& canvas) {
-                                          return canvas.frame.sequence >= capture_frame_count;
-                                      })
-                        : presented >= std::max(0L, frame_options.screenshot_frame));
+                const bool source_ready =
+                    services->capture_ready->load() &&
+                    std::all_of(frames.begin(), frames.end(),
+                                [](const auto& canvas) { return canvas.frame.capture_ready; });
+                const bool capture_ready =
+                    !final_screenshot_saved &&
+                    (capture_frame_count && !frames.empty()
+                         ? std::all_of(frames.begin(), frames.end(),
+                                       [&](const auto& canvas) {
+                                           return canvas.frame.sequence >= capture_frame_count;
+                                       })
+                         : presented >= std::max(0L, frame_options.screenshot_frame));
                 const auto checkpoint = std::find_if(
                     screenshot_checkpoints.begin(), screenshot_checkpoints.end(),
                     [presented](const auto& value) { return value.frame == presented; });
                 const bool checkpoint_ready = checkpoint != screenshot_checkpoints.end();
-                const bool capture = canvases_ready && source_ready && !frame_options.screenshot_path.empty() &&
+                const bool capture = canvases_ready && source_ready &&
+                                     !frame_options.screenshot_path.empty() &&
                                      (capture_ready || checkpoint_ready);
                 bool did_present = false;
                 double record_ms = 0, present_ms = 0;

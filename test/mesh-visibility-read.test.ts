@@ -14,6 +14,17 @@ test("mesh visibility reads preserve unset, true and false through stored handle
         import {createEngine, createBox, type Mesh} from "babylon-lite";
         async function main() {
             const engine = await createEngine({});
+            const direct = createBox(engine, {});
+            direct.visible = false;
+            const previous = direct.visible;
+            if (previous !== false) throw new Error("bound visibility write");
+            direct.visible = true;
+            if (direct.visible !== true || previous !== false) throw new Error("visibility snapshot");
+            const flags: boolean[] = [false];
+            const index = Date.now() % 2;
+            direct.visible = flags[index];
+            if (index === 0 && direct.visible !== false) throw new Error("present false assignment");
+            if (index === 1 && direct.visible !== undefined) throw new Error("absent assignment");
             const meshes: Mesh[] = [createBox(engine, {}), createBox(engine, {})];
             if (meshes[0]!.visible !== undefined) throw new Error("initial visibility");
             meshes[0]!.visible = false;
@@ -26,6 +37,7 @@ test("mesh visibility reads preserve unset, true and false through stored handle
         main();
     `);
     assert.match(result.cpp, /visible.source_value\(\)/);
+    assert.doesNotMatch(result.cpp, /visible\.source_value\(\)\s*=/);
     const tools = optionalNativeFixtureTools(false);
     if (!tools) {
         t.skip("Native compiler required");

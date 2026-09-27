@@ -11,11 +11,18 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 namespace bbl::pal {
+
+/** A non-owning draw list for one command in an ordered pass. */
+template <class Command> struct BorrowedDrawList {
+    std::span<const Command> commands;
+    explicit BorrowedDrawList(const Command& command) : commands(&command, 1) {}
+};
 
 #if BBLITE_DEVICE_RECOVERY
 inline thread_local Engine* draw_count_engine = nullptr;

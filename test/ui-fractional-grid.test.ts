@@ -11,7 +11,7 @@ const host = () => readNativeHostUi("ui/scene180-host.json");
 test("fractional host grids preserve explicit track order and form border-box sizing", () => {
     const result = compileSource(source, { nativeHostUi: host() });
     assert.match(result.cpp, /grid-template-columns:\s*70px 1fr 48px/);
-    assert.match(result.cpp, /box-sizing: border-box/);
+    assert.match(result.cpp, /box-sizing:\s*border-box/);
     assert.match(result.cpp, /Drag canvas to move/);
     assert.match(result.cpp, /Scroll wheel to scale/);
     assert.match(

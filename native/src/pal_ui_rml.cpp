@@ -47,6 +47,7 @@
 #include "pal_ui_form.hpp"
 #include "pal_ui_font_win32.hpp"
 #include "pal_ui_font_color.hpp"
+#include "pal_ui_font_system.hpp"
 #include "pal_ui_range.hpp"
 #include "pal_ui_control_marks.hpp"
 #include "pal_ui_color.hpp"
@@ -1298,6 +1299,33 @@ UiElementHandle ui_active_element(Engine& engine) {
     return engine.ui_focused_element;
 }
 
+namespace {
+void dispatch_ui_focus(Engine& engine, UiElementHandle element, std::string type,
+                       UiElementHandle related) {
+    auto event = dom_event(PlatformMouseEvent{}, type, dom_ui_path(engine, element), false, false,
+                           related.value == invalid_handle
+                               ? std::nullopt
+                               : std::optional{DomEventTarget::node(related.value)});
+    event.dom->trusted = true;
+    dispatch_dom_pointer(engine, event);
+    const auto& events = ui_element(engine, element).event_callbacks;
+    if (const auto found = events.find(type); found != events.end()) {
+        const auto callbacks = found->second;
+        for (const auto& callback : callbacks)
+            callback(event);
+    }
+}
+} // namespace
+
+bool ui_clear_focus(Engine& engine, UiElementHandle next) {
+    const auto previous = ui_active_element(engine);
+    engine.ui_focused_element = {};
+    const auto revision = ++engine.ui_focus_revision;
+    if (previous.value != invalid_handle)
+        dispatch_ui_focus(engine, previous, "blur", next);
+    return revision == engine.ui_focus_revision;
+}
+
 void ui_focus(Engine& engine, UiElementHandle element, bool visible) {
     if (!ui_focusable(engine, element))
         return;
@@ -1305,19 +1333,15 @@ void ui_focus(Engine& engine, UiElementHandle element, bool visible) {
         engine.ui_focus_visible = visible;
         ++engine.ui_focus_revision;
     }
-    if (ui_active_element(engine) == element)
+    const auto previous = ui_active_element(engine);
+    if (previous == element)
+        return;
+    if (!ui_clear_focus(engine, element))
         return;
     engine.ui_focused_element = element;
     engine.canvas_focused = false;
     ++engine.ui_focus_revision;
-    const auto& events = ui_element(engine, element).event_callbacks;
-    const auto found = events.find("focus");
-    if (found != events.end()) {
-        const auto callbacks = found->second;
-        const PlatformMouseEvent event{};
-        for (const auto& callback : callbacks)
-            callback(event);
-    }
+    dispatch_ui_focus(engine, element, "focus", previous);
 }
 
 #if BBLITE_HAS_BROWSER_FILE
@@ -1409,6 +1433,10 @@ void reset_canvas(UiElementRecord::CanvasState& canvas, double width, double hei
     canvas.pixel_revision = next_pixel_revision;
 }
 
+void mark_canvas_changed(Engine& engine, UiElementRecord::CanvasState& canvas) {
+    canvas.draw_revision = ++engine.ui_canvas_revision;
+}
+
 } // namespace
 
 UiElementHandle ui_primary_canvas(Engine& engine, std::string_view id) {
@@ -1431,11 +1459,13 @@ UiElementHandle ui_primary_canvas(Engine& engine, std::string_view id) {
 void ui_canvas_set_width(Engine& engine, UiElementHandle element, double width) {
     auto& canvas = ui_canvas(engine, element);
     reset_canvas(canvas, width, canvas.height);
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_set_height(Engine& engine, UiElementHandle element, double height) {
     auto& canvas = ui_canvas(engine, element);
     reset_canvas(canvas, canvas.width, height);
+    mark_canvas_changed(engine, canvas);
 }
 
 double ui_canvas_width(Engine& engine, UiElementHandle element) {
@@ -1475,7 +1505,9 @@ void ui_canvas_scale(Engine& engine, UiElementHandle element, double x, double y
 void ui_canvas_clear_rect(Engine& engine, UiElementHandle element, double, double, double, double) {
     // The reached overlays clear their full backing store once per update.
     // Keep clearRect bounded to that retained-frame behavior for now.
-    ui_canvas(engine, element).draws.clear();
+    auto& canvas = ui_canvas(engine, element);
+    canvas.draws.clear();
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_fill_rect(Engine& engine, UiElementHandle element, double x, double y, double width,
@@ -1485,6 +1517,7 @@ void ui_canvas_fill_rect(Engine& engine, UiElementHandle element, double x, doub
     if (color.alpha == 0)
         return;
     pal::retain_canvas_fill_rect(canvas, x, y, width, height, color.alpha == 255);
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_begin_path(Engine& engine, UiElementHandle element) {
@@ -1596,6 +1629,7 @@ void ui_canvas_fill(Engine& engine, UiElementHandle element) {
     draw.line_width = 0.0;
     draw.closed = true;
     canvas.draws.push_back(std::move(draw));
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_stroke(Engine& engine, UiElementHandle element) {
@@ -1612,6 +1646,7 @@ void ui_canvas_stroke(Engine& engine, UiElementHandle element) {
     draw.round_join = canvas.line_join == "round";
     draw.round_cap = canvas.line_cap == "round";
     canvas.draws.push_back(std::move(draw));
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_set_image_smoothing(Engine& engine, UiElementHandle element, bool enabled) {
@@ -1658,6 +1693,7 @@ void ui_canvas_put_image_data(Engine& engine, UiElementHandle element, const js:
         }
     }
     ++canvas.pixel_revision;
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_draw_image(Engine& engine, UiElementHandle destination, UiElementHandle source,
@@ -1676,6 +1712,7 @@ void ui_canvas_draw_image(Engine& engine, UiElementHandle destination, UiElement
     draw.destination_height = height * canvas.scale_y;
     draw.nearest_sampling = !canvas.image_smoothing_enabled;
     canvas.draws.push_back(std::move(draw));
+    mark_canvas_changed(engine, canvas);
 }
 
 void ui_canvas_set_font(Engine& engine, UiElementHandle element, std::string value) {
@@ -1714,6 +1751,7 @@ void ui_canvas_fill_text(Engine& engine, UiElementHandle element, std::string te
     draw.shadow_blur =
         canvas.shadow_blur * (std::abs(canvas.scale_x) + std::abs(canvas.scale_y)) * 0.5;
     canvas.draws.push_back(std::move(draw));
+    mark_canvas_changed(engine, canvas);
 }
 
 namespace pal {
@@ -1940,6 +1978,68 @@ std::string quote_css_font_family(std::string family) {
         quoted += character;
     }
     return quoted + "\"";
+}
+
+std::string rml_css_font_families(std::string value, std::string_view property) {
+    if (property == "font-family")
+        return value.find(',') == std::string::npos ? value
+                                                    : quote_css_font_family(std::move(value));
+    char quote = 0;
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        const char token = value[index];
+        if (token == '\\') {
+            ++index;
+            continue;
+        }
+        if (quote) {
+            if (token == quote)
+                quote = 0;
+            continue;
+        }
+        if (token == '\'' || token == '"') {
+            quote = token;
+            continue;
+        }
+        if (token == '/' && index + 1 < value.size() && value[index + 1] == '*') {
+            const auto end = value.find("*/", index + 2);
+            if (end == std::string::npos)
+                break;
+            index = end + 1;
+            continue;
+        }
+        if (token != ':')
+            continue;
+        const auto boundary = value.find_last_of(";{}", index);
+        const auto begin = boundary == std::string::npos ? 0 : boundary + 1;
+        if (!css_property_name_equals(
+                trim_css_token(std::string_view(value).substr(begin, index - begin)),
+                "font-family"))
+            continue;
+        const auto start = index + 1;
+        auto end = start;
+        char family_quote = 0;
+        for (; end < value.size(); ++end) {
+            const auto character = value[end];
+            if (character == '\\')
+                ++end;
+            else if (family_quote) {
+                if (character == family_quote)
+                    family_quote = 0;
+            } else if (character == '\'' || character == '"')
+                family_quote = character;
+            else if (character == ';' || character == '}')
+                break;
+        }
+        const auto family = trim_css_token(std::string_view(value).substr(start, end - start));
+        if (family.find(',') != std::string_view::npos) {
+            // RmlUi parses a string property as one token; our font engine owns the CSS list.
+            const auto quoted = quote_css_font_family(std::string(family));
+            value.replace(start, end - start, quoted);
+            end = start + quoted.size();
+        }
+        index = end ? end - 1 : end;
+    }
+    return value;
 }
 
 void load_rml_font(const SystemFontFace& face, std::string_view registered_family, int weight,
@@ -3135,8 +3235,8 @@ public:
         SDL_Surface* surface = nullptr;
         {
             std::lock_guard lock(image_decoder_mutex());
-            surface = IMG_LoadTyped_IO(
-                SDL_IOFromConstMem(encoded.data(), static_cast<int>(size)), true, extension.c_str());
+            surface = IMG_LoadTyped_IO(SDL_IOFromConstMem(encoded.data(), static_cast<int>(size)),
+                                       true, extension.c_str());
         }
         if (!surface) {
             return {};
@@ -3458,6 +3558,19 @@ private:
     std::unordered_map<std::uint32_t, RetainedCanvasTexture> retained_canvas_textures;
 };
 
+class UiCanvasElement final : public Rml::Element {
+    UiRmlRuntime* runtime_ = nullptr;
+    UiElementHandle handle_{};
+    void OnRender() override;
+
+public:
+    explicit UiCanvasElement(const Rml::String& tag) : Element(tag) {}
+    void bind(UiRmlRuntime& runtime, UiElementHandle handle) {
+        runtime_ = &runtime;
+        handle_ = handle;
+    }
+};
+
 struct UiRmlRuntime {
     UiRmlRuntime(Engine& engine, SDL_Window* window, std::uint32_t width, std::uint32_t height,
                  bool (*read_motion_preference)() = system_reduced_motion)
@@ -3474,6 +3587,7 @@ struct UiRmlRuntime {
             register_ui_style_properties();
             register_ui_background_properties();
             Rml::Factory::RegisterElementInstancer("button", &button_instancer);
+            Rml::Factory::RegisterElementInstancer("canvas", &canvas_instancer);
             Rml::Factory::RegisterElementInstancer("select", &select_instancer);
             Rml::Factory::RegisterElementInstancer("input", &input_instancer);
             scrollbar_properties = register_ui_scrollbar_properties();
@@ -3506,6 +3620,9 @@ struct UiRmlRuntime {
             if (!system_regular) {
                 throw std::runtime_error("The platform font service could not resolve system-ui.");
             }
+            system_fonts = std::make_unique<SystemUiFontEngine>(*Rml::GetFontEngineInterface(),
+                                                                system_regular->family);
+            Rml::SetFontEngineInterface(system_fonts.get());
             const std::string system_family = system_regular->family;
             const auto load_system_weight = [&system_family](int resolved_weight,
                                                              int registered_weight) {
@@ -3717,6 +3834,7 @@ struct UiRmlRuntime {
         replace_all(value, "sans-serif", css_sans_family);
         replace_all(value, "ui-monospace", css_monospace_family);
         replace_all(value, "monospace", css_monospace_family);
+        value = rml_css_font_families(std::move(value), property);
         value = rml_css_animation_easing(std::move(value));
         value = rml_css_filter_arguments(std::move(value));
         value = rml_css_length_math(std::move(value), viewport_width / density_ratio,
@@ -4371,6 +4489,12 @@ struct UiRmlRuntime {
             throw std::runtime_error("RmlUi could not create element tag '" + record.tag + "'.");
         }
         Rml::Element* raw = element.get();
+        if (record.tag == "canvas") {
+            auto* canvas = dynamic_cast<UiCanvasElement*>(raw);
+            if (!canvas)
+                throw std::logic_error("The canvas instancer returned an incompatible element.");
+            canvas->bind(*this, handle);
+        }
         ProjectedUiElement& projected = handle_at(projected_elements, handle);
         projected = {};
         projected.element = raw;
@@ -5230,58 +5354,52 @@ struct UiRmlRuntime {
         context->Update();
     }
 
-    void render_canvases() {
-        for (std::uint32_t index = 0; index < engine.ui_elements.size(); ++index) {
-            const UiElementRecord& record = engine.ui_elements[index];
-            if (!record.canvas || index >= projected_elements.size() ||
-                !projected_elements[index].element) {
-                continue;
-            }
-            Rml::Element& element = *projected_elements[index].element;
-            if (element.GetProperty("object-fit")->Get<int>() != 0)
-                throw std::runtime_error(
-                    "Retained canvas object-fit currently supports fill only.");
-            const Rml::Vector2f offset = element.GetAbsoluteOffset(Rml::BoxArea::Content);
-            const double layout_width = element.GetClientWidth();
-            const double layout_height = element.GetClientHeight();
-            if (record.canvas->width <= 0.0 || record.canvas->height <= 0.0 ||
-                layout_width <= 0.0 || layout_height <= 0.0) {
-                continue;
-            }
-            const double scale_x = layout_width / record.canvas->width;
-            const double scale_y = layout_height / record.canvas->height;
-            for (const auto& draw : record.canvas->draws) {
-                CanvasMesh mesh;
-                Rml::TextureHandle texture{};
-                if (draw.kind == UiElementRecord::CanvasDrawCommand::Kind::Blit) {
-                    if (draw.source.value >= engine.ui_elements.size()) {
-                        continue;
-                    }
-                    const UiElementRecord& source = handle_at(engine.ui_elements, draw.source);
-                    if (!source.canvas)
-                        continue;
-                    mesh = canvas_blit_mesh(draw, scale_x, scale_y);
-                    texture = render_interface.retained_canvas_texture(draw.source, *source.canvas);
-                    if (!texture)
-                        continue;
-                } else if (draw.kind == UiElementRecord::CanvasDrawCommand::Kind::Text) {
-                    if (render_canvas_text(draw, offset, scale_x, scale_y)) {
-                        continue;
-                    }
-                    mesh = canvas_text_mesh(draw, scale_x, scale_y);
-                } else {
-                    mesh = canvas_mesh(draw, scale_x, scale_y);
+    void render_canvas(UiElementHandle handle, Rml::Element& element) {
+        const UiElementRecord& record = engine.ui_elements.at(handle.value);
+        if (!record.canvas)
+            return;
+        if (element.GetProperty("object-fit")->Get<int>() != 0)
+            throw std::runtime_error("Retained canvas object-fit currently supports fill only.");
+        const Rml::Vector2f offset = element.GetAbsoluteOffset(Rml::BoxArea::Content);
+        const double layout_width = element.GetClientWidth();
+        const double layout_height = element.GetClientHeight();
+        if (record.canvas->width <= 0.0 || record.canvas->height <= 0.0 || layout_width <= 0.0 ||
+            layout_height <= 0.0) {
+            return;
+        }
+        const double scale_x = layout_width / record.canvas->width;
+        const double scale_y = layout_height / record.canvas->height;
+        for (const auto& draw : record.canvas->draws) {
+            CanvasMesh mesh;
+            Rml::TextureHandle texture{};
+            if (draw.kind == UiElementRecord::CanvasDrawCommand::Kind::Blit) {
+                if (draw.source.value >= engine.ui_elements.size()) {
+                    continue;
                 }
-                if (mesh.vertices.empty() || mesh.indices.empty())
+                const UiElementRecord& source = handle_at(engine.ui_elements, draw.source);
+                if (!source.canvas)
                     continue;
-                const Rml::CompiledGeometryHandle geometry =
-                    render_interface.CompileGeometry(mesh.vertices, mesh.indices);
-                if (!geometry)
+                mesh = canvas_blit_mesh(draw, scale_x, scale_y);
+                texture = render_interface.retained_canvas_texture(draw.source, *source.canvas);
+                if (!texture)
                     continue;
-                render_interface.RenderGeometryWithSampling(geometry, offset, texture,
-                                                            draw.nearest_sampling);
-                render_interface.ReleaseGeometry(geometry);
+            } else if (draw.kind == UiElementRecord::CanvasDrawCommand::Kind::Text) {
+                if (render_canvas_text(draw, offset, scale_x, scale_y)) {
+                    continue;
+                }
+                mesh = canvas_text_mesh(draw, scale_x, scale_y);
+            } else {
+                mesh = canvas_mesh(draw, scale_x, scale_y);
             }
+            if (mesh.vertices.empty() || mesh.indices.empty())
+                continue;
+            const Rml::CompiledGeometryHandle geometry =
+                render_interface.CompileGeometry(mesh.vertices, mesh.indices);
+            if (!geometry)
+                continue;
+            render_interface.RenderGeometryWithSampling(geometry, offset, texture,
+                                                        draw.nearest_sampling);
+            render_interface.ReleaseGeometry(geometry);
         }
     }
 
@@ -5549,6 +5667,7 @@ struct UiRmlRuntime {
     UiControlMarkDecoratorInstancer control_mark_decorator;
     UiControlArrowDecoratorInstancer control_arrow_decorator;
     Rml::ElementInstancerGeneric<UiButtonElement> button_instancer;
+    Rml::ElementInstancerGeneric<UiCanvasElement> canvas_instancer;
     Rml::ElementInstancerGeneric<UiSelectElement> select_instancer;
     UiInputInstancer input_instancer;
     Rml::Context* context = nullptr;
@@ -5570,6 +5689,7 @@ struct UiRmlRuntime {
     std::uint64_t projected_focus_revision = ~std::uint64_t{0};
     UiElementHandle projected_focused{};
     std::string css_font_family;
+    std::unique_ptr<SystemUiFontEngine> system_fonts;
     std::string css_sans_family;
     std::string css_monospace_family;
     std::optional<TextFormMetrics> text_form_metrics;
@@ -5604,7 +5724,18 @@ struct UiRmlRuntime {
     bool initialized = false;
     UiScrollbarProperties scrollbar_properties{};
     UiBackgroundStyles background_styles;
+    double canvas_render_ms = 0;
 };
+
+void UiCanvasElement::OnRender() {
+    Element::OnRender();
+    if (!runtime_)
+        return;
+    auto& cpu = runtime_->render_interface.cpu;
+    const auto started = cpu.now();
+    runtime_->render_canvas(handle_, *this);
+    runtime_->canvas_render_ms += cpu.now() - started;
+}
 
 UiRmlRuntime* create_ui_rml_runtime(Engine& engine, SDL_Window* window, std::uint32_t width,
                                     std::uint32_t height) {
@@ -5883,12 +6014,9 @@ const UiRenderFrame& record_ui_rml_frame(UiRmlRuntime& runtime, std::uint32_t wi
     auto& cpu = runtime.render_interface.cpu;
     const double started = cpu.now();
     runtime.render_interface.begin_frame(width, height);
-    // Canvas overlays are below the regular retained DOM controls in the
-    // racer (speed lines at z=9, HUD/minimap at z=10). Queue their geometry
-    // first, then let RmlUi draw the interactive tree above it.
-    runtime.render_canvases();
-    const double canvases_finished = cpu.now();
+    runtime.canvas_render_ms = 0;
     runtime.context->Render();
+    const double canvases_finished = started + runtime.canvas_render_ms;
     const double render_finished = cpu.now();
     if (!runtime.style_trace_written && std::getenv("BBLITE_UI_STYLE_TRACE")) {
         Rml::ElementList elements;
@@ -5913,6 +6041,20 @@ const UiRenderFrame& record_ui_rml_frame(UiRmlRuntime& runtime, std::uint32_t wi
     }
     if (runtime.engine.canvas_focused) {
         append_canvas_focus_outline(runtime.render_interface.frame);
+    } else if (runtime.engine.ui_focus_visible) {
+        const auto focused = runtime.engine.ui_focused_element;
+        if (focused.value < runtime.engine.ui_elements.size() &&
+            runtime.engine.ui_elements[focused.value].tag == "canvas" &&
+            focused.value < runtime.projected_elements.size()) {
+            auto* element = runtime.projected_elements[focused.value].element;
+            if (element) {
+                const auto offset = element->GetAbsoluteOffset(Rml::BoxArea::Content);
+                append_canvas_focus_outline(
+                    runtime.render_interface.frame,
+                    UiClientRect{offset.x, offset.y, static_cast<double>(element->GetClientWidth()),
+                                 static_cast<double>(element->GetClientHeight())});
+            }
+        }
     }
     runtime.render_interface.append_composite_quad();
     if (cpu.enabled) {

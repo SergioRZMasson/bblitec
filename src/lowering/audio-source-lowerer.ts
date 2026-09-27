@@ -9,10 +9,10 @@ import {
 } from "./pinned-numeric-lowerer.js";
 
 /** Source routing disposal over the admitted volume-only sound graph. */
-export function lowerAudioSourceDisposal(name: string): {
+export function lowerAudioSourceDisposal(name: string): Array<{
     prototype: string;
     lines: string[];
-} {
+}> {
     const context = sharedPinnedContext();
     const node = (cpp: string): PinnedBinding => ({
         cpp,
@@ -157,20 +157,20 @@ export function lowerAudioSourceDisposal(name: string): {
             bindings: new Map([[element, { cpp: element, type: "opaque" }]]),
         }),
     });
-    return {
-        prototype: `${source.declaration};\nvoid ${name}_engine_sources(bbl::AudioEngineHandle engine);`,
-        lines: [
-            `// ${graph.provenance}`,
-            `${graph.declaration} {`,
-            graph.body,
-            "}",
-            `// ${source.provenance}`,
-            `${source.declaration} {`,
-            source.body,
-            "}",
-            `void ${name}_engine_sources(bbl::AudioEngineHandle engine) {`,
-            engineBody,
-            "}",
-        ],
-    };
+    const engineDeclaration = `void ${name}_engine_sources(bbl::AudioEngineHandle engine)`;
+    return [
+        ...[graph, source].map((part) => ({
+            prototype: `${part.declaration};`,
+            lines: [
+                `// ${part.provenance}`,
+                `${part.declaration} {`,
+                part.body,
+                "}",
+            ],
+        })),
+        {
+            prototype: `${engineDeclaration};`,
+            lines: [`${engineDeclaration} {`, engineBody, "}"],
+        },
+    ];
 }

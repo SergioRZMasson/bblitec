@@ -124,7 +124,7 @@ public:
             const bool transformed =
                 element.GetLocalProperty("bbl-transform") || element.GetLocalProperty("scale");
             const bool shrink_to_fit = element.GetLocalProperty("--bbl-absolute-inline") &&
-                !element.GetLocalProperty("--bbl-authored-display");
+                                       !element.GetLocalProperty("--bbl-authored-display");
             if (clipped || image != "none" || !color.empty() || !clip.empty() || transformed ||
                 shrink_to_fit || states.contains(&element)) {
                 auto& state = states[&element];
@@ -167,9 +167,14 @@ public:
                               element, "pointer-events",
                               clipped ? std::optional<Rml::String>{"none"} : std::nullopt) ||
                           changed;
-                changed = state.display.set_string(element, "display",
-                    shrink_to_fit ? std::optional<Rml::String>{
-                        element.HasAttribute("hidden") ? "none" : "inline-block"} : std::nullopt) || changed;
+                changed =
+                    state.display.set_string(
+                        element, "display",
+                        shrink_to_fit ? std::optional<Rml::String>{element.HasAttribute("hidden")
+                                                                       ? "none"
+                                                                       : "inline-block"}
+                                      : std::nullopt) ||
+                    changed;
                 if (transformed) {
                     const auto source =
                         element.GetLocalProperty("bbl-transform")

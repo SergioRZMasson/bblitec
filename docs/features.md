@@ -109,6 +109,7 @@ Arbitrary rejection values, heterogeneous race results and unrepresented aggrega
 `all` excludes literal spreads, other iterables and stored void/value-only arrays. `allSettled` excludes
 literal spreads and other iterables. Async collection callbacks start synchronously and retain
 suspension; predicate promises are truthy.
+Awaited, statically expanded `Promise.all` maps preserve fixed asset-load order; runtime-sized resource construction refuses.
 Outside a realm the executor runs in place and an await reads the settlement; one still pending ends the
 awaiting activation ([fidelity](fidelity.md#semantic-contract)). Timers/microtasks need no engine. RAF
 needs a Window repaint source. Unhandled rejections are reported in a subsequent task after microtasks.
@@ -332,6 +333,7 @@ ordered and preserves mixed mesh/node identity; `"material" in node` distinguish
 Optional visibility and thin-instance reads retain concrete node state. Removal snapshots children
 before recursion and uses the concrete mesh retirement path.
 Standalone transform-node cloning and child-list mutation through this view refuse.
+Stored asset containers check synthetic-root ownership at runtime; singleton cloned-root containers preserve the clone's identity.
 Detached imported leaves share geometry.
 Opaque cached lists require visibility invalidation; transparent/transmissive visibility is live.
 

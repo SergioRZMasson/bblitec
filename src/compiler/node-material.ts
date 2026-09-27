@@ -595,14 +595,16 @@ function compileTextures(
         const access = context.dataTypes.isReferenceStruct(record.dataType.name)
             ? "->"
             : ".";
-        return context.dataTypes.structFields(record.dataType.name, expression).map((field) => {
-            const texture = context.dataLowerer.leafValue(
-                `${record.cpp}${access}${field.name}`,
-                field.type,
-            );
-            context.expectKind(texture, "texture", expression);
-            return { name: field.sourceName, texture };
-        });
+        return context.dataTypes
+            .structFields(record.dataType.name, expression)
+            .map((field) => {
+                const texture = context.dataLowerer.leafValue(
+                    `${record.cpp}${access}${field.name}`,
+                    field.type,
+                );
+                context.expectKind(texture, "texture", expression);
+                return { name: field.sourceName, texture };
+            });
     }
     if (
         record.recordProperties === undefined ||

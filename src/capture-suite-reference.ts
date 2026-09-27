@@ -82,7 +82,10 @@ export function pinnedLabPublicAssetPath(requestPath: string): string {
     return relative.endsWith("/HavokPhysics.wasm") ||
         relative === "HavokPhysics.wasm"
         ? "HavokPhysics.wasm"
-        : relative.replace(/^(?:.*\/)?(?:lab\/lite\/src\/demos|(?:lite\/)?bundle\/demos)\//, "");
+        : relative.replace(
+              /^(?:.*\/)?(?:lab\/lite\/src\/demos|(?:lite\/)?bundle\/demos)\//,
+              "",
+          );
 }
 
 /**
@@ -677,10 +680,20 @@ ${seedScript}${fixedFrameScript}${hostUiScript}<script type="module" src="${entr
         // Pinned lab/public assets back every scene source: corpus
         // scenes and project-owned gates share the demo asset roots.
         {
-            const publicPath = resolve(root, "corpus/babylon-lite/lab/public", pinnedLabPublicAssetPath(relative));
+            const publicPath = resolve(
+                root,
+                "corpus/babylon-lite/lab/public",
+                pinnedLabPublicAssetPath(relative),
+            );
             const publicRoot = resolve(root, "corpus/babylon-lite/lab/public");
-            if (publicPath.startsWith(`${publicRoot}${sep}`) && existsSync(publicPath) && statSync(publicPath).isFile()) {
-                response.writeHead(200, {"Content-Type": mimeType(publicPath)});
+            if (
+                publicPath.startsWith(`${publicRoot}${sep}`) &&
+                existsSync(publicPath) &&
+                statSync(publicPath).isFile()
+            ) {
+                response.writeHead(200, {
+                    "Content-Type": mimeType(publicPath),
+                });
                 response.end(readFileSync(publicPath));
                 return;
             }

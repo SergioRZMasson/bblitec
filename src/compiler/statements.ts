@@ -910,10 +910,7 @@ export class StatementLowerer {
         }
         if (last && ts.isBreakStatement(last)) {
             statements.pop();
-        } else if (
-            !terminalBreakRemoved &&
-            (!last || !terminatesFlow(last))
-        ) {
+        } else if (!terminalBreakRemoved && (!last || !terminatesFlow(last))) {
             context.fail(
                 clause,
                 "Non-empty switch cases must end with break or return.",
@@ -992,19 +989,25 @@ export class StatementLowerer {
         const guard = context.unwrap(statement.expression);
         const identityRead = (expression: ts.Expression): boolean => {
             const value = context.unwrap(expression);
-            return context.libraryGlobal(value) !== undefined ||
-                (ts.isIdentifier(value) && context.bindings.lookupOptional(value) !== undefined);
+            return (
+                context.libraryGlobal(value) !== undefined ||
+                (ts.isIdentifier(value) &&
+                    context.bindings.lookupOptional(value) !== undefined)
+            );
         };
         const pureIdentity =
             ts.isBinaryExpression(guard) &&
-            (guard.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-                guard.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken) &&
+            (guard.operatorToken.kind ===
+                ts.SyntaxKind.EqualsEqualsEqualsToken ||
+                guard.operatorToken.kind ===
+                    ts.SyntaxKind.ExclamationEqualsEqualsToken) &&
             identityRead(guard.left) &&
             identityRead(guard.right);
         if (
-            (pureIdentity || context.browserErasure.isBrowserOnlyExpression(
-                statement.expression,
-            )) &&
+            (pureIdentity ||
+                context.browserErasure.isBrowserOnlyExpression(
+                    statement.expression,
+                )) &&
             this.statementIsBrowserOnly(context, statement.thenStatement) &&
             (!statement.elseStatement ||
                 this.statementIsBrowserOnly(context, statement.elseStatement))
@@ -1209,7 +1212,9 @@ export class StatementLowerer {
             (browserLocal(expression.left) ||
                 context.libraryGlobal(expression.left) === "fetch" ||
                 (ts.isPropertyAccessExpression(expression.left) &&
-                    context.browserErasure.isBrowserOnlyExpression(expression.left.expression))) &&
+                    context.browserErasure.isBrowserOnlyExpression(
+                        expression.left.expression,
+                    ))) &&
             pure(expression.right)
         ) {
             return true;

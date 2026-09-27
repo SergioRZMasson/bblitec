@@ -145,7 +145,7 @@ test(
                     worldMatrix: matrix,
                 });
                 cases.push(`{
-            const auto result = u::pinned_ground_heightfield({${floats(positions)}}, {${floats(matrix)}});
+            const auto result = u::pinned_ground_heightfield(std::vector<float>{${floats(positions)}}, {${floats(matrix)}});
             assert(result.numX == ${expected.numX} && result.numZ == ${expected.numZ});
             assert(result.sizeX == ${expected.sizeX} && result.sizeZ == ${expected.sizeZ});
             assert((result.data == std::vector<float>{${floats(expected.data)}}));

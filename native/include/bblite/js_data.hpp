@@ -224,8 +224,7 @@ public:
         : values_(std::make_shared<std::vector<T>>(values)) {}
     TypedArray(std::vector<T> values)
         : values_(std::make_shared<std::vector<T>>(std::move(values))) {}
-    explicit TypedArray(std::shared_ptr<std::vector<T>> values)
-        : values_(std::move(values)) {}
+    explicit TypedArray(std::shared_ptr<std::vector<T>> values) : values_(std::move(values)) {}
     template <typename Iterator>
     TypedArray(Iterator first, Iterator last)
         : values_(std::make_shared<std::vector<T>>(first, last)) {}
@@ -654,7 +653,7 @@ public:
               static_cast<const T*>(borrowed)->prevent_default();
           }),
           default_prevented_([](const void* borrowed) noexcept {
-              if constexpr (requires(const T& event) { event.is_default_prevented(); })
+              if constexpr (requires(const T & event) { event.is_default_prevented(); })
                   return static_cast<const T*>(borrowed)->is_default_prevented();
               else
                   return static_cast<const T*>(borrowed)->default_prevented;
@@ -2090,20 +2089,26 @@ public:
     using const_iterator = typename RetainedStorage::const_iterator;
 
     Tuple() : values_(std::make_shared<RetainedStorage>(N)) {}
-    Tuple(std::initializer_list<double> values) : values_(std::make_shared<RetainedStorage>(values)) {
+    Tuple(std::initializer_list<double> values)
+        : values_(std::make_shared<RetainedStorage>(values)) {
         if (values.size() != N) {
             throw std::runtime_error("Tuple initializer has the wrong length.");
         }
     }
-    Tuple(Storage values) : values_(std::make_shared<RetainedStorage>(values.begin(), values.end())) {}
-    [[nodiscard]] const std::shared_ptr<RetainedStorage>& retained_storage() const { return values_; }
+    Tuple(Storage values)
+        : values_(std::make_shared<RetainedStorage>(values.begin(), values.end())) {}
+    [[nodiscard]] const std::shared_ptr<RetainedStorage>& retained_storage() const {
+        return values_;
+    }
 
     [[nodiscard]] double& operator[](std::size_t index) { return (*values_)[index]; }
     [[nodiscard]] const double& operator[](std::size_t index) const { return (*values_)[index]; }
     [[nodiscard]] constexpr std::size_t size() const { return N; }
     [[nodiscard]] const void* identity() const { return values_.get(); }
     [[nodiscard]] bool operator==(const Tuple& other) const { return values_ == other.values_; }
-    [[nodiscard]] bool operator==(const Array<double>& other) const { return identity() == other.identity(); }
+    [[nodiscard]] bool operator==(const Array<double>& other) const {
+        return identity() == other.identity();
+    }
     [[nodiscard]] double* data() { return values_->data(); }
     [[nodiscard]] const double* data() const { return values_->data(); }
     [[nodiscard]] iterator begin() { return values_->begin(); }
@@ -3414,7 +3419,7 @@ template <typename Values, typename T>
 
 template <typename T, typename Inserted>
 inline Array<T> array_splice_insertions(Array<T>& values, double start, double count,
-                                       const Inserted& inserted) {
+                                        const Inserted& inserted) {
     const auto first = relative_index(values.size(), start);
     count = std::isnan(count) ? 0.0 : std::max(0.0, std::trunc(count));
     const auto removed =
@@ -3423,19 +3428,20 @@ inline Array<T> array_splice_insertions(Array<T>& values, double start, double c
     const auto end = begin + static_cast<std::ptrdiff_t>(removed);
     Array<T> result(begin, end);
     values.erase(begin, end);
-    values.insert(values.begin() + static_cast<std::ptrdiff_t>(first), inserted.begin(), inserted.end());
+    values.insert(values.begin() + static_cast<std::ptrdiff_t>(first), inserted.begin(),
+                  inserted.end());
     return result;
 }
 
 template <typename T>
 inline Array<T> array_splice(Array<T>& values, double start, double count,
-                            std::initializer_list<T> inserted) {
+                             std::initializer_list<T> inserted) {
     return array_splice_insertions(values, start, count, inserted);
 }
 
 template <typename T>
 inline Array<T> array_splice(Array<T>& values, double start, double count,
-                            const Array<T>& inserted) {
+                             const Array<T>& inserted) {
     // Expanded arguments have their values before the receiver is modified.
     if (values == inserted) {
         const Array<T> copy(inserted.begin(), inserted.end());

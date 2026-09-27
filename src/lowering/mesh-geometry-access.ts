@@ -6,24 +6,12 @@ import { recordAt } from "../compiler/record-access.js";
 import { unwrapExpression } from "./gltf/shared.js";
 
 const streams = [
-    ["positions", "_cpuPositions", "position", ["x", "y", "z"], "true"],
-    ["normals", "_cpuNormals", "normal", ["x", "y", "z"], "true"],
-    ["uvs", "_cpuUvs", "uv", ["x", "y"], "geometry.has_uvs"],
-    ["uvs2", "_cpuUv2s", "uv2", ["x", "y"], "geometry.cpu_uv2s"],
-    [
-        "tangents",
-        "_cpuTangents",
-        "tangent",
-        ["x", "y", "z", "w"],
-        "geometry.cpu_tangents",
-    ],
-    [
-        "colors",
-        "_cpuColors",
-        "color",
-        ["x", "y", "z", "w"],
-        "geometry.cpu_colors",
-    ],
+    ["positions", "_cpuPositions"],
+    ["normals", "_cpuNormals"],
+    ["uvs", "_cpuUvs"],
+    ["uvs2", "_cpuUv2s"],
+    ["tangents", "_cpuTangents"],
+    ["colors", "_cpuColors"],
 ] as const;
 
 /** Retained native vertex lanes adapt source CPU streams; source guards and copies own the API. */
@@ -47,7 +35,7 @@ export function lowerMeshGeometryAccess(context: LoweringContext): string {
             calls: new Map(),
             expression(node) {
                 if (context.expressionMatchesShape(node, "tangents?.length"))
-                    return "(tangents ? tangents->size() : 0u)";
+                    return "(tangents ? tangents.size() : 0u)";
                 return undefined;
             },
             statement(node, numeric, indent) {
@@ -99,7 +87,7 @@ export function lowerMeshGeometryAccess(context: LoweringContext): string {
                         `${field}.slice()`,
                         "Caller-owned geometry stream copy",
                     );
-                    return `${prefix}result.${field} = js::${field === "indices" ? "U32Array" : "F32Array"}(*${field});`;
+                    return `${prefix}result.${field} = js::${field === "indices" ? "U32Array" : "F32Array"}(${field}.${field === "indices" ? "copy_source" : "copy"}());`;
                 };
                 for (const property of node.expression.properties) {
                     if (!ts.isSpreadAssignment(property)) {
@@ -140,39 +128,10 @@ export function lowerMeshGeometryAccess(context: LoweringContext): string {
         });
         return `// ${context.provenance(module, name)}
 std::optional<MeshCpuGeometry> ${name === "getMeshGeometry" ? "get_mesh_geometry" : "get_mesh_triangles"}(const Engine& engine, MeshHandle mesh) {
-    const auto retained = mesh_retained_geometry(engine, mesh);
+    const auto& record = ${recordAt("engine.meshes", "mesh")};
+    const MeshCpuStreamsView retained(record, &engine.geometries.at(record.geometry));
 ${body}
 }`;
     });
-    return `struct MeshRetainedGeometry {
-    ${streams.map(([name]) => `std::optional<std::vector<float>> ${name};`).join("\n    ")}
-    std::optional<std::vector<std::uint32_t>> indices;
-};
-MeshRetainedGeometry mesh_retained_geometry(const Engine& engine, MeshHandle mesh) {
-    const auto& record = ${recordAt("engine.meshes", "mesh")};
-    const auto& geometry = engine.geometries.at(record.geometry);
-    MeshRetainedGeometry retained;
-    if (record.cpu_streams) {
-        const auto& source = *record.cpu_streams;
-        ${[...streams.map(([name]) => name), "indices"].map((name) => `if (source.${name}) retained.${name} = static_cast<const std::vector<${name === "indices" ? "std::uint32_t" : "float"}>&>(*source.${name});`).join("\n        ")}
-        return retained;
-    }
-    ${streams
-        .map(
-            ([name, , lane, components, presence]) => `if (${presence}) {
-        auto& values = retained.${name}.emplace();
-        values.reserve(geometry.vertices.size() * ${components.length});
-        for (const auto& vertex : geometry.vertices) { ${components.map((component) => `values.push_back(vertex.${lane}.${component});`).join(" ")} }
-    }`,
-        )
-        .join("\n    ")}
-    retained.indices = geometry.indices;
-    if (geometry.source_indices_reversed) {
-        auto& indices = *retained.indices;
-        for (std::size_t index = 0; index + 2 < indices.size(); index += 3) std::swap(indices[index + 1], indices[index + 2]);
-    }
-    return retained;
-}
-${methods.join("\n")}
-`;
+    return methods.join("\n");
 }

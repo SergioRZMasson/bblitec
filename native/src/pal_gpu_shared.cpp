@@ -528,9 +528,8 @@ DeformationUniforms build_deformation_uniforms(const MeshRecord& mesh) {
 
 std::vector<GpuVertex> mesh_gpu_vertices(const ModelGeometry& geometry,
                                          [[maybe_unused]] const MeshRecord& mesh) {
-    const auto& vertices = geometry.render_vertices_override
-                               ? *geometry.render_vertices_override
-                               : geometry.vertices;
+    const auto& vertices =
+        geometry.render_vertices_override ? *geometry.render_vertices_override : geometry.vertices;
     std::vector<GpuVertex> result;
     result.reserve(vertices.size());
 #if BBLITE_GPU_DEFORMATION
@@ -1054,8 +1053,10 @@ PinnedVariantKey pinned_variant_key(const Scene& scene, const Engine& engine,
             if (geometry.owned_packed_geometry) {
                 const auto attributes = upstream::pinned_mesh_attribute_features(
                     geometry.has_tangents, geometry.has_vertex_colors, geometry.cpu_uv2s);
-                key.mesh_features = (key.mesh_features &
-                    ~static_cast<std::size_t>(upstream::pinned_mesh_attribute_features(true, true, true))) |
+                key.mesh_features =
+                    (key.mesh_features &
+                     ~static_cast<std::size_t>(
+                         upstream::pinned_mesh_attribute_features(true, true, true))) |
                     static_cast<std::size_t>(attributes);
             }
         }

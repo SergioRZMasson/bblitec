@@ -483,10 +483,9 @@ export function physicsEventInfoValue(
             ? {
                   ...value,
                   recordProperties: Object.fromEntries(
-                      Object.entries(value.recordProperties ?? {}).map(([name, field]) => [
-                          name,
-                          retained(field),
-                      ]),
+                      Object.entries(value.recordProperties ?? {}).map(
+                          ([name, field]) => [name, retained(field)],
+                      ),
                   ),
               }
             : { ...value, nativeCaptures: [binding] };

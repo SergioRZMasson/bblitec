@@ -9,6 +9,7 @@
 #include <bblite/features/has_text.hpp>
 #include <bblite/features/mesh_attribute_update.hpp>
 #include <bblite/features/has_material_plugin_textures.hpp>
+#include <bblite/features/workers.hpp>
 
 #include <bblite/runtime.hpp>
 #include <bblite/pal_iteration.hpp>

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { compileSource } from "../src/compiler.js";
 import {
     optionalNativeFixtureTools,
+    buildNativeFixture,
     runNativeFixtureCompiler,
 } from "./native-fixture.js";
 
@@ -93,6 +94,91 @@ test("stored audio APIs preserve routing, optional node calls, and source dispos
         `/Fo${directory}/`,
         `/Fe${executable}`,
     ]);
+    assert.equal(
+        execFileSync(executable, { encoding: "utf8", timeout: 10000 }),
+        "",
+    );
+});
+
+test("imported audio callbacks declare every shared disposal helper in their source unit", (t) => {
+    const directory = resolve("artifacts/audio-source-lifecycle-check/split");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+        resolve(directory, "lifecycle.ts"),
+        `
+        import {disposeAudioEngine, type AudioEngine} from "@babylonjs/lite";
+        export function cleanup(engine: AudioEngine): () => void {
+            return () => disposeAudioEngine(engine);
+        }
+    `,
+    );
+    const result = compileSource(
+        `
+        import {createAudioEngineAsync} from "@babylonjs/lite";
+        import {cleanup} from "./lifecycle.js";
+        const engine = await createAudioEngineAsync();
+        const close = cleanup(engine);
+        close();
+    `,
+        { fileName: resolve(directory, "entry.ts") },
+    );
+    const module = result.cppFiles.get("sources/lifecycle.cpp");
+    assert.ok(module);
+    assert.match(
+        module,
+        /void \w+_engine_sources\(bbl::AudioEngineHandle engine\);/,
+    );
+    for (const [path, cpp] of result.cppFiles) {
+        const file = resolve(directory, path);
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, cpp);
+    }
+    const tools = optionalNativeFixtureTools(false);
+    if (!tools) {
+        t.skip("Native fixture compiler unavailable.");
+        return;
+    }
+    const stubs = resolve(directory, "stubs.cpp");
+    writeFileSync(
+        stubs,
+        `
+        #include <bblite/pal_audio.hpp>
+        #include <cassert>
+        namespace {
+            bool closed = false;
+            struct CheckClose { ~CheckClose() { assert(closed); } } check;
+        }
+        namespace bbl::pal {
+            AudioSession::~AudioSession() = default;
+            AudioContextHandle audio_create_context(std::shared_ptr<AudioSession>&) { return {1}; }
+            AudioNodeHandle audio_create_gain(AudioContextHandle) { return {2, {}}; }
+            AudioNodeHandle audio_destination(AudioContextHandle) { return {3, {}}; }
+            void audio_connect(AudioNodeHandle, AudioNodeHandle) {}
+            void audio_disconnect(AudioNodeHandle) {}
+            void audio_close_context(AudioContextHandle context) { assert(context.value == 1); closed = true; }
+        }
+    `,
+    );
+    const executable = resolve(directory, "check.exe");
+    buildNativeFixture(
+        tools,
+        [
+            ...result.manifest.sourceUnits.map(({ path }) =>
+                resolve(directory, path),
+            ),
+            stubs,
+        ],
+        executable,
+        [
+            "/nologo",
+            "/std:c++20",
+            "/W4",
+            "/WX",
+            "/EHsc",
+            "/MD",
+            `/I${resolve("native/include")}`,
+        ],
+    );
     assert.equal(
         execFileSync(executable, { encoding: "utf8", timeout: 10000 }),
         "",

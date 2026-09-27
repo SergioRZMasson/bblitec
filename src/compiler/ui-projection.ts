@@ -69,7 +69,7 @@ import { validateFileAccept } from "./browser-file.js";
 import { CompileError } from "./compile-error.js";
 import { documentEngine } from "./window-events.js";
 import { registerUiImageAsset } from "./assets.js";
-import { primaryCanvasIds } from "./browser-erasure.js";
+import { engineCanvasIds, primaryCanvasIds } from "./browser-erasure.js";
 import type { LoweringServices } from "./lowering-services.js";
 import { declaredSymbol } from "./symbols.js";
 import { argumentAt } from "./syntax.js";
@@ -195,6 +195,45 @@ interface UiProjectionContext extends Pick<
 
 export class UiProjection {
     public constructor(private readonly context: UiProjectionContext) {}
+
+    private uiRuleSuffix(
+        rule: Pick<
+            LoweredUiStyleRule,
+            "pseudo" | "content" | "range" | "containerMaxWidth" | "orientation"
+        > & { sequence?: readonly UiSelectorStep[] },
+    ): string {
+        const cppString = (value: string) => this.context.cppString(value);
+        const slots: [boolean, string][] = [
+            [
+                rule.sequence !== undefined,
+                uiSelectorSequenceCpp(rule.sequence ?? [], cppString),
+            ],
+            [
+                Boolean(rule.pseudo),
+                `bbl::UiGeneratedPart::${uiGeneratedPartCpp(rule.pseudo)}, ${uiGeneratedContentCpp(rule.content, cppString)}`,
+            ],
+            [
+                Boolean(rule.range),
+                `bbl::UiRangePart::${uiRangePartCpp(rule.range)}`,
+            ],
+            [
+                rule.containerMaxWidth !== undefined,
+                doubleLiteral(rule.containerMaxWidth ?? -1),
+            ],
+            [
+                rule.orientation !== undefined,
+                `bbl::UiOrientation::${rule.orientation === "portrait" ? "Portrait" : "Landscape"}`,
+            ],
+        ];
+        let last = slots.length - 1;
+        while (last >= 0 && !slots[last]![0]) --last;
+        return last < 0
+            ? ""
+            : `, ${slots
+                  .slice(0, last + 1)
+                  .map(([, value]) => value)
+                  .join(", ")}`;
+    }
 
     public registerImageSource(source: string): void {
         if (source) registerUiImageAsset(this.context, source, source);
@@ -447,10 +486,13 @@ export class UiProjection {
     }
 
     /** Evaluate helper receivers at admitted operations, not during erasure probes. */
-    public compileUiElementReceiver(expression: ts.Expression): Value | undefined {
+    public compileUiElementReceiver(
+        expression: ts.Expression,
+    ): Value | undefined {
         const known = this.uiElementValue(expression);
         if (known) return known;
-        if (!ts.isCallExpression(this.context.unwrap(expression))) return undefined;
+        if (!ts.isCallExpression(this.context.unwrap(expression)))
+            return undefined;
         const type = this.context.dataLowerer.dataTypeAt(expression);
         if (type?.kind !== "handle" || type.handle !== "ui-element")
             return undefined;
@@ -459,7 +501,10 @@ export class UiProjection {
             expression,
         );
         if (value.kind !== "ui-element")
-            this.context.fail(expression, "A DOM helper must return a retained element.");
+            this.context.fail(
+                expression,
+                "A DOM helper must return a retained element.",
+            );
         return this.context.bindings.pinValueToTemporary(
             value,
             "ui_receiver",
@@ -2071,9 +2116,10 @@ export class UiProjection {
     }
 
     private static cssStylePropertyName(property: string): string {
-        return property.startsWith("--") ? property : property
-            .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-            .toLowerCase();
+        const css = property.startsWith("--")
+            ? property
+            : property.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+        return css.startsWith("webkit-") ? `-${css}` : css;
     }
 
     private static readonly UI_SHORTHAND_RESETS: ReadonlyMap<
@@ -2284,26 +2330,6 @@ export class UiProjection {
                     `font-size:${maximum}${unit};` +
                     `font-family:${String(family)};`,
             )
-            // RmlUi resolves one family name here rather than a browser-style
-            // fallback list. Route generic UI stacks to the system face that
-            // the PAL loads, otherwise retain the first requested family.
-            .replace(/\bfont-family\s*:\s*([^;]+)\s*;?/gi, (_match, family) => {
-                const families = String(family)
-                    .split(",")
-                    .map((candidate) => candidate.trim())
-                    .filter(Boolean);
-                const first = families[0] ?? "sans-serif";
-                if (/^system-ui$/i.test(first)) {
-                    return "font-family:system-ui;";
-                }
-                if (/^sans-serif$/i.test(first)) {
-                    return "font-family:sans-serif;";
-                }
-                if (/^monospace$/i.test(first)) {
-                    return "font-family:monospace;";
-                }
-                return `font-family:${first};`;
-            })
             .replace(
                 /\binset\s*:\s*([^;]+)\s*;?/gi,
                 (_match, offsets: string) => {
@@ -2480,8 +2506,7 @@ export class UiProjection {
                 lowered += `;line-height:${height};text-align:center;`;
             }
         }
-        if (authoredDisplay)
-            lowered += ";--bbl-authored-display:1;";
+        if (authoredDisplay) lowered += ";--bbl-authored-display:1;";
         const nativeDeclarations: string[] = [];
         UiProjection.forEachUiStyleDeclaration(lowered, (declaration) => {
             const colon = declaration.indexOf(":");
@@ -3941,7 +3966,9 @@ export class UiProjection {
                 return true;
             }
         }
-        const directElement = this.compileUiElementReceiver(expression.left.expression);
+        const directElement = this.compileUiElementReceiver(
+            expression.left.expression,
+        );
         if (directElement) {
             const engine = this.context.requireEngine(
                 directElement,
@@ -4193,8 +4220,7 @@ export class UiProjection {
                                     `, bbl::UiScrollbarPart::${uiScrollbarPartCpp(rule.scrollbar)}, ` +
                                     `${rule.focusVisible ? "true" : "false"}, ${rule.active ? "true" : "false"}, ` +
                                     `bbl::UiMotionPreference::${uiMotionPreferenceCpp(rule.reducedMotion)}` +
-                                    `${rule.sequence || rule.pseudo || rule.range || rule.containerMaxWidth !== undefined || rule.orientation !== undefined ? `, ${uiSelectorSequenceCpp(rule.sequence ?? [], (value) => this.context.cppString(value))}` : ""}` +
-                                    `${rule.pseudo || rule.range || rule.containerMaxWidth !== undefined || rule.orientation !== undefined ? `, bbl::UiGeneratedPart::${uiGeneratedPartCpp(rule.pseudo)}, ${uiGeneratedContentCpp(rule.content, (value) => this.context.cppString(value))}` : ""}${rule.range || rule.containerMaxWidth !== undefined || rule.orientation !== undefined ? `, bbl::UiRangePart::${uiRangePartCpp(rule.range)}` : ""}${rule.containerMaxWidth !== undefined || rule.orientation !== undefined ? `, ${doubleLiteral(rule.containerMaxWidth ?? -1)}` : ""}${rule.orientation !== undefined ? `, bbl::UiOrientation::${rule.orientation === "portrait" ? "Portrait" : "Landscape"}` : ""});`,
+                                    `${this.uiRuleSuffix(rule)});`,
                             });
                         }
                     }
@@ -4563,7 +4589,19 @@ export class UiProjection {
 
     public compileHostUi(): string[] {
         const hostUi = this.context.options.nativeHostUi;
-        if (!hostUi) return [];
+        const primaryIds =
+            this.context.options.workers &&
+            !this.context.options.workers.namespace &&
+            this.context.defaultEngine()
+                ? [...engineCanvasIds(this.context)].filter(
+                      (id) => !this.nativeHostUiTags().has(id),
+                  )
+                : [];
+        if (!hostUi && primaryIds.length === 0) return [];
+        if (primaryIds.length > 1)
+            this.context.failAtFile(
+                "Multiple implicit engine canvases require explicit host elements.",
+            );
         if (this.context.options.workers)
             this.context.reachFeature(
                 "platform:window",
@@ -4584,12 +4622,17 @@ export class UiProjection {
         // the walk still wins, by `reachFeature`'s first-reach rule.
         this.context.reachFeature(
             "ui:rml",
-            `${hostUi.sourcePath} (host UI companion)`,
+            hostUi
+                ? `${hostUi.sourcePath} (host UI companion)`
+                : this.context.sourceFile,
         );
         const indent = "    ".repeat(2);
-        const emitted: string[] = [];
-        const ids = new EmissionSet<string>();
-        for (const rule of nativeHostUiStyleRules(hostUi)) {
+        const emitted = primaryIds.map(
+            (id) =>
+                `${indent}static_cast<void>(bbl::ui_primary_canvas(${engine}, ${this.context.cppString(id)}));`,
+        );
+        const ids = new EmissionSet<string>(primaryIds);
+        for (const rule of hostUi ? nativeHostUiStyleRules(hostUi) : []) {
             if (
                 rule.scrollbar !== undefined &&
                 !isUiScrollbarPart(rule.scrollbar)
@@ -4698,8 +4741,13 @@ export class UiProjection {
                     `, ${selected.focusVisible ? "true" : "false"}, ${selected.active ? "true" : "false"}, ` +
                     `bbl::UiScrollbarPart::${uiScrollbarPartCpp(rule.scrollbar)}, ` +
                     `bbl::UiMotionPreference::${uiMotionPreferenceCpp(rule.reducedMotion)}` +
-                    `${selectedSequence || rule.pseudo || rule.range || rule.containerMaxWidth !== undefined || rule.orientation !== undefined ? `, ${uiSelectorSequenceCpp(selectedSequence ?? [], (value) => this.context.cppString(value))}` : ""}` +
-                    `${rule.pseudo || rule.range || rule.containerMaxWidth !== undefined || rule.orientation !== undefined ? `, bbl::UiGeneratedPart::${uiGeneratedPartCpp(rule.pseudo)}, ${uiGeneratedContentCpp(content, (value) => this.context.cppString(value))}` : ""}${rule.range || rule.containerMaxWidth !== undefined || rule.orientation !== undefined ? `, bbl::UiRangePart::${uiRangePartCpp(rule.range)}` : ""}${rule.containerMaxWidth !== undefined || rule.orientation !== undefined ? `, ${doubleLiteral(rule.containerMaxWidth ?? -1)}` : ""}${rule.orientation !== undefined ? `, bbl::UiOrientation::${rule.orientation === "portrait" ? "Portrait" : "Landscape"}` : ""});`,
+                    `${this.uiRuleSuffix({
+                        ...rule,
+                        ...(selectedSequence
+                            ? { sequence: selectedSequence }
+                            : {}),
+                        ...(content ? { content } : {}),
+                    })});`,
             );
         }
 
@@ -4759,7 +4807,7 @@ export class UiProjection {
             );
             return handle;
         };
-        for (const element of hostUi.elements) {
+        for (const element of hostUi?.elements ?? []) {
             appendElement(element);
         }
         if (this.context.options.workers)
