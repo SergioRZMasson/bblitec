@@ -14,13 +14,21 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <TargetConditionals.h>
 #endif
 
 namespace bbl::pal {
 
+#if defined(__APPLE__) && TARGET_OS_OSX
+bool macos_reduced_motion();
+#elif defined(__linux__) && !defined(__ANDROID__)
+bool linux_reduced_motion();
+#endif
+
 /** Shared by preference consumers; refreshes without changing the user's setting. */
 inline bool system_reduced_motion() {
-#if defined(_WIN32) || defined(__ANDROID__)
+#if defined(_WIN32) || defined(__ANDROID__) || defined(__linux__) || (defined(__APPLE__) && TARGET_OS_OSX)
     using Clock = std::chrono::steady_clock;
     static thread_local Clock::time_point checked{};
     static thread_local bool initialized = false;
@@ -45,6 +53,10 @@ inline bool system_reduced_motion() {
         if (!method || exception)
             throw std::runtime_error("Could not read the Android animation preference.");
         reduced = next;
+#elif defined(__APPLE__)
+        reduced = macos_reduced_motion();
+#elif defined(__linux__)
+        reduced = linux_reduced_motion();
 #else
         BOOL animations = TRUE;
         if (!SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animations, 0))

@@ -1,0 +1,101 @@
+Opt-in whole-array Metal compute storage views. Layer zero binds every array
+slice at the selected mip; nonzero layers bind an ordinary 2D slice. Separate
+readonly array aliases preserve sampled 2D/cube views. Existing retained
+texture ownership and Metal hazard tracking cover pass transitions and cycling.
+
+diff --git a/src/gpu/metal/SDL_gpu_metal.m b/src/gpu/metal/SDL_gpu_metal.m
+--- a/src/gpu/metal/SDL_gpu_metal.m
++++ b/src/gpu/metal/SDL_gpu_metal.m
+@@ -429,6 +429,8 @@
+ typedef struct MetalTexture
+ {
+     id<MTLTexture> handle;
++    id<MTLTexture> computeReadView; // optional array alias, preserving the sampler view
++    bool storageArray;
+     SDL_AtomicInt referenceCount;
+ } MetalTexture;
+ 
+@@ -914,6 +916,7 @@
+     MetalTextureContainer *container)
+ {
+     for (Uint32 i = 0; i < container->textureCount; i += 1) {
++        container->textures[i]->computeReadView = nil;
+         container->textures[i]->handle = nil;
+         SDL_free(container->textures[i]);
+     }
+@@ -1431,6 +1434,11 @@
+     MTLTextureDescriptor *textureDescriptor = [MTLTextureDescriptor new];
+     id<MTLTexture> texture;
+     MetalTexture *metalTexture;
++    const bool storageArray = SDL_GetBooleanProperty(createinfo->props, "bblite.gpu.texture.storage_array", false);
++
++    if (storageArray && (createinfo->type == SDL_GPU_TEXTURETYPE_3D || createinfo->sample_count != SDL_GPU_SAMPLECOUNT_1)) {
++        SET_STRING_ERROR_AND_RETURN("Whole-array storage requires a non-multisampled 2D, array or cube texture", NULL);
++    }
+ 
+     textureDescriptor.textureType = SDLToMetal_TextureType(createinfo->type, createinfo->sample_count > SDL_GPU_SAMPLECOUNT_1);
+     textureDescriptor.pixelFormat = SDLToMetal_TextureFormat(createinfo->format);
+@@ -1480,6 +1488,18 @@
+ 
+     metalTexture = (MetalTexture *)SDL_calloc(1, sizeof(MetalTexture));
+     metalTexture->handle = texture;
++    metalTexture->storageArray = storageArray;
++    if (storageArray && (createinfo->usage & SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_READ) && textureDescriptor.textureType != MTLTextureType2DArray) {
++        metalTexture->computeReadView = [texture newTextureViewWithPixelFormat:textureDescriptor.pixelFormat
++                                                                 textureType:MTLTextureType2DArray
++                                                                      levels:NSMakeRange(0, createinfo->num_levels)
++                                                                      slices:NSMakeRange(0, createinfo->layer_count_or_depth)];
++        if (metalTexture->computeReadView == nil) {
++            metalTexture->handle = nil;
++            SDL_free(metalTexture);
++            SET_STRING_ERROR_AND_RETURN("Failed to create whole-array Metal storage read view", NULL);
++        }
++    }
+     SDL_SetAtomicInt(&metalTexture->referenceCount, 0);
+ 
+     if (renderer->debugMode && SDL_HasProperty(createinfo->props, SDL_PROP_GPU_TEXTURE_CREATE_NAME_STRING)) {
+@@ -3130,10 +3150,14 @@
+ 
+             METAL_INTERNAL_TrackTexture(metalCommandBuffer, texture);
+ 
++            const bool wholeArray = texture->storageArray && storageTextureBindings[i].layer == 0;
++            const MTLTextureType viewType = texture->storageArray
++                                               ? (wholeArray ? MTLTextureType2DArray : MTLTextureType2D)
++                                               : SDLToMetal_TextureType(textureContainer->header.info.type, false);
+             textureView = [texture->handle newTextureViewWithPixelFormat:SDLToMetal_TextureFormat(textureContainer->header.info.format)
+-                                                             textureType:SDLToMetal_TextureType(textureContainer->header.info.type, false)
++                                                             textureType:viewType
+                                                                   levels:NSMakeRange(storageTextureBindings[i].mip_level, 1)
+-                                                                  slices:NSMakeRange(storageTextureBindings[i].layer, 1)];
++                                                                  slices:NSMakeRange(storageTextureBindings[i].layer, wholeArray ? textureContainer->header.info.layer_count_or_depth : 1)];
+ 
+             metalCommandBuffer->computeReadWriteTextures[i] = textureView;
+         }
+@@ -3247,13 +3271,17 @@
+     for (Uint32 i = 0; i < numBindings; i += 1) {
+         textureContainer = (MetalTextureContainer *)storageTextures[i];
+ 
+-        if (metalCommandBuffer->computeReadOnlyTextures[firstSlot + i] != textureContainer->activeTexture->handle) {
++        id<MTLTexture> readView = textureContainer->activeTexture->computeReadView;
++        if (readView == nil) {
++            readView = textureContainer->activeTexture->handle;
++        }
++        if (metalCommandBuffer->computeReadOnlyTextures[firstSlot + i] != readView) {
+             METAL_INTERNAL_TrackTexture(
+                 metalCommandBuffer,
+                 textureContainer->activeTexture);
+ 
+             metalCommandBuffer->computeReadOnlyTextures[firstSlot + i] =
+-                textureContainer->activeTexture->handle;
++                readView;
+ 
+             metalCommandBuffer->needComputeReadOnlyStorageTextureBind = true;
+         }
+@@ -4579,6 +4607,7 @@
+         renderer->queue = [device newCommandQueue];
+ 
+         renderer->props = SDL_CreateProperties();
++        SDL_SetBooleanProperty(renderer->props, "bblite.gpu.storage_texture_array", true);
+         if (verboseLogs) {
+             SDL_LogInfo(SDL_LOG_CATEGORY_GPU, "SDL_GPU Driver: Metal");
+         }

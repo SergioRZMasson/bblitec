@@ -6,12 +6,15 @@ import test from "node:test";
 import { discoverDevelopmentTools } from "../src/development-tools.js";
 import { developmentVcpkgInstall } from "../src/vcpkg-install.js";
 
+const metal = process.platform === "darwin";
+
 test(
-    "SDL Vulkan storage arrays preserve views, mip barriers and cycled allocations",
+    "SDL storage arrays preserve views, mip hazards and cycled allocations",
     {
-        skip:
-            process.platform !== "linux" ||
-            process.env.BBLITE_TEST_VULKAN !== "1",
+        skip: !(metal
+            ? process.env.BBLITE_TEST_METAL === "1"
+            : process.platform === "linux" &&
+              process.env.BBLITE_TEST_VULKAN === "1"),
     },
     () => {
         const tools = discoverDevelopmentTools();
@@ -37,18 +40,23 @@ textureStore(image,vec2i(p.xy),i32(p.z),textureLoad(image,vec2i(p.xy),i32(p.z))+
             // SDL's readonly storage slot is a sampled image without a sampler.
             readArray: `@group(0) @binding(0) var image:texture_2d_array<f32>;
 @group(0) @binding(1) var<storage,read_write> result:array<vec4f>;
+@group(0) @binding(2) var<storage,read> input:array<vec4f>;
+@group(0) @binding(3) var<uniform> offset:vec4f;
 @compute @workgroup_size(1) fn main(@builtin(global_invocation_id) p:vec3u) {
-result[p.x]=textureLoad(image,vec2i(0),i32(p.x),0); }`,
+result[p.x]=textureLoad(image,vec2i(0),i32(p.x),0)+input[p.x]+offset; }`,
             sampleCube: `@group(0) @binding(0) var image:texture_cube<f32>;
 @group(0) @binding(1) var sourceSampler:sampler;
 @group(0) @binding(2) var<storage,read_write> result:array<vec4f>;
+@group(0) @binding(3) var<storage,read> input:array<vec4f>;
+@group(0) @binding(4) var<uniform> offset:vec4f;
 @compute @workgroup_size(1) fn main(@builtin(global_invocation_id) p:vec3u) {
 let directions=array<vec3f,6>(vec3f(1,0,0),vec3f(-1,0,0),vec3f(0,1,0),vec3f(0,-1,0),vec3f(0,0,1),vec3f(0,0,-1));
-result[p.x]=textureSampleLevel(image,sourceSampler,directions[p.x],0); }`,
+result[p.x]=textureSampleLevel(image,sourceSampler,directions[p.x],0)+input[p.x]+offset; }`,
         };
         const run = (command: string, args: string[]): string =>
             execFileSync(command, args, {
                 encoding: "utf8",
+                windowsHide: true,
                 maxBuffer: 16 * 1024 * 1024,
             });
         for (const [name, source] of Object.entries(shaders)) {
@@ -60,8 +68,8 @@ result[p.x]=textureSampleLevel(image,sourceSampler,directions[p.x],0); }`,
                 "main",
                 "--stage",
                 "compute",
-                "--spirv",
-                join(output, `${name}.spv`),
+                metal ? "--msl" : "--spirv",
+                join(output, `${name}.${metal ? "msl" : "spv"}`),
                 "--layout-json",
                 join(output, `${name}.json`),
             ]);
@@ -71,7 +79,8 @@ result[p.x]=textureSampleLevel(image,sourceSampler,directions[p.x],0); }`,
             dependencies.installedDirectory,
             dependencies.triplet,
         );
-        const sdlDirectory = join(prefix, "share/sdl3");
+        const sdlDirectory =
+            process.env.BBLITE_TEST_SDL_DIR ?? join(prefix, "share/sdl3");
         assert.ok(
             existsSync(join(sdlDirectory, "SDL3Config.cmake")),
             `SDL3 package is missing from the selected SDK: ${sdlDirectory}`,
@@ -106,11 +115,13 @@ result[p.x]=textureSampleLevel(image,sourceSampler,directions[p.x],0); }`,
             [output],
             {
                 encoding: "utf8",
+                windowsHide: true,
                 timeout: 60000,
                 maxBuffer: 16 * 1024 * 1024,
                 env: {
                     ...process.env,
                     VK_KHRONOS_VALIDATION_VALIDATE_SYNC: "1",
+                    ...(metal ? { MTL_DEBUG_LAYER: "1" } : {}),
                     SDL_ASSERT: "always_ignore",
                 },
             },
@@ -118,14 +129,15 @@ result[p.x]=textureSampleLevel(image,sourceSampler,directions[p.x],0); }`,
         const log = result.stdout + result.stderr;
         writeFileSync(join(output, "run.log"), log);
         assert.equal(result.status, 0, result.error?.message ?? log);
+        if (metal) assert.match(log, /Metal API Validation Enabled/);
         // The Vulkan loader can report validation failures directly to stderr.
         assert.doesNotMatch(
             log,
-            /VUID-|Validation Error|SYNC-HAZARD|Validation layers not found/i,
+            /VUID-|Validation Error|SYNC-HAZARD|Validation layers not found|failed assertion|MTLDebug.*error/i,
         );
         assert.match(
             result.stdout,
-            /sdl-storage-array-check: 8 cases passed with Vulkan validation/,
+            /sdl-storage-array-check: 8 cases passed with (Vulkan|Metal) validation/,
         );
     },
 );

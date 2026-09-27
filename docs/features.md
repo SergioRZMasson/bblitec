@@ -258,7 +258,7 @@ One-shot completion waits for submitted GPU work and preserves rearming/disposal
 Storage readback validates byte ranges, coalesces identical requests and serializes differing ranges.
 Compute outputs can feed sampled material slots and storage-backed geometry. Mipmap tasks preserve
 source execution gates and command order. Six-layer storage views with cube sampling are qualified
-on Dawn and patched SDL D3D12/Vulkan; other SDL drivers refuse this combination.
+on Dawn and patched SDL D3D12/Vulkan/Metal; other SDL drivers refuse this combination.
 
 ## Cameras and input
 

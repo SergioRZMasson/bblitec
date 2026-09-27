@@ -885,17 +885,17 @@ struct GpuState : SdlGpuDevice {
          * nmeLights, meshU and nodeU before this one arrives.
          */
         SDL_GPUBuffer* params_buffer = nullptr;
-        void clear(SDL_GPUDevice* device) {
+        void clear(SDL_GPUDevice* gpu_device) {
 
             if (blur_h)
-                SDL_ReleaseGPUTexture(device, blur_h);
+                SDL_ReleaseGPUTexture(gpu_device, blur_h);
             if (blur_v)
-                SDL_ReleaseGPUTexture(device, blur_v);
+                SDL_ReleaseGPUTexture(gpu_device, blur_v);
             if (pipeline) {
-                SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
+                SDL_ReleaseGPUGraphicsPipeline(gpu_device, pipeline);
             }
             if (params_buffer) {
-                SDL_ReleaseGPUBuffer(device, params_buffer);
+                SDL_ReleaseGPUBuffer(gpu_device, params_buffer);
             }
 
             *this = {};

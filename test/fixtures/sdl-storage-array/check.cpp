@@ -34,6 +34,11 @@ using Buffer = Owner<SDL_GPUBuffer, SDL_ReleaseGPUBuffer>;
 using Pipeline = Owner<SDL_GPUComputePipeline, SDL_ReleaseGPUComputePipeline>;
 using Sampler = Owner<SDL_GPUSampler, SDL_ReleaseGPUSampler>;
 using Pixel = std::array<float, 4>;
+#ifdef __APPLE__
+constexpr bool metal = true;
+#else
+constexpr bool metal = false;
+#endif
 constexpr Uint32 width = 4;
 constexpr Uint32 stride = 16; // A 256-byte readback row for RGBA32F.
 constexpr Uint32 plane_bytes = stride * width * sizeof(Pixel);
@@ -85,17 +90,19 @@ Texture texture(SDL_GPUDevice* device, SDL_GPUTextureType type, Uint32 layers, U
 }
 Pipeline pipeline(SDL_GPUDevice* device, const std::filesystem::path& directory, const char* name,
                   bool write, bool read = false, bool sampled = false) {
-    std::ifstream file(directory / (std::string(name) + ".spv"), std::ios::binary);
+    std::ifstream file(directory / (std::string(name) + (metal ? ".msl" : ".spv")),
+                       std::ios::binary);
     require(bool(file), "Read shader");
     const std::vector<Uint8> bytes{std::istreambuf_iterator<char>(file),
                                    std::istreambuf_iterator<char>()};
     SDL_GPUComputePipelineCreateInfo info{};
     info.code = bytes.data();
     info.code_size = bytes.size();
-    info.entrypoint = "main";
-    info.format = SDL_GPU_SHADERFORMAT_SPIRV;
+    info.entrypoint = metal ? "main0" : "main";
+    info.format = metal ? SDL_GPU_SHADERFORMAT_MSL : SDL_GPU_SHADERFORMAT_SPIRV;
     info.num_readwrite_storage_textures = write ? 1 : 0;
-    info.num_uniform_buffers = write ? 1 : 0;
+    info.num_uniform_buffers = 1;
+    info.num_readonly_storage_buffers = write ? 0 : 1;
     info.num_readonly_storage_textures = read ? 1 : 0;
     info.num_samplers = sampled ? 1 : 0;
     info.num_readwrite_storage_buffers = write ? 0 : 1;
@@ -204,12 +211,34 @@ void read_views(SDL_GPUDevice* device, SDL_GPUComputePipeline* program, SDL_GPUT
     Buffer buffer{SDL_CreateGPUBuffer(device, &info), {device}};
     require(bool(buffer), "Create shader output");
     auto result = transfer(device, SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD, info.size);
+    // Distinct readonly/writable lengths and a preceding uniform slot exercise
+    // Tint's packed storage-size indices independently of Metal buffer indices.
+    SDL_GPUBufferCreateInfo input_info{};
+    input_info.usage = SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ;
+    input_info.size = sizeof(Pixel);
+    Buffer input{SDL_CreateGPUBuffer(device, &input_info), {device}};
+    require(bool(input), "Create shader input");
+    auto upload = transfer(device, SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, sizeof(Pixel));
+    auto* uploaded = static_cast<Pixel*>(SDL_MapGPUTransferBuffer(device, upload.get(), false));
+    require(uploaded, "Map shader input");
+    *uploaded = {3, 0, 0, 0};
+    SDL_UnmapGPUTransferBuffer(device, upload.get());
     auto* commands = command(device);
+    auto* upload_pass = SDL_BeginGPUCopyPass(commands);
+    require(upload_pass, "Begin shader input upload");
+    const SDL_GPUTransferBufferLocation upload_source{upload.get(), 0};
+    const SDL_GPUBufferRegion upload_target{input.get(), 0, sizeof(Pixel)};
+    SDL_UploadToGPUBuffer(upload_pass, &upload_source, &upload_target, false);
+    SDL_EndGPUCopyPass(upload_pass);
     SDL_GPUStorageBufferReadWriteBinding binding{};
     binding.buffer = buffer.get();
     auto* pass = SDL_BeginGPUComputePass(commands, nullptr, 0, &binding, 1);
     require(pass, "Begin read");
     SDL_BindGPUComputePipeline(pass, program);
+    auto* input_pointer = input.get();
+    SDL_BindGPUComputeStorageBuffers(pass, 0, &input_pointer, 1);
+    const Pixel offset{5, 0, 0, 0};
+    SDL_PushGPUComputeUniformData(commands, 0, offset.data(), sizeof(offset));
     if (sampler) {
         const SDL_GPUTextureSamplerBinding sampled{image, sampler};
         SDL_BindGPUComputeSamplers(pass, 0, &sampled, 1);
@@ -229,7 +258,7 @@ void read_views(SDL_GPUDevice* device, SDL_GPUComputePipeline* program, SDL_GPUT
         static_cast<const Pixel*>(SDL_MapGPUTransferBuffer(device, result.get(), false));
     require(data, "Map shader output");
     for (Uint32 layer = 0; layer < layers; ++layer)
-        require(data[layer] == Pixel{first + static_cast<float>(layer), 2, 3, 1},
+        require(data[layer] == Pixel{first + 8 + static_cast<float>(layer), 2, 3, 1},
                 "Storage/sampler view mismatch");
     SDL_UnmapGPUTransferBuffer(device, result.get());
 }
@@ -243,7 +272,8 @@ void exercise(SDL_GPUDevice* device, const std::filesystem::path& directory) {
         auto image = texture(device, SDL_GPU_TEXTURETYPE_2D_ARRAY, 3, 2, false);
         initialize(device, image.get(), 3, 2);
         auto* commands = command(device);
-        write(commands, single.get(), image.get(), 1, 1, 1, {100, 2, 3, 1});
+        // Upstream Metal retains a one-slice array view for a default array binding.
+        write(commands, metal ? array.get() : single.get(), image.get(), 1, 1, 1, {100, 2, 3, 1});
         auto result = download(device, commands, image.get(), 3, 2);
         submit(device, commands);
         check(device, result.get(), 3, 2, [](Uint32 layer, Uint32 mip) {
@@ -319,9 +349,11 @@ int main(int argc, char** argv) {
         const auto properties = SDL_CreateProperties();
         require(properties &&
                     SDL_SetStringProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING,
-                                          "vulkan") &&
-                    SDL_SetBooleanProperty(
-                        properties, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true) &&
+                                          metal ? "metal" : "vulkan") &&
+                    SDL_SetBooleanProperty(properties,
+                                           metal ? SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN
+                                                 : SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN,
+                                           true) &&
                     SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN,
                                            true) &&
                     SDL_SetPointerProperty(
@@ -330,7 +362,7 @@ int main(int argc, char** argv) {
         std::unique_ptr<SDL_GPUDevice, decltype(&SDL_DestroyGPUDevice)> device{
             SDL_CreateGPUDeviceWithProperties(properties), SDL_DestroyGPUDevice};
         SDL_DestroyProperties(properties);
-        require(bool(device), "Vulkan device");
+        require(bool(device), "GPU device");
         require(SDL_GetBooleanProperty(SDL_GetGPUDeviceProperties(device.get()),
                                        "bblite.gpu.storage_texture_array", false),
                 "Maintained storage-array capability");
@@ -338,8 +370,9 @@ int main(int argc, char** argv) {
         device.reset();
         SDL_Quit();
         require(validation_errors.load() == 0,
-                "Vulkan validation errors or unavailable validation layer");
-        std::puts("sdl-storage-array-check: 8 cases passed with Vulkan validation");
+                "GPU validation errors or unavailable validation layer");
+        std::printf("sdl-storage-array-check: 8 cases passed with %s validation\n",
+                    metal ? "Metal" : "Vulkan");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

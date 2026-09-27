@@ -342,6 +342,13 @@
       "variants": ["vcpkg", "trimmed"]
     },
     {
+      "library": "sdl3",
+      "file": "native/vcpkg-overlay-ports/sdl3/metal-storage-array.patch",
+      "purpose": "Opt-in whole-array Metal storage views preserving sampled texture shape and allocation lifetime",
+      "upstream": { "state": "unsubmitted" },
+      "variants": ["vcpkg", "trimmed"]
+    },
+    {
       "library": "sdl3-image",
       "file": "native/vcpkg-overlay-ports/sdl3-image/dependencies.diff",
       "purpose": "vcpkg's dependency discovery for SDL_image codecs",
