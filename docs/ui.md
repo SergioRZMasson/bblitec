@@ -93,6 +93,7 @@ across the Window mailbox; structural and special text changes rebuild projectio
 Dataset reads distinguish missing (`undefined`) and empty attributes.
 Source append arguments finish before insertion. Canvas backing dimensions are drawable pixels; client
 dimensions and bounding rectangles are CSS pixels. Rectangle reads flush pending layout.
+Pixel ratio, viewport size and input capabilities read host state without flushing pending DOM or canvas writes.
 
 ### File transfer controls
 
@@ -137,7 +138,7 @@ and non-convex tessellation refuse. Opaque full redraws retire covered commands.
 | Grid | Row-major grid/inline-grid; auto/px/fr, minmax(px,fr), integer repeat, implicit rows, gaps/alignment; positive grid-column start/end; intrinsic flexible spans | 256 explicit tracks; flexible spans require percentage width; span minimum-track growth, named/alternate placement, percentage tracks and broader intrinsic functions |
 | Grid items | Cell-relative widths/spacing, anonymous text items, live child/style changes | Percentage heights, baseline alignment and broader replaced-item sizing |
 | Containers | inline-size containment; unnamed nearest-ancestor max-width:Npx queries | Named/min/height/style/scroll-state queries, relative units, other containment types |
-| Media | Reached max-width, portrait/landscape and reduced-motion rules | Reduced motion polls the Windows preference or Android animator scale; other platforms refuse that preference |
+| Media | Reached max-width, portrait/landscape and reduced-motion rules | Reduced motion polls Windows/macOS accessibility preferences, Android animator scale or the Linux desktop portal (standard reduced-motion, then GNOME enable-animations); unavailable preferences refuse |
 | Text | Wrapping/word-break, normal/italic, casing, clip/ellipsis, supported text effects | Browser min-content, oblique, custom overflow, exact shaping/rasterization |
 | Visibility | Inherited visible/hidden with visible descendants; delayed zero-duration stylesheet transitions | collapse; inline writes do not initiate transitions |
 | Borders/backgrounds | Solid sides, px/em/rem widths, length/percentage corner radii, gradients, solid border/padding/content clipping | Slash-separated elliptical radius syntax; gradient/image clipping and broader border composition |
@@ -181,7 +182,7 @@ sources, load/error events and distinct DOMException values are unsupported.
 Normal line height uses the current font's metrics and inherits as a keyword; explicit numeric and
 length values retain their respective inheritance rules.
 
-CSS font-family lists retain their order. Installed named faces load on demand at the requested weight and style;
+CSS font-family lists retain their order and match names case-insensitively. Installed faces load on demand at the requested weight and style;
 an unavailable list uses the default UI face with a diagnostic.
 
 Fonts use DirectWrite on Windows and FreeType with CoreText, Fontconfig or Android system-font discovery

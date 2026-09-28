@@ -359,13 +359,17 @@ export function lowerPbrSceneHookRegistry(context: LoweringContext): string {
     );
     return `${lowerPbrTransmissionTransaction(context)}
 using PbrSceneHook = void (*)(Scene&, Engine&, const std::vector<MeshHandle>&);
-std::optional<js::Set<PbrSceneHook>> pbr_scene_hooks;
+struct PbrSceneHookRegistry {
+    std::optional<js::Set<PbrSceneHook>> hooks;
+};
 // ${context.provenance(module, "_registerPbrSceneHook")}
 void register_pbr_scene_hook(PbrSceneHook hook) {
+    auto& pbr_scene_hooks = js::realm_scratch<PbrSceneHookRegistry>().hooks;
 ${registerBody}
 }
 // ${context.provenance(module, "_getPbrSceneHooks")}
 js::Set<PbrSceneHook> get_pbr_scene_hooks() {
+    auto& pbr_scene_hooks = js::realm_scratch<PbrSceneHookRegistry>().hooks;
 ${getBody}
 }
 // ${context.provenance(builderModule, "buildPbrRenderables")}

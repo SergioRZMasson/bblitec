@@ -651,7 +651,7 @@ export function renderMainCpp(projection: MainCppProjection): ApplicationCpp {
     // `texture:file`: the texture loaders decode inside their own generated
     // TUs, so only a drawn-atlas record puts `bbl::pal::decode_image` here.
     const imageInclude = imageDecodeReached
-        ? "#include <bblite/pal_image.hpp>\n"
+        ? "#include <bblite/features/has_image_decoder.hpp>\n#include <bblite/pal_image.hpp>\n"
         : "";
     const bakedMeshInclude =
         features.includes("mesh:csg") || features.includes("mesh:csg2")

@@ -33,3 +33,23 @@ The compiler remaps its length indices to SDL storage slots.
              [commandBuffer->renderEncoder setFragmentBuffers:commandBuffer->fragmentStorageBuffers
                                                       offsets:offsets
                                                     withRange:NSMakeRange(graphicsPipeline->header.num_fragment_uniform_buffers,
+@@ -2812,6 +2812,19 @@
+     }
+ 
+     if (commandBuffer->needComputeReadOnlyStorageBufferBind) {
++        const Uint32 readonlyCount = computePipeline->header.numReadonlyStorageBuffers;
++        const Uint32 writableCount = computePipeline->header.numReadWriteStorageBuffers;
++        if (readonlyCount + writableCount > 0) {
++            // Tint indexes storage lengths without the preceding uniform slots.
++            Uint32 sizes[((MAX_STORAGE_BUFFERS_PER_STAGE + MAX_COMPUTE_WRITE_BUFFERS + 3) / 4) * 4] = { 0 };
++            for (Uint32 i = 0; i < readonlyCount; i += 1) {
++                sizes[i] = (Uint32)[commandBuffer->computeReadOnlyBuffers[i] length];
++            }
++            for (Uint32 i = 0; i < writableCount; i += 1) {
++                sizes[readonlyCount + i] = (Uint32)[commandBuffer->computeReadWriteBuffers[i] length];
++            }
++            [commandBuffer->computeEncoder setBytes:sizes length:sizeof(sizes) atIndex:30];
++        }
+         if (computePipeline->header.numReadonlyStorageBuffers > 0) {
+             [commandBuffer->computeEncoder setBuffers:commandBuffer->computeReadOnlyBuffers
+                                               offsets:offsets

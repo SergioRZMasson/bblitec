@@ -227,6 +227,8 @@ test("native PBR hook registry and transmission selection agree with source exec
 #include <cassert>
 #include <fstream>
 #include <iostream>
+#include <semaphore>
+#include <thread>
 namespace bbl {
 void enable_scene_transmission(Scene& scene) { scene.transmission_enabled = true; }
 ${lowerPbrSceneHookRegistry(contexts[0]!)}
@@ -258,7 +260,9 @@ void c(Scene&, Engine&, const std::vector<MeshHandle>&) { events.push_back("c");
 void a(Scene&, Engine&, const std::vector<MeshHandle>&) { events.push_back("a"); register_pbr_scene_hook(c); }
 void b(Scene&, Engine&, const std::vector<MeshHandle>&) { events.push_back("b"); if (fail_hook) throw std::runtime_error("hook"); }
 void registry_check(const nlohmann::json& row) {
-    pbr_scene_hooks.reset(); events.clear(); fail_hook = row.at("fail").get<bool>();
+    const js::RealmScope realm;
+    assert(get_pbr_scene_hooks().size() == 0);
+    events.clear(); fail_hook = row.at("fail").get<bool>();
     Engine engine; Scene scene; scene.engine = &engine;
     const auto empty = get_pbr_scene_hooks();
     register_pbr_scene_hook(a); const auto live = get_pbr_scene_hooks();
@@ -270,16 +274,59 @@ void registry_check(const nlohmann::json& row) {
     }
     const nlohmann::json actual{{"events", events}, {"failures", failures}, {"empty", empty.size()}, {"live", live.size()}};
     assert(actual == row.at("expected"));
-    pbr_scene_hooks.reset(); register_pbr_scene_hook(register_pbr_transmission);
+}
+void transmission_check() {
+    const js::RealmScope realm;
+    assert(get_pbr_scene_hooks().size() == 0);
+    register_pbr_scene_hook(register_pbr_transmission);
+    Engine engine; Scene scene; scene.engine = &engine;
     engine.materials.emplace_back().source_transmissive = true; engine.materials[0].source_refraction_intensity = 1e-100;
     engine.meshes.emplace_back().material = MaterialHandle{0};
     run_pbr_scene_hooks_impl(scene, {}); assert(!scene.transmission_enabled);
     run_pbr_scene_hooks_impl(scene, {MeshHandle{0}}); assert(scene.transmission_enabled);
 }
+void parent_hook(Scene& scene, Engine&, const std::vector<MeshHandle>&) { scene.transmission_enabled = true; }
+void worker_hook(Scene& scene, Engine&, const std::vector<MeshHandle>&) { scene.transmission_enabled = false; }
+void realm_registry_check() {
+    {
+        const js::RealmScope realm;
+        assert(get_pbr_scene_hooks().size() == 0);
+        register_pbr_scene_hook(parent_hook);
+        std::binary_semaphore registered(0), inspected(0);
+        std::thread worker([&] {
+            for (int reload = 0; reload < 2; ++reload) {
+                const js::RealmScope worker_realm;
+                assert(get_pbr_scene_hooks().size() == 0);
+                register_pbr_scene_hook(worker_hook);
+                registered.release();
+                inspected.acquire();
+                const auto hooks = get_pbr_scene_hooks();
+                assert(hooks.size() == 1 && hooks.has(worker_hook));
+                Engine engine; Scene scene; scene.engine = &engine; scene.transmission_enabled = true;
+                run_pbr_scene_hooks_impl(scene, {});
+                assert(!scene.transmission_enabled);
+            }
+        });
+        for (int reload = 0; reload < 2; ++reload) {
+            registered.acquire();
+            const auto hooks = get_pbr_scene_hooks();
+            assert(hooks.size() == 1 && hooks.has(parent_hook));
+            Engine engine; Scene scene; scene.engine = &engine;
+            run_pbr_scene_hooks_impl(scene, {});
+            assert(scene.transmission_enabled);
+            inspected.release();
+        }
+        worker.join();
+    }
+    const js::RealmScope reloaded;
+    assert(get_pbr_scene_hooks().size() == 0);
+}
 }
 int main() { nlohmann::json cases; std::ifstream("cases.json") >> cases;
+    bbl::realm_registry_check();
     for (const auto& row : cases.at("selection")) bbl::selection_check(row);
     for (const auto& row : cases.at("registry")) bbl::registry_check(row);
+    bbl::transmission_check();
 }
 `,
     );
@@ -301,7 +348,11 @@ int main() { nlohmann::json cases; std::ifstream("cases.json") >> cases;
         file,
     ]);
     assert.equal(
-        execFileSync(executable, { cwd: directory, encoding: "utf8" }),
+        execFileSync(executable, {
+            cwd: directory,
+            encoding: "utf8",
+            windowsHide: true,
+        }),
         "",
     );
 });

@@ -106,18 +106,22 @@ export function compileSpriteAtlasRecord(
         context.fail(node, "SpriteAtlas premultipliedAlpha must be boolean.");
     }
     const engine = context.requireDefaultEngine(node);
+    // Stored pixel textures still instantiate the variant's file arm. Omit
+    // its decode continuation when codec-free shipping builds always throw.
     const fileTextureSetup = (
         cpp: string,
         atlas: string,
         decoded: string,
     ): string =>
+        `if constexpr (BBLITE_HAS_IMAGE_DECODER) { ` +
         `const auto ${decoded} = bbl::pal::decode_image(bbl::js::ArrayBuffer(${cpp}.data.bytes)); ` +
         `${atlas}.rgba = ${decoded}.rgba; ` +
         `if (${cpp}.data.premultiply_alpha) { ` +
         `bbl::pal::DecodedImage premultiplied{${decoded}.width, ${decoded}.height, ${atlas}.rgba}; ` +
         `bbl::pal::premultiply_image_alpha(premultiplied); ` +
         `${atlas}.rgba = std::move(premultiplied.rgba); } ` +
-        `${atlas}.sampler = ${cpp}.data.sampler; `;
+        `${atlas}.sampler = ${cpp}.data.sampler; ` +
+        `} else { throw std::runtime_error("This scene was built without image decoding."); } `;
     const variantTexture =
         texture.textureStorage !== "file" &&
         texture.textureStorage !== "pixels" &&

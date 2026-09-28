@@ -38,7 +38,7 @@ sudo apt-get install build-essential clang cmake ninja-build git curl zip unzip 
   libltdl-dev libx11-dev libx11-xcb-dev libxft-dev libxext-dev libxrandr-dev libxinerama-dev \
   libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev \
   libwayland-dev wayland-protocols libxkbcommon-dev libegl1-mesa-dev \
-  libibus-1.0-dev libfontconfig1-dev libvulkan-dev mesa-vulkan-drivers \
+  libibus-1.0-dev libdbus-1-dev libfontconfig1-dev libvulkan-dev mesa-vulkan-drivers \
   fonts-noto-core fonts-noto-color-emoji
 
 git clone https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
@@ -399,6 +399,7 @@ dependencies' notices through `src/package-output.ts` and `src/package-notices.t
 | macOS | Universal x86_64+arm64, Clang/Ninja, SDL_GPU/Metal, LTO/dead-strip/lipo, ad-hoc signing |
 | iOS | ARM64 iPhone+iPad, SDL_GPU/Metal, trimmed static dependencies, LTO/dead-strip, unsigned `.app` |
 
+Linux motion preferences require a session D-Bus desktop portal exposing reduced-motion or GNOME enable-animations.
 Linux/macOS packages omit Dawn and retain executable permissions. RUNTIME-LIBRARIES.txt lists host
 libraries/frameworks. Linux requires `lld` for shipping. macOS packages are not Developer ID signed or
 notarized; both slices must share payload/settings and have no external dynamic dependencies. Startup
