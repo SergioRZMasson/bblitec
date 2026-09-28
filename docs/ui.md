@@ -182,7 +182,7 @@ sources, load/error events and distinct DOMException values are unsupported.
 Normal line height uses the current font's metrics and inherits as a keyword; explicit numeric and
 length values retain their respective inheritance rules.
 
-CSS font-family lists retain their order. Installed named faces load on demand at the requested weight and style;
+CSS font-family lists retain their order and match names case-insensitively. Installed faces load on demand at the requested weight and style;
 an unavailable list uses the default UI face with a diagnostic.
 
 Fonts use DirectWrite on Windows and FreeType with CoreText, Fontconfig or Android system-font discovery

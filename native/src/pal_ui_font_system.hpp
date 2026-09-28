@@ -52,6 +52,8 @@ class SystemUiFontEngine final : public Rml::FontEngineInterface {
         if (quote || escaped)
             throw std::runtime_error("Unterminated retained UI font-family name.");
         names.push_back(Rml::StringUtilities::StripWhitespace(name));
+        for (auto& family : names)
+            family = Rml::StringUtilities::ToLower(family);
         return families_.emplace(value, std::move(names)).first->second;
     }
 

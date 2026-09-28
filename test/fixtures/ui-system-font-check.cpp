@@ -26,6 +26,7 @@ struct Renderer final : Rml::FontEngineInterface {
     }
     Rml::FontFaceHandle GetFontFaceHandle(const Rml::String& family, Style style, Weight weight,
                                           int) override {
+        assert(family == Rml::StringUtilities::ToLower(family));
         last_query_weight = weight;
         return loaded.contains(Key{family, style, weight}) ? 1 : 0;
     }
@@ -87,5 +88,14 @@ int main() {
     engine.Shutdown();
     request("variable", 650);
     assert(renderer.loads == loads + 1 && discoveries == prior + 2);
+    request("'MiSsInG', \"VaRiAbLe\"", 650);
+    request("VARIABLE", 650);
+    assert(renderer.loads == loads + 1 && discoveries == prior + 3);
+    request("'Mixed, Family'", 400);
+    assert(renderer.loaded.contains(Key{"mixed, family", Style::Normal, Weight::Normal}));
+    const int mixed_discoveries = discoveries;
+    const int mixed_loads = renderer.loads;
+    request("\"MIXED, FAMILY\"", 400);
+    assert(discoveries == mixed_discoveries && renderer.loads == mixed_loads);
     std::cout << "ui-system-font-check: ok\n";
 }
