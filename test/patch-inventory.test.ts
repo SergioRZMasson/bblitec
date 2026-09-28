@@ -61,22 +61,23 @@ test(
             "0002-core-only.patch",
         ]);
         // The trimmed SDL omits vcpkg's FreeBSD packaging fix. Its existing
-        // numbered patches precede the shared Vulkan additions.
+        // numbered patches precede the shared GPU additions.
         const trimmed = names("sdl3", ["trimmed"]);
-        const vulkan = [
+        const gpu = [
             "vulkan-storage-array.patch",
             "vulkan-canvas-storage.patch",
+            "metal-storage-array.patch",
         ];
         assert.equal(trimmed.includes("fix-freebsd.patch"), false);
-        assert.deepEqual(trimmed.slice(-4), [
+        assert.deepEqual(trimmed.slice(-5), [
             "0009-static-no-dynapi.patch",
             "0010-no-joystick-device-names.patch",
-            ...vulkan,
+            ...gpu,
         ]);
-        assert.equal(trimmed.length, 11);
+        assert.equal(trimmed.length, 12);
         const port = names("sdl3", ["vcpkg"]);
         assert.equal(port[0], "fix-freebsd.patch");
-        assert.deepEqual(port.slice(-2), vulkan);
+        assert.deepEqual(port.slice(-3), gpu);
         // A port feature selects its own patch.
         assert.equal(
             names("freetype", ["vcpkg"]).includes("subpixel-rendering.patch"),
