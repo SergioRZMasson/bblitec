@@ -1,0 +1,9 @@
+{
+  "angles": ["reuse", "simplification", "efficiency", "altitude"],
+  "findings": [
+    {
+      "summary": "Remove the PBR realm fixture's redundant completion semaphore; the next registration handshake and final join already provide the required ordering.",
+      "applied": true
+    }
+  ]
+}
