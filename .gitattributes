@@ -21,6 +21,8 @@
 # That context prefix also precedes tabs when the upstream source uses them.
 *.patch text eol=lf whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 *.diff text eol=lf whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+# DecoratorGradient.cpp contains CRLF in the pinned upstream Git blob.
+native/patches/rmlui/0026-gradient-opacity.patch -text
 *.png binary
 *.ts text eol=lf
 *.yml text eol=lf

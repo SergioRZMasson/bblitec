@@ -1,0 +1,198 @@
+Allow each decorator layer its own length/percentage size and position. Geometry
+and gradient coordinates use a scoped paint box; layout, children and paint order
+remain unchanged. Layers requiring overflow or rounded clipping refuse explicitly.
+
+diff --git a/Include/RmlUi/Core/Element.h b/Include/RmlUi/Core/Element.h
+--- a/Include/RmlUi/Core/Element.h
++++ b/Include/RmlUi/Core/Element.h
+@@ -27,6 +27,7 @@
+ class ElementDocument;
+ class ElementScroll;
+ class ElementStyle;
++class ElementEffects;
+ class LayoutEngine;
+ class ContainerBox;
+ class InlineLevelBox;
+@@ -798,9 +799,12 @@
+ 	ElementAnimationList animations;
+ 
+ 	ElementMeta* meta;
++	// A decorator-local paint box never changes layout or the authored tree.
++	const RenderBox* decorator_render_box = nullptr;
+ 
+ 	friend class Rml::Context;
+ 	friend class Rml::ElementStyle;
++	friend class Rml::ElementEffects;
+ 	friend class Rml::ContainerBox;
+ 	friend class Rml::InlineLevelBox;
+ 	friend class Rml::ReplacedBox;
+diff --git a/Include/RmlUi/Core/StyleSheetTypes.h b/Include/RmlUi/Core/StyleSheetTypes.h
+--- a/Include/RmlUi/Core/StyleSheetTypes.h
++++ b/Include/RmlUi/Core/StyleSheetTypes.h
+@@ -30,11 +30,17 @@
+ };
+ using NamedDecoratorMap = UnorderedMap<String, NamedDecorator>;
+ 
++// Optional independent image box: / width height / x y, in lengths or percentages.
++struct DecoratorBox {
++    bool sized = false;
++    Vector2<NumericValue> size, position;
++};
+ struct DecoratorDeclaration {
+ 	String type;
+ 	DecoratorInstancer* instancer;
+ 	PropertyDictionary properties;
+ 	BoxArea paint_area;
++	DecoratorBox box;
+ };
+ struct DecoratorDeclarationList {
+ 	Vector<DecoratorDeclaration> list;
+diff --git a/Source/Core/Element.cpp b/Source/Core/Element.cpp
+--- a/Source/Core/Element.cpp
++++ b/Source/Core/Element.cpp
+@@ -482,6 +482,7 @@
+ 
+ RenderBox Element::GetRenderBox(BoxArea fill_area, int index)
+ {
++	if (decorator_render_box) return *decorator_render_box;
+ 	RMLUI_ASSERTMSG(fill_area >= BoxArea::Border && fill_area <= BoxArea::Content,
+ 		"Render box can only be generated with fill area of border, padding or content.");
+ 
+diff --git a/Source/Core/ElementEffects.cpp b/Source/Core/ElementEffects.cpp
+--- a/Source/Core/ElementEffects.cpp
++++ b/Source/Core/ElementEffects.cpp
+@@ -8,6 +8,7 @@
+ #include "../../Include/RmlUi/Core/Profiling.h"
+ #include "../../Include/RmlUi/Core/StyleSheet.h"
+ #include "ElementStyle.h"
++#include <stdexcept>
+ 
+ namespace Rml {
+ 
+@@ -81,6 +82,7 @@
+ 					entry.decorator_data = 0;
+ 					entry.decorator = decorator;
+ 					entry.paint_area = decorators_ptr->list[i].paint_area;
++					entry.box = decorators_ptr->list[i].box;
+ 					if (entry.paint_area == BoxArea::Auto)
+ 						entry.paint_area = (id == PropertyId::Decorator ? BoxArea::Padding : BoxArea::Border);
+ 
+@@ -137,9 +139,37 @@
+ 			{
+ 				const DecoratorDataHandle old_data = decorator.decorator_data;
+ 
+-				decorator.decorator_data = decorator.decorator->GenerateElementData(element, decorator.paint_area);
+-				if (!decorator.decorator_data)
+-					decorator_data_failed = true;
++                bool paints = true;
++                const auto generate = [&]() {
++                    if (!decorator.box.sized)
++                        return decorator.decorator->GenerateElementData(element, decorator.paint_area);
++                    RenderBox paint_box = element->GetRenderBox(decorator.paint_area);
++                    const Vector2f bounds = paint_box.GetFillSize();
++                    Vector2f size, position;
++                    for (int axis = 0; axis < 2; ++axis) {
++                        size[axis] = element->ResolveNumericValue(decorator.box.size[axis], bounds[axis]);
++                        position[axis] = element->ResolveNumericValue(decorator.box.position[axis], bounds[axis] - size[axis]);
++                    }
++                    paints = size.x > 0 && size.y > 0 && bounds.x > 0 && bounds.y > 0;
++                    if (!paints) return DecoratorDataHandle(0);
++                    for (int axis = 0; axis < 2; ++axis)
++                        if (position[axis] < -0.01f || position[axis] + size[axis] > bounds[axis] + 0.01f)
++                            throw std::runtime_error("Sized UI background layers must fit inside their paint box.");
++                    for (const auto radius : paint_box.GetBorderRadius())
++                        if (radius.x > 0 || radius.y > 0)
++                            throw std::runtime_error("Sized UI background layers with rounded clipping are not represented.");
++                    const Vector2f offset = paint_box.GetFillOffset() + position;
++                    paint_box = RenderBox(size, paint_box.GetBorderOffset(), {offset.y, 0, 0, offset.x}, {});
++                    // Restore even if a renderer refuses a shader or allocation.
++                    struct RestoreBox {
++                        const RenderBox*& slot;
++                        ~RestoreBox() { slot = nullptr; }
++                    } restore{element->decorator_render_box};
++                    element->decorator_render_box = &paint_box;
++                    return decorator.decorator->GenerateElementData(element, decorator.paint_area);
++                };
++                decorator.decorator_data = generate();
++                if (paints && !decorator.decorator_data) decorator_data_failed = true;
+ 
+ 				// Release old element data after generating new data, so that the decorator can reuse any cache.
+ 				if (old_data)
+diff --git a/Source/Core/ElementEffects.h b/Source/Core/ElementEffects.h
+--- a/Source/Core/ElementEffects.h
++++ b/Source/Core/ElementEffects.h
+@@ -2,6 +2,7 @@
+ 
+ #include "../../Include/RmlUi/Core/CompiledFilterShader.h"
+ #include "../../Include/RmlUi/Core/Types.h"
++#include "../../Include/RmlUi/Core/StyleSheetTypes.h"
+ 
+ namespace Rml {
+ 
+@@ -39,6 +40,7 @@
+ 		SharedPtr<const Decorator> decorator;
+ 		DecoratorDataHandle decorator_data;
+ 		BoxArea paint_area;
++		DecoratorBox box;
+ 	};
+ 	using DecoratorEntryList = Vector<DecoratorEntry>;
+ 
+diff --git a/Source/Core/PropertyParserDecorator.cpp b/Source/Core/PropertyParserDecorator.cpp
+--- a/Source/Core/PropertyParserDecorator.cpp
++++ b/Source/Core/PropertyParserDecorator.cpp
+@@ -1,4 +1,6 @@
+ #include "PropertyParserDecorator.h"
++#include "../../Include/RmlUi/Core/StyleSheetSpecification.h"
++#include "../../Include/RmlUi/Core/PropertyParser.h"
+ #include "../../Include/RmlUi/Core/Decorator.h"
+ #include "../../Include/RmlUi/Core/Factory.h"
+ #include "../../Include/RmlUi/Core/Profiling.h"
+@@ -59,8 +61,28 @@
+ 	decorators.list.reserve(decorator_string_list.size());
+ 
+ 	// Get or instance each decorator in the comma-separated string list
+-	for (const String& decorator_string : decorator_string_list)
+-	{
++	for (const String& layer : decorator_string_list)
++    {
++        StringList parts;
++        StringUtilities::ExpandString(parts, layer, '/', '(', ')');
++        if (parts.size() != 1 && parts.size() != 3) return false;
++        const String& decorator_string = parts.front();
++        DecoratorBox box;
++        if (parts.size() == 3) {
++            box.sized = true;
++            for (int pair = 0; pair < 2; ++pair) {
++                StringList values;
++                StringUtilities::ExpandString(values, parts[pair + 1], ' ');
++                if (values.size() != 2) return false;
++                for (int axis = 0; axis < 2; ++axis) {
++                    Property value;
++                    if (!StyleSheetSpecification::GetParser("length_percent")->ParseValue(value, values[axis], {})) return false;
++                    const NumericValue numeric = value.GetNumericValue();
++                    if (pair == 0 && numeric.number < 0) return false;
++                    (pair == 0 ? box.size : box.position)[axis] = numeric;
++                }
++            }
++        }
+ 		const size_t shorthand_open = decorator_string.find('(');
+ 		const size_t shorthand_close = decorator_string.rfind(')');
+ 		const bool invalid_parenthesis = (shorthand_open == String::npos || shorthand_close == String::npos || shorthand_open >= shorthand_close);
+@@ -90,7 +112,7 @@
+ 		if (invalid_parenthesis)
+ 		{
+ 			// We found no parenthesis, that means the value must be a name of a @decorator rule.
+-			decorators.list.emplace_back(DecoratorDeclaration{decorator_string.substr(0, keywords_begin), nullptr, {}, paint_area});
++			decorators.list.emplace_back(DecoratorDeclaration{decorator_string.substr(0, keywords_begin), nullptr, {}, paint_area, box});
+ 		}
+ 		else
+ 		{
+@@ -120,7 +142,7 @@
+ 			// Set unspecified values to their defaults
+ 			specification.SetPropertyDefaults(properties);
+ 
+-			decorators.list.emplace_back(DecoratorDeclaration{type, instancer, std::move(properties), paint_area});
++			decorators.list.emplace_back(DecoratorDeclaration{type, instancer, std::move(properties), paint_area, box});
+ 		}
+ 	}
+ 

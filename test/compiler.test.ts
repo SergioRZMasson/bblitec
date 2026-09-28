@@ -9919,12 +9919,6 @@ test("switches synthetic intrinsic width with active hover width rules", () => {
     assert.match(result.cpp, /--bbl-intrinsic-min-width:180px/);
 
     const projection = palUiRmlSource;
-    const matchingRules = projection.slice(
-        projection.indexOf("for_each_matching_style_rule"),
-        projection.indexOf("void sync_style_sheet"),
-    );
-    assert.match(matchingRules, /rule\.hover && !hovered/);
-    assert.match(matchingRules, /IsPseudoClassSet\("hover"\)/);
     const intrinsic = projection.slice(
         projection.indexOf("bool has_active_authored_width"),
         projection.indexOf("void render_canvas("),
@@ -11024,7 +11018,7 @@ test("lowers conditional retained UI gradients to RmlUi decorators", () => {
     assert.match(result.cpp, /background-color:rgba\(40,40,48,.7\)/);
 });
 
-test("projects the layered voxel crosshair into retained PAL geometry", () => {
+test("projects independently sized gradient layers into RmlUi decorators", () => {
     const result = compileSource(`
         import { createEngine } from "@babylonjs/lite";
 
@@ -11043,7 +11037,10 @@ test("projects the layered voxel crosshair into retained PAL geometry", () => {
         void main();
     `);
 
-    assert.match(result.cpp, /--bbl-crosshair:#fff/);
+    assert.match(
+        result.cpp,
+        /decorator:linear-gradient\(#fff,#fff\) padding-box \/ 2px 22px \/ 50% 50%,linear-gradient\(#fff,#fff\) padding-box \/ 22px 2px \/ 50% 50%/,
+    );
     assert.doesNotMatch(result.cpp, /decorator:[^";]*no-repeat/);
     assert.doesNotMatch(result.cpp, /mix-blend-mode/);
 });

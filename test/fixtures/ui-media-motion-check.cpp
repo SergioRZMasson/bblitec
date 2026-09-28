@@ -55,17 +55,17 @@ int main() {
         pal::update_ui_rml_runtime(runtime, 640, 480);
         assert(!runtime.observes_motion_preference);
         ui_add_style_rule(engine, sheet, UiStyleSelectorKind::Class, "panel", "", "", false, -1,
-                          "--bbl-crosshair:#ff0000;", UiScrollbarPart::None, false, false,
+                          "--bbl-intrinsic-min-width:10px;", UiScrollbarPart::None, false, false,
                           UiMotionPreference::Reduce);
         pal::update_ui_rml_runtime(runtime, 640, 480);
         assert(runtime.observes_motion_preference);
-        assert(runtime.projected_elements.at(panel.value).crosshair_color.empty());
+        assert(runtime.projected_elements.at(panel.value).intrinsic_min_width.empty());
         reduced = true;
         pal::update_ui_rml_runtime(runtime, 640, 480);
-        assert(!runtime.projected_elements.at(panel.value).crosshair_color.empty());
+        assert(!runtime.projected_elements.at(panel.value).intrinsic_min_width.empty());
         reduced = false;
         pal::update_ui_rml_runtime(runtime, 640, 480);
-        assert(runtime.projected_elements.at(panel.value).crosshair_color.empty());
+        assert(runtime.projected_elements.at(panel.value).intrinsic_min_width.empty());
     }
     {
         Engine engine;

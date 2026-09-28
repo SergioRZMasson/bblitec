@@ -67,13 +67,15 @@ int main() {
         color(direct, 255, 0, 0);
         color(nested, 17, 17, 17);
         color(root, 0, 0, 255);
-        const auto& div_rule = engine.ui_elements.at(sheet.value).style_rules.front();
-        assert(pal::ui_style_rule_matches(engine, direct, div_rule));
-        assert(!pal::ui_style_rule_matches(engine, nested, div_rule));
+        assert(runtime.style_selectors.matches(runtime.projected_elements.at(direct.value).element,
+                                               0));
+        assert(!runtime.style_selectors.matches(runtime.projected_elements.at(nested.value).element,
+                                                0));
         ui_remove(engine, direct);
         ui_append_to_root(engine, direct);
         color(direct, 0, 0, 255);
-        assert(!pal::ui_style_rule_matches(engine, direct, div_rule));
+        assert(!runtime.style_selectors.matches(runtime.projected_elements.at(direct.value).element,
+                                                0));
         ui_remove(engine, direct);
         ui_append_child(engine, alternate, direct);
         color(direct, 0, 255, 0);

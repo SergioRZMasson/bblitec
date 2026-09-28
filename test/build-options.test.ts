@@ -135,11 +135,7 @@ test("keeps RmlUi recording backend-neutral and realizes it in scene and sprite 
     );
     assert.match(projection, /class UiRenderRecorder/);
     assert.match(projection, /record_ui_rml_frame/);
-    assert.match(
-        projection,
-        /take_crosshair_color[\s\S]{0,120}--bbl-crosshair/,
-    );
-    assert.match(projection, /append_crosshair[\s\S]{0,900}SetInnerRML/);
+    assert.doesNotMatch(projection, /crosshair/);
     // One compositor per backend: the scene renderer passes its sample
     // count and gets the multisampled layer; sprite and Window hosts blend
     // directly.
