@@ -93,6 +93,7 @@ across the Window mailbox; structural and special text changes rebuild projectio
 Dataset reads distinguish missing (`undefined`) and empty attributes.
 Source append arguments finish before insertion. Canvas backing dimensions are drawable pixels; client
 dimensions and bounding rectangles are CSS pixels. Rectangle reads flush pending layout.
+Pixel ratio, viewport size and input capabilities read host state without flushing pending DOM or canvas writes.
 
 ### File transfer controls
 

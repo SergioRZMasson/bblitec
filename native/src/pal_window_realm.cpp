@@ -622,21 +622,37 @@ void update_window_document() {
         }
     }
 }
-double window_device_pixel_ratio() {
+namespace {
+std::shared_ptr<const LayoutSnapshot> window_host_layout() {
+    auto& doc = current_document();
+    {
+        const std::lock_guard lock(doc.host->mutex);
+        if (doc.host->stopping)
+            throw WorkerTerminated{};
+        // Display metrics do not depend on pending DOM or canvas writes.
+        // Leave doc.layout adoption to update_window_document, which also
+        // propagates rectangles and canvas sizes to the owning realm.
+        if (doc.host->layout)
+            return doc.host->layout;
+    }
+    // The first read still needs the host's initial layout and display scale.
     update_window_document();
-    const auto& doc = current_document();
-    return doc.layout ? doc.layout->pixel_ratio : 1;
+    return doc.layout;
+}
+} // namespace
+
+double window_device_pixel_ratio() {
+    const auto layout = window_host_layout();
+    return layout ? layout->pixel_ratio : 1;
 }
 InputCapabilities window_input_capabilities() {
-    update_window_document();
-    const auto& layout = current_document().layout;
+    const auto layout = window_host_layout();
     if (!layout)
         throw std::logic_error("Window input has no layout snapshot.");
     return layout->input;
 }
 UiClientRect window_viewport_size() {
-    update_window_document();
-    const auto& layout = current_document().layout;
+    const auto layout = window_host_layout();
     if (!layout)
         throw std::logic_error("Window viewport has no layout snapshot.");
     return {0, 0, std::round(layout->width / layout->pixel_ratio),

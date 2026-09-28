@@ -113,6 +113,70 @@ struct InputOrderPresenter final : WindowPresenter {
 std::shared_ptr<WindowPresenter> create_window_sdl_gpu_presenter(SDL_Window*) {
     return std::make_shared<InputOrderPresenter>();
 }
+
+static void check_host_metrics(UiElementHandle canvas) {
+    auto& doc = current_document();
+    auto& host = *doc.host;
+    update_window_document();
+    const auto adopted = doc.layout;
+    assert(adopted);
+    const auto previous_box = ui_element(doc.engine, canvas).client_rect;
+    auto latest = std::make_shared<LayoutSnapshot>(*adopted);
+    latest->width = 960;
+    latest->height = 540;
+    latest->pixel_ratio = 2;
+    latest->input = {PointerPrecision::Coarse, false};
+    latest->rectangles[canvas.value] = {150, 50, 160, 90};
+    std::uint64_t requested = 0;
+    {
+        // The host is awaiting this input transaction. With no pending
+        // document, its independently published metrics remain stable.
+        std::lock_guard lock(host.mutex);
+        assert(!host.pending);
+        requested = host.requested;
+        host.layout = latest;
+    }
+    assert(window_device_pixel_ratio() == 2);
+    const auto viewport = window_viewport_size();
+    assert(viewport.width == 480 && viewport.height == 270);
+    assert(window_input_capabilities() == latest->input);
+    assert(doc.layout == adopted);
+    const auto unchanged = ui_element(doc.engine, canvas).client_rect;
+    assert(unchanged.left == previous_box.left && unchanged.top == previous_box.top &&
+           unchanged.width == previous_box.width && unchanged.height == previous_box.height);
+    update_window_document();
+    assert(doc.layout == latest);
+    const auto updated = ui_element(doc.engine, canvas).client_rect;
+    assert(updated.left == 150 && updated.top == 50 && updated.width == 160 &&
+           updated.height == 90);
+    {
+        std::lock_guard lock(host.mutex);
+        assert(host.requested == requested && !host.pending);
+        host.layout = adopted;
+    }
+    update_window_document();
+
+    const auto published_canvas_revision = doc.published_canvas_revision;
+    for (int stroke = 0; stroke < 54; ++stroke) {
+        ui_canvas_begin_path(doc.engine, canvas);
+        ui_canvas_move_to(doc.engine, canvas, 0, stroke);
+        ui_canvas_line_to(doc.engine, canvas, 40, stroke);
+        ui_canvas_stroke(doc.engine, canvas);
+        assert(window_device_pixel_ratio() == adopted->pixel_ratio);
+        const auto size = window_viewport_size();
+        assert(size.width == std::round(adopted->width / adopted->pixel_ratio) &&
+               size.height == std::round(adopted->height / adopted->pixel_ratio));
+        assert(window_input_capabilities() == adopted->input);
+        assert(doc.published_canvas_revision == published_canvas_revision);
+        std::lock_guard lock(host.mutex);
+        assert(host.requested == requested && !host.pending);
+    }
+    assert(ui_element(doc.engine, canvas).canvas->draws.size() == 54);
+    update_window_document();
+    assert(doc.published_canvas_revision == doc.engine.ui_canvas_revision);
+    std::lock_guard lock(host.mutex);
+    assert(host.requested == requested + 1 && host.completed == host.requested);
+}
 } // namespace bbl::pal
 
 int main() {
@@ -224,6 +288,10 @@ int main() {
                          "position:absolute;left:20px;top:20px;width:80px;height:30px;");
         ui_set_text(engine, button, "Click");
         ui_append_to_root(engine, button);
+        const auto canvas = ui_create_element(engine, "canvas");
+        ui_set_attribute(engine, canvas, "style",
+                         "position:absolute;left:150px;top:20px;width:40px;height:60px;");
+        ui_append_to_root(engine, canvas);
         const auto frame = std::make_shared<EventLoop::AnimationCallback>();
         *frame = [&realm, weak = std::weak_ptr(frame)](double) {
             document_live.store(true);
@@ -233,7 +301,7 @@ int main() {
         };
         realm.request_animation_frame(*frame);
         on_dom_pointer(engine, DomEventTarget::node(button.value), "pointerdown", 1,
-                       [button, frame](const PlatformMouseEvent& pointer) {
+                       [button, canvas, frame](const PlatformMouseEvent& pointer) {
                            animation_at_down = animation_count;
                            input_phase.store(1);
                            if (prevent_down)
@@ -246,6 +314,7 @@ int main() {
                                const auto bounds = window_element_size(button);
                                assert(bounds.width == 80);
                            }
+                           check_host_metrics(canvas);
                            // The following packets must see a newly added listener even
                            // before another document snapshot is published.
                            on_dom_pointer(window_document_engine(), DomEventTarget::window(),
