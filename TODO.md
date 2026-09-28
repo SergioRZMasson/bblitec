@@ -4,11 +4,6 @@ Internal work, qualification, performance and refusal defects. Capability gaps a
 [features](docs/features.md) and [UI](docs/ui.md); [audit](audit.md) tracks audit findings;
 [status](docs/status.md) owns measurements.
 
-## UI
-
-- [ ] Match live style rules through RmlUi instead of `UiSelectorMatcher` (`ui_selector_match.hpp`; `pal_ui_rml.cpp`), keeping authored-tree queries, generated nodes and input state; measure `Element::Matches` reparsing before caching it.
-- [ ] Replace the private `--bbl-crosshair` bridge and its fixed 22 px bar markup (`ui-projection.ts`; `pal_ui_rml.cpp`) with general layered-background projection.
-
 ## Qualification
 
 - [ ] Qualify `playroom` startup parity on both backends without changing its source, references or gates.

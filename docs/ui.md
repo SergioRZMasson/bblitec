@@ -7,7 +7,7 @@ Typed DOM/CSS/Canvas2D operations project into RmlUi. SDL_GPU and Dawn consume t
 | Area | Owner |
 | --- | --- |
 | Layout, flexbox, animations, transitions, controls | RmlUi |
-| Selectors | RmlUi supports queries, matches/closest, combinators, attributes, positional forms and negation |
+| Live style selectors | RmlUi matches cached selector sheets against current elements; authored-tree DOM queries retain their own matcher |
 | Shadows, gradients, filters | RmlUi effects/decorators; backend render hooks supply layers, masks, textures and shaders |
 | Browser projection | Compiler admission, DOM ownership, events, CSS translation and compatibility patches |
 
@@ -146,6 +146,7 @@ and non-convex tessellation refuse. Opaque full redraws retire covered commands.
 | Raster border images | Packaged stretch slices, number/percentage slices, live widths | Outset, center fill, repeat, SVG, longhands, runtime-generated declarations |
 | Images | Centered fill/contain/cover/none/scale-down; content-box clipping | object-position; Canvas2D supports fill only |
 | Raster backgrounds | Single packaged image, explicit inheritance, centered contain/cover, natural-size repeat and zero sizing | Sized repetition, arbitrary sizes/positions and multiple layers |
+| Gradient backgrounds | Ordered linear/radial/conic layers in the background shorthand; no-repeat layers with independent length/percentage sizes and keyword/length/percentage positions | Sized repetition, gradient longhands, layers extending outside their paint box or requiring rounded clipping |
 | Transforms/clipping | Uniform nonnegative scale composed before transform; empty rectangular clips retain layout/focus | Nonuniform scale longhand and nonempty clip rectangles |
 | Scrollbars | auto/thin/none widths, auto/two-color styles, selected WebKit parts, stable gutter | Both-edge/vertical/viewport gutters; orientation states, track-piece, resizer |
 | Overscroll | Per-axis auto/contain/none through the native scroll path | Browser edge handoff/bounce/navigation; contain and none share behavior |

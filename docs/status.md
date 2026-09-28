@@ -270,11 +270,11 @@ Unchanged pinned applications, including their reached source and asset graphs.
 
 | Application | Preview | SDL_GPU | Dawn | Coverage |
 | --- | :---: | ---: | ---: | --- |
-| Ocean | <img src="images/scenes/ocean.png" alt="Ocean rendering" width="160"> | 0.302 / 0.297 | 0.302 / 0.297 | Spectral ocean; compute FFT and mipmaps; procedural sky; buoyancy; retained controls; canvas-only MAD: 0.005 / 0.005 on both backends. |
+| Ocean | <img src="images/scenes/ocean.png" alt="Ocean rendering" width="160"> | 0.301 / 0.297 | 0.303 / 0.298 | Spectral ocean; compute FFT and mipmaps; procedural sky; buoyancy; retained controls; canvas-only MAD: 0.005 / 0.005 on both backends. |
 | Offscreen (Worker) | <img src="images/scenes/offscreen.png" alt="Offscreen main and worker views" width="160"> | $\color{#1a7f37}{\textsf{0.423}} / \color{#9a6700}{\textsf{0.549}}$ | $\color{#1a7f37}{\textsf{0.423}} / \color{#9a6700}{\textsf{0.549}}$ | Dedicated Worker realms; transferred canvases; retained blocking control. UI and localized lens residuals; canvas-only MAD: 0.001 / 0.002 on both backends. |
 | Tetris | <img src="images/scenes/tetris.png" alt="Tetris rendering" width="160"> | $\color{#cf222e}{\textsf{1.155}} / \color{#9a6700}{\textsf{0.918}}$ | $\color{#cf222e}{\textsf{1.155}} / \color{#9a6700}{\textsf{0.918}}$ | Thin-instance game; audio; retained UI. UI residual; no-UI MAD: 0.093 / 0.101 on both backends. |
 | Doom | <img src="images/scenes/doom.png" alt="Doom rendering" width="160"> | 0.001 / 0.001 | 0.001 / 0.001 | WAD game; sprites; audio; retained UI. |
-| LibreQuake | <img src="images/scenes/quake.png" alt="LibreQuake rendering" width="160"> | 0.039 / 0.038 | 0.039 / 0.038 | BSP/WAD2/MDL game; audio; Canvas2D HUD. |
+| LibreQuake | <img src="images/scenes/quake.png" alt="LibreQuake rendering" width="160"> | 0.027 / 0.027 | 0.027 / 0.027 | BSP/WAD2/MDL game; audio; Canvas2D HUD. |
 | Torus States | <img src="images/scenes/torus-states.png" alt="Torus States rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Frame graph; offscreen effects; bloom. |
 | Platformer | <img src="images/scenes/platformer.png" alt="Platformer rendering" width="160"> | $\color{#9a6700}{\textsf{0.806}} / \color{#9a6700}{\textsf{0.806}}$ | $\color{#9a6700}{\textsf{0.803}} / \color{#9a6700}{\textsf{0.803}}$ | Sprite game; CRT pass; audio; retained UI. UI residual; no-UI MAD: SDL_GPU 0.004 / 0.004, Dawn 0.000 / 0.000. |
 | Break Meshes | <img src="images/scenes/break-meshes.png" alt="Break Meshes rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Voronoi fracture; PBR; physics. |

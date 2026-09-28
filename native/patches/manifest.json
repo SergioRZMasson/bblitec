@@ -205,6 +205,27 @@
       "variants": ["all"]
     },
     {
+      "library": "rmlui",
+      "file": "native/patches/rmlui/0024-quoted-css-lists.patch",
+      "purpose": "Quoted delimiters in nested CSS and selector lists",
+      "upstream": { "state": "unsubmitted" },
+      "variants": ["all"]
+    },
+    {
+      "library": "rmlui",
+      "file": "native/patches/rmlui/0025-sized-decorators.patch",
+      "purpose": "Independent decorator layer sizes and positions without generated DOM",
+      "upstream": { "state": "unsubmitted" },
+      "variants": ["all"]
+    },
+    {
+      "library": "rmlui",
+      "file": "native/patches/rmlui/0026-gradient-opacity.patch",
+      "purpose": "Round gradient opacity consistently with solid backgrounds",
+      "upstream": { "state": "unsubmitted" },
+      "variants": ["all"]
+    },
+    {
       "library": "dawn",
       "file": "native/patches/dawn/0001-android-surface-loss.patch",
       "purpose": "Report Android Vulkan surface loss at the next acquisition without losing the device",

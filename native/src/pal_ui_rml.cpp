@@ -2262,67 +2262,7 @@ std::string filter_private_ui_declarations(std::string_view style, bool retain_p
     return result;
 }
 
-bool ui_record_has_id(const UiElementRecord& record, std::string_view id) {
-    const auto attribute = record.attributes.find("id");
-    return attribute != record.attributes.end() && attribute->second == id;
-}
-
-bool ui_style_rule_matches(const Engine& engine, UiElementHandle handle, const UiStyleRule& rule) {
-    if (rule.scrollbar != UiScrollbarPart::None || rule.range != UiRangePart::None)
-        return false;
-    if (handle.value >= engine.ui_elements.size())
-        return false;
-    const UiElementRecord& record = handle_at(engine.ui_elements, handle);
-    switch (rule.selector) {
-    case UiStyleSelectorKind::Sequence:
-        throw std::logic_error("A compound selector requires the live selector matcher.");
-    case UiStyleSelectorKind::Class:
-        return ui_record_has_class(record, rule.primary);
-    case UiStyleSelectorKind::Id:
-        return ui_record_has_id(record, rule.primary);
-    case UiStyleSelectorKind::CompoundClass:
-        return ui_record_has_class(record, rule.primary) &&
-               ui_record_has_class(record, rule.secondary);
-    case UiStyleSelectorKind::TagClass:
-        return record.tag == rule.tag && ui_record_has_class(record, rule.primary);
-    case UiStyleSelectorKind::TagChildClass:
-        return ui_record_has_class(record, rule.primary) &&
-               (rule.secondary.empty() || ui_record_has_class(record, rule.secondary)) &&
-               (record.parent.value == invalid_handle
-                    ? !engine.ui_document_roots.active() && record.attached_to_root &&
-                          rule.tag == "body"
-                    : handle_at(engine.ui_elements, record.parent).tag == rule.tag);
-    case UiStyleSelectorKind::TagAttribute: {
-        const auto attribute = record.attributes.find(rule.primary);
-        return record.tag == rule.tag && attribute != record.attributes.end() &&
-               attribute->second == rule.secondary;
-    }
-    case UiStyleSelectorKind::ClassDescendantTag:
-        if (record.tag != rule.tag)
-            return false;
-        break;
-    case UiStyleSelectorKind::IdDescendantClass:
-        if (!ui_record_has_class(record, rule.secondary))
-            return false;
-        break;
-    }
-
-    for (UiElementHandle ancestor = record.parent; ancestor.value != invalid_handle;
-         ancestor = handle_at(engine.ui_elements, ancestor).parent) {
-        const UiElementRecord& ancestor_record = handle_at(engine.ui_elements, ancestor);
-        if (rule.selector == UiStyleSelectorKind::ClassDescendantTag &&
-            ui_record_has_class(ancestor_record, rule.primary)) {
-            return true;
-        }
-        if (rule.selector == UiStyleSelectorKind::IdDescendantClass &&
-            ui_record_has_id(ancestor_record, rule.primary)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-std::string ui_style_rule_selector(const UiStyleRule& rule) {
+std::string ui_style_rule_selector(const UiStyleRule& rule, bool origin_only = false) {
     std::string selector;
     switch (rule.selector) {
     case UiStyleSelectorKind::Sequence:
@@ -2365,6 +2305,8 @@ std::string ui_style_rule_selector(const UiStyleRule& rule) {
     const std::string states = std::string(rule.hover ? ":hover" : "") +
                                (rule.focus_visible ? ":focus-visible" : "") +
                                (rule.active ? ":active" : "");
+    if (origin_only)
+        return selector + states;
     if (rule.range != UiRangePart::None)
         return selector + ":where(input[type=range]) > " +
                (rule.range == UiRangePart::Thumb ? "sliderbar" : "slidertrack") + states;
@@ -2479,10 +2421,6 @@ ProjectedUiStyleSource project_ui_style_source(std::string_view style) {
 
 std::string take_intrinsic_min_width(std::string& style) {
     return take_css_declaration(style, "--bbl-intrinsic-min-width");
-}
-
-std::string take_crosshair_color(std::string& style) {
-    return take_css_declaration(style, "--bbl-crosshair");
 }
 
 void take_projected_outlines(std::string& style) {
@@ -2786,7 +2724,6 @@ struct ProjectedUiElement {
     std::string outline_offset;
     std::vector<UiElementHandle> child_order;
     std::string intrinsic_min_width;
-    std::string crosshair_color;
     std::optional<float> form_spacing;
     bool text_wrapped = false;
     bool intrinsic_width_applied = false;
@@ -3781,6 +3718,7 @@ struct UiRmlRuntime {
 #endif
         } catch (...) {
             if (initialized) {
+                style_selectors.clear();
                 background_styles.clear();
                 Rml::Shutdown();
                 initialized = false;
@@ -3796,6 +3734,7 @@ struct UiRmlRuntime {
             engine.dom_input->can_activate = {};
         }
         if (initialized) {
+            style_selectors.clear();
             background_styles.clear();
             Rml::Shutdown();
         }
@@ -3981,15 +3920,6 @@ struct UiRmlRuntime {
                 reduced_motion == (rule.motion == UiMotionPreference::Reduce));
     }
 
-    bool style_rule_container_matches(const UiStyleRule& rule, Rml::Element* origin) const {
-        return rule.container_max_width < 0.0 ||
-               (origin &&
-                origin->MatchesContainerSize(static_cast<float>(rule.container_max_width),
-                                             rule.generated != UiGeneratedPart::None ||
-                                                 rule.range != UiRangePart::None ||
-                                                 rule.scrollbar != UiScrollbarPart::None));
-    }
-
     static const char* motion_theme(bool reduced) {
         return reduced ? "bbl-motion-reduce" : "bbl-motion-no-preference";
     }
@@ -4014,29 +3944,12 @@ struct UiRmlRuntime {
             const std::size_t rule_order = source_order++;
             if (rule.generated != UiGeneratedPart::None || rule.range != UiRangePart::None)
                 return;
-            const bool hovered =
-                handle.value < projected_elements.size() &&
-                handle_at(projected_elements, handle).element &&
-                handle_at(projected_elements, handle).element->IsPseudoClassSet("hover");
-            if ((rule.hover && !hovered) ||
-                (rule.active &&
-                 !(handle.value < projected_elements.size() &&
-                   handle_at(projected_elements, handle).element &&
-                   handle_at(projected_elements, handle).element->IsPseudoClassSet("active"))) ||
-                (rule.focus_visible &&
-                 (!engine.ui_focus_visible || engine.ui_focused_element != handle)) ||
-                !style_rule_media_matches(rule) ||
-                !style_rule_container_matches(rule, handle.value < projected_elements.size()
-                                                        ? projected_elements[handle.value].element
-                                                        : nullptr) ||
-                !(rule.selector == UiStyleSelectorKind::Sequence
-                      ? ui_selector_sequence_matches(handle.value < projected_elements.size()
-                                                         ? projected_elements[handle.value].element
-                                                         : nullptr,
-                                                     rule.sequence)
-                      : ui_style_rule_matches(engine, handle, rule))) {
+            auto* origin = handle.value < projected_elements.size()
+                               ? projected_elements[handle.value].element
+                               : nullptr;
+            if (rule.scrollbar != UiScrollbarPart::None || !style_rule_media_matches(rule) ||
+                !style_selectors.matches(origin, rule_order))
                 return;
-            }
             callback(rule, rule_order);
         });
         return source_order;
@@ -4053,11 +3966,13 @@ struct UiRmlRuntime {
         source +=
             "html{width:100%;height:100%;font-family:" + css_font_family +
             ";font-size:16dp;line-height:normal;pointer-events:none;}head{display:none;}body{display:block;height:100%;}\n";
+        std::vector<Rml::String> selectors;
         observes_motion_preference = false;
         observes_focus_within = false;
         observes_generated_content = false;
         focus_within_revision = std::numeric_limits<std::uint64_t>::max();
-        const auto append_rule = [&source, this](const UiStyleRule& rule) {
+        const auto append_rule = [&source, &selectors, this](const UiStyleRule& rule) {
+            selectors.push_back(ui_style_rule_selector(rule, true));
             const bool motion = rule.motion != UiMotionPreference::Any;
             observes_motion_preference = observes_motion_preference || motion;
             observes_focus_within =
@@ -4101,6 +4016,7 @@ struct UiRmlRuntime {
             source += "\n";
         };
         for_each_active_style_rule(append_rule);
+        style_selectors.set(selectors);
         for_each_active_style_element(
             [&source](const UiElementRecord& record) { source += keyframes_from(record.text); });
         source = project_css(std::move(source));
@@ -4230,11 +4146,13 @@ struct UiRmlRuntime {
     bool sync_generated_content() {
         if (!observes_generated_content && !has_generated_content)
             return false;
-        std::vector<const UiStyleRule*> rules;
+        std::vector<std::pair<const UiStyleRule*, std::size_t>> rules;
+        std::size_t rule_index = 0;
         for_each_active_style_rule([&](const UiStyleRule& rule) {
             if (rule.generated != UiGeneratedPart::None && rule.content &&
                 style_rule_media_matches(rule))
-                rules.push_back(&rule);
+                rules.emplace_back(&rule, rule_index);
+            ++rule_index;
         });
         bool changed = false;
         has_generated_content = false;
@@ -4254,10 +4172,8 @@ struct UiRmlRuntime {
                 const UiStyleRule* selected = nullptr;
                 std::uint32_t specificity = 0;
                 if (!replaced)
-                    for (const auto* rule : rules) {
-                        if (rule->generated != part ||
-                            !style_rule_container_matches(*rule, origin) ||
-                            !ui_selector_sequence_matches(origin, rule->sequence))
+                    for (const auto& [rule, index] : rules) {
+                        if (rule->generated != part || !style_selectors.matches(origin, index))
                             continue;
                         const auto candidate = ui_style_rule_specificity(*rule);
                         if (!selected || candidate >= specificity) {
@@ -4335,22 +4251,6 @@ struct UiRmlRuntime {
         std::string display;
         resolved_style_attribute(record.parent, ui_element(engine, record.parent), &display);
         return text_needs_flex_wrapper(display);
-    }
-
-    void append_crosshair(ProjectedUiElement& projected, Rml::Element& parent,
-                          const std::string& color) {
-        // Use the same ordinary retained bar markup as the Doom HUD. The
-        // compiler marker only bridges CSS layered-background syntax into a
-        // representation RmlUi supports; rendering stays on the established
-        // inner-RML path rather than adding a crosshair renderer primitive.
-        parent.SetInnerRML("<div style=\"position:absolute;left:10px;top:0;"
-                           "width:2px;height:22px;background-color:" +
-                           color +
-                           ";\"></div>"
-                           "<div style=\"position:absolute;left:0;top:10px;"
-                           "width:22px;height:2px;background-color:" +
-                           color + ";\"></div>");
-        projected.crosshair_color = color;
     }
 
     void attach_listeners(ProjectedUiElement& projected, UiElementHandle handle) {
@@ -4518,7 +4418,6 @@ struct UiRmlRuntime {
         std::string resolved_display;
         projected.resolved_style = resolved_style_attribute(handle, record, &resolved_display);
         projected.intrinsic_min_width = take_intrinsic_min_width(projected.resolved_style);
-        projected.crosshair_color = take_crosshair_color(projected.resolved_style);
         take_projected_outlines(projected.resolved_style);
         if (!projected.resolved_style.empty()) {
             raw->SetAttribute("style", projected.resolved_style);
@@ -4538,12 +4437,6 @@ struct UiRmlRuntime {
         } else if (!record.text.empty()) {
             projected.text_wrapped = text_needs_flex_wrapper(resolved_display);
             append_text_content(*raw, record.text, projected.text_wrapped);
-        }
-        if (!projected.crosshair_color.empty()) {
-            if (!record.text.empty() || !record.inner_rml.empty() || !record.children.empty()) {
-                throw std::runtime_error("A retained crosshair cannot also carry source content.");
-            }
-            append_crosshair(projected, *raw, projected.crosshair_color);
         }
         projected.text = record.text;
         projected.inner_rml = record.inner_rml;
@@ -4732,8 +4625,6 @@ struct UiRmlRuntime {
         std::string resolved_display;
         std::string resolved_style = resolved_style_attribute(handle, record, &resolved_display);
         const std::string intrinsic_min_width = take_intrinsic_min_width(resolved_style);
-        const std::string crosshair_color = take_crosshair_color(resolved_style);
-        const bool crosshair_changed = projected.crosshair_color != crosshair_color;
         take_projected_outlines(resolved_style);
         const bool resolved_style_changed =
             projected.resolved_style != resolved_style ||
@@ -4801,7 +4692,7 @@ struct UiRmlRuntime {
 
         const bool text_wrapped = !record.text.empty() && text_needs_flex_wrapper(resolved_display);
         if (projected.text != record.text || projected.inner_rml != record.inner_rml ||
-            projected.text_wrapped != text_wrapped || crosshair_changed) {
+            projected.text_wrapped != text_wrapped) {
             // Updating the text prefix or its anonymous flex wrapper must not
             // recreate retained controls appended after it.
             auto children = detach_authored_children(raw, record);
@@ -4816,20 +4707,12 @@ struct UiRmlRuntime {
             } else if (!record.text.empty()) {
                 append_text_content(raw, record.text, text_wrapped);
             }
-            if (!crosshair_color.empty()) {
-                if (!record.text.empty() || !record.inner_rml.empty() || !record.children.empty()) {
-                    throw std::runtime_error(
-                        "A retained crosshair cannot also carry source content.");
-                }
-                append_crosshair(projected, raw, crosshair_color);
-            }
             projected.text = record.text;
             projected.inner_rml = record.inner_rml;
             projected.text_wrapped = text_wrapped;
             for (auto& child : children)
                 raw.AppendChild(std::move(child));
         }
-        projected.crosshair_color = crosshair_color;
 
         attach_listeners(projected, handle);
         Rml::Element& children_parent = raw;
@@ -4995,17 +4878,12 @@ struct UiRmlRuntime {
         sync_projected_root_order();
         // Materialization, source attributes and reparenting finish before compound
         // private declarations inspect the same completed tree as RmlUi.
-        bool has_sequences = false;
-        for_each_active_style_rule([&](const UiStyleRule& rule) {
-            has_sequences = has_sequences || rule.selector == UiStyleSelectorKind::Sequence;
-        });
-        if (has_sequences)
-            for (const auto handle : engine.ui_root_children) {
-                if (handle.value < projected_elements.size() &&
-                    projected_elements[handle.value].element &&
-                    handle_at(engine.ui_elements, handle).attached_to_root)
-                    update_element(handle);
-            }
+        for (const auto handle : engine.ui_root_children) {
+            if (handle.value < projected_elements.size() &&
+                projected_elements[handle.value].element &&
+                handle_at(engine.ui_elements, handle).attached_to_root)
+                update_element(handle);
+        }
         refresh_current_color_svg_elements();
         event_targets.clear();
         for (std::uint32_t index = 0; index < projected_elements.size(); ++index)
@@ -5723,6 +5601,7 @@ struct UiRmlRuntime {
     std::map<Rml::TouchId, Rml::Touch> native_touches;
     bool initialized = false;
     UiScrollbarProperties scrollbar_properties{};
+    UiStyleSelectors style_selectors;
     UiBackgroundStyles background_styles;
     double canvas_render_ms = 0;
 };

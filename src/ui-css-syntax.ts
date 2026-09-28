@@ -104,7 +104,10 @@ export function splitUiCssList(source: string): string[] {
 }
 
 /** Whitespace separates value tokens only outside balanced functions. */
-export function uiCssValueTokens(source: string): string[] | undefined {
+export function uiCssValueTokens(
+    source: string,
+    delimiters = "",
+): string[] | undefined {
     const result: string[] = [];
     let start = 0,
         depth = 0;
@@ -112,7 +115,11 @@ export function uiCssValueTokens(source: string): string[] | undefined {
         const token = source[index]!;
         if (token === "(") depth++;
         else if (token === ")" && --depth < 0) return undefined;
-        else if (/\s/.test(token) && depth === 0) {
+        else if (depth === 0 && delimiters.includes(token)) {
+            if (index > start) result.push(source.slice(start, index));
+            result.push(token);
+            start = index + 1;
+        } else if (/\s/.test(token) && depth === 0) {
             if (index > start) result.push(source.slice(start, index));
             start = index + 1;
         }

@@ -16,6 +16,7 @@ import {
 import ts from "typescript";
 import { doubleLiteral } from "../cpp-literals.js";
 import { parseUiBorderImage, renderUiBorderImage } from "../ui-border-image.js";
+import { uiGradientBackground } from "../ui-gradient-background.js";
 import { supportedUiGridColumn, supportedUiGridTracks } from "../ui-grid.js";
 import { supportedUiBoxShadow, supportedUiFilter } from "../ui-filters.js";
 import {
@@ -2339,22 +2340,20 @@ export class UiProjection {
                     return `top:${top};right:${right};bottom:${bottom};left:${left};`;
                 },
             )
-            // The reached voxel HUD spells its crosshair as two centred,
-            // non-repeating background gradients. RmlUi gradients cover the
-            // entire decorator box and cannot express CSS background sizing,
-            // so preserve this exact shape as private PAL metadata. The PAL
-            // materializes the vertical and horizontal bars as retained
-            // children while the parent continues to own position/opacity.
             .replace(
-                /\bbackground\s*:\s*linear-gradient\(\s*(#[0-9a-f]{3,8}|[a-z][a-z0-9-]*)\s*,\s*\1\s*\)\s+center\s*\/\s*2px\s+22px\s+no-repeat\s*,\s*linear-gradient\(\s*\1\s*,\s*\1\s*\)\s+center\s*\/\s*22px\s+2px\s+no-repeat\s*;?/gi,
-                "--bbl-crosshair:$1;",
-            )
-            // RmlUi exposes CSS image gradients through its decorator
-            // property. The shared render recorder implements the resulting
-            // shader callback once for every PAL graphics backend.
-            .replace(
-                /\bbackground\s*:\s*((?:repeating-)?(?:linear|radial|conic)-gradient\([^;]*\))\s*;?/gi,
-                `${UiProjection.uiShorthandResetStyle("background")}decorator:$1;`,
+                /\bbackground\s*:\s*([^;]+)\s*;?/gi,
+                (declaration: string, background: string) => {
+                    if (!/(?:linear|radial|conic)-gradient\(/i.test(background))
+                        return declaration;
+                    const decorators = uiGradientBackground(background);
+                    if (decorators === undefined)
+                        return this.uiStyleRefusal(
+                            site,
+                            "background",
+                            "gradient layers require supported positions, nonnegative length/percentage sizes and no-repeat",
+                        );
+                    return `${UiProjection.uiShorthandResetStyle("background")}decorator:${decorators};`;
+                },
             )
             // A browser background can combine a fallback colour with a
             // runtime-selected root-relative image. RmlUi exposes the image

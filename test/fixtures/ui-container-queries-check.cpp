@@ -41,7 +41,7 @@ int main() try {
                           UiMotionPreference::Any, {}, UiGeneratedPart::None, {}, UiRangePart::None,
                           320);
         ui_add_style_rule(engine, sheet, UiStyleSelectorKind::Class, "cell", {}, {}, false, -1,
-                          "--bbl-crosshair:#123456;", UiScrollbarPart::None, false, false,
+                          "--bbl-intrinsic-min-width:10px;", UiScrollbarPart::None, false, false,
                           UiMotionPreference::Any, {}, UiGeneratedPart::None, {}, UiRangePart::None,
                           250);
         ui_add_style_rule(engine, sheet, UiStyleSelectorKind::Sequence, ".marker", {}, {}, false,
@@ -118,11 +118,11 @@ int main() try {
                "inclusive query uses content box without padding");
         ui_set_style_property(engine, outer, "width", "240px");
         update();
-        check(!runtime.projected_elements.at(child.value).crosshair_color.empty(),
+        check(!runtime.projected_elements.at(child.value).intrinsic_min_width.empty(),
               "query-dependent private presentation observes settled geometry");
         ui_set_style_property(engine, outer, "width", "260px");
         update();
-        check(runtime.projected_elements.at(child.value).crosshair_color.empty(),
+        check(runtime.projected_elements.at(child.value).intrinsic_min_width.empty(),
               "private-only query thresholds invalidate presentation");
         ui_set_style_property(engine, outer, "width", "320px");
         update();
@@ -176,7 +176,7 @@ int main() try {
               "container queries retain authored parent identity");
         raw(outer)->SetProperty("width", "240px");
         update();
-        check(!runtime.projected_elements.at(child.value).crosshair_color.empty(),
+        check(!runtime.projected_elements.at(child.value).intrinsic_min_width.empty(),
               "native size changes invalidate private query presentation without a DOM write");
         raw(outer)->SetProperty("width", "321px");
         update();

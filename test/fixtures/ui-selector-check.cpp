@@ -26,11 +26,6 @@ int run_window_application(WorkerEntry initialize, EngineOptions) {
 
 int main() {
     using namespace bbl;
-    for (const auto relation : {UiSelectorRelation::Child, UiSelectorRelation::Descendant,
-                                UiSelectorRelation::Next, UiSelectorRelation::Following}) {
-        const std::vector<UiSelectorStep> absent{{UiSelectorRelation::Self, {}}, {relation, {}}};
-        assert(!pal::ui_selector_sequence_matches(nullptr, absent));
-    }
     assert(SDL_Init(SDL_INIT_VIDEO));
     SDL_Window* window = SDL_CreateWindow("Selector fixture", 640, 480, SDL_WINDOW_HIDDEN);
     assert(window);
@@ -55,6 +50,8 @@ int main() {
             runtime.for_each_matching_style_rule(handle, [&](const UiStyleRule& rule, std::size_t) {
                 found = found || pal::ui_style_rule_selector(rule) == selector;
             });
+            auto* raw = runtime.projected_elements.at(handle.value).element;
+            assert(found == raw->Matches(std::string(selector)));
             return found;
         };
         const auto background = [&](std::uint8_t r, std::uint8_t g, std::uint8_t b) {
@@ -64,6 +61,12 @@ int main() {
             assert(actual.red == r && actual.green == g && actual.blue == b);
         };
         update();
+        assert(!runtime.style_selectors.matches(nullptr, 0));
+        ui_set_attribute(engine, entry, "title", "a,b)'");
+        update();
+        pal::UiStyleSelectors quoted;
+        quoted.set({".entry:is([title=\"a,b)'\"], .absent)"});
+        assert(quoted.matches(runtime.projected_elements.at(entry.value).element, 0));
         assert(matches(entry, "button"));
         assert(matches(entry, ".panel.selected.extra > .entry[disabled]"));
         assert(matches(entry, ".lead + .entry"));
