@@ -13,6 +13,7 @@ import {
     unwrapExpression,
 } from "./syntax.js";
 import { emitReachableStatements } from "./loop-control.js";
+import { functionBodyPrologue } from "./recent-strings.js";
 import { arrayReturnStorage } from "./array-return-storage.js";
 import { cppIdentifier, cppIdentifierPattern } from "../cpp-literals.js";
 import { cppIdentifiers } from "./cpp-identifiers.js";
@@ -76,6 +77,7 @@ export interface NativeFunctionContext extends Pick<
     | "reachJsData"
     | "unwrap"
     | "emit"
+    | "sourceProfileScopeDeclarations"
     | "defineThis"
     | "activeThis"
     | "registerClassInstance"
@@ -166,6 +168,12 @@ function valueIsPlainLeaf(actual: Value, expected: Value): boolean {
     );
 }
 
+/** A captured plain-data function body: its C++ parameters and lines. */
+interface CapturedDataFunctionBody {
+    parameterDeclarations: string[];
+    lines: string[];
+}
+
 /**
  * Binds one plain-data function signature and captures its lowered body.
  * Namespace functions, local recursive lambdas, and once-emitted class
@@ -187,10 +195,12 @@ export function captureDataFunctionBody(
         /** Runs after parameter binding, before the body capture (a
          *  method's synthetic `this` record). */
         beforeBody?: () => void;
-        /** The definition is emitted at namespace scope. */
-        namespaceScope?: ts.Node;
+        /** The definition of this source function is emitted at namespace
+         *  scope: a `--source-profile` selection times its body, and a body
+         *  with no leading channel may remember its recent strings. */
+        namespaceScope?: ts.FunctionLikeDeclaration;
     },
-): { parameterDeclarations: string[]; lines: string[] } {
+): CapturedDataFunctionBody {
     const bindingBoundary = context.nativeBindingCheckpoint();
     context.bindings.pushScope(context.allocateUserFunctionPrefix());
     try {
@@ -265,6 +275,21 @@ export function captureDataFunctionBody(
                     "entry-scope-required",
                 );
             const used = cppIdentifiers(captured.value.join("\n"));
+            const body = channels?.namespaceScope
+                ? functionBodyPrologue(
+                      context,
+                      channels.namespaceScope,
+                      returnType,
+                      leading.length === 0
+                          ? parameters.map((parameter, index) => ({
+                                name: parameterNames.get(index)!,
+                                type: parameter.type,
+                                byReference: parameter.byReference,
+                            }))
+                          : undefined,
+                      captured.value,
+                  )
+                : { lines: captured.value };
             return {
                 parameterDeclarations: parameterDeclarations.map(
                     (declaration, index) => {
@@ -274,7 +299,7 @@ export function captureDataFunctionBody(
                             : declaration;
                     },
                 ),
-                lines: captured.value,
+                lines: body.lines,
             };
         } finally {
             context.endNativeFunctionBody();
@@ -1867,9 +1892,8 @@ export class NativeFunctionLowerer {
                 this.context,
                 signature.parameters,
                 signature.returnType,
-                () => {
-                    this.emitValueBody(body.statements, !!signature.returnType);
-                },
+                () =>
+                    this.emitValueBody(body.statements, !!signature.returnType),
                 {
                     namespaceScope: signature.method,
                     bindLeading: () =>
@@ -2350,18 +2374,17 @@ export class NativeFunctionLowerer {
         const returnCpp = signature.returnType
             ? this.context.dataTypes.cppType(signature.returnType)
             : "void";
+        const definition = captureDataFunctionBody(
+            this.context,
+            signature.parameters,
+            signature.returnType,
+            () => this.emitValueBody(body.statements, !!signature.returnType),
+            { namespaceScope: signature.declaration },
+        );
         this.registerDataFunction(
             signature.cppName,
             returnCpp,
-            captureDataFunctionBody(
-                this.context,
-                signature.parameters,
-                signature.returnType,
-                () => {
-                    this.emitValueBody(body.statements, !!signature.returnType);
-                },
-                { namespaceScope: signature.declaration },
-            ),
+            definition,
             signature.declaration,
         );
     }

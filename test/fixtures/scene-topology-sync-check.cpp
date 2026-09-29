@@ -543,16 +543,19 @@ void check_image_preparation() {
     upstream::RenderItem item;
     item.material = MaterialHandle{0};
     item.material_kind = upstream::RenderMaterialKind::shader;
+    // Two rows bind the one image: it decodes once, in one piece of native
+    // work, before either row uploads.
+    run.render_plan.items = {item, item};
     decoded_images = 0;
     block_image_decode = true;
-    bool uploaded = false;
     TextureUploadCache<DecodedImage> images;
     std::vector<std::shared_ptr<DecodedImage>> bindings;
     const auto prepare_image = [](const TextureData& data, bool,
                                   std::array<std::uint8_t, 4> fallback) {
         return decode_uploadable_image(data, fallback);
     };
-    auto preparation = upload_prepared_scene_mesh(run.engine, item, images, prepare_image, [&] {
+    const std::vector<std::shared_ptr<Scene>> layers{std::make_shared<Scene>(run.scene)};
+    const auto upload_row = [&](const upstream::RenderItem&) {
         assert(image_thread != std::this_thread::get_id());
         assert(decoded_images == 1);
         for (const auto& texture : material.shader_textures) {
@@ -561,30 +564,33 @@ void check_image_preparation() {
             assert(image->rgba == std::vector<std::uint8_t>({20, 40, 80, 255, 40, 20, 10, 128}));
             bindings.push_back(std::move(image));
         }
-        assert(decoded_images == 1);
-        uploaded = true;
-    });
-    assert(preparation.advance() && !uploaded);
+        return Row{++next_lease};
+    };
+    auto preparation = upload_scene_meshes(run.engine, layers, run.render_plan, run.meshes,
+                                           run.overlay_plans, run.overlay_meshes,
+                                           run.overlay_versions, images, prepare_image, upload_row);
+    assert(preparation.advance() && run.meshes.empty());
     image_started.acquire();
     alias.bytes[0] = 42;
     block_image_decode = false;
     image_continue.release();
     while (preparation.advance())
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    assert(preparation.result() && uploaded && decoded_images == 1);
-    assert(bindings[0] == bindings[1]);
+    assert(preparation.result() && run.meshes.size() == 2 && decoded_images == 1);
+    assert(bindings.size() == 4 &&
+           std::all_of(bindings.begin(), bindings.end(),
+                       [&](const auto& binding) { return binding == bindings[0]; }));
+    assert(run.overlay_plans.empty() && run.overlay_meshes.empty());
 
-    uploaded = false;
-    auto cached = upload_prepared_scene_mesh(run.engine, item, images, prepare_image,
-                                             [&] { uploaded = true; });
-    assert(!cached.advance() && uploaded && decoded_images == 1);
+    // An image the rows still hold needs no work and no wait.
+    auto cached = prepare_scene_textures(run.engine, {&run.render_plan}, images, prepare_image);
+    assert(!cached.advance() && cached.result().empty() && decoded_images == 1);
     bindings.clear();
     assert(!images.find(source, false, {255, 255, 255, 255}));
 
     source.bytes[0] = 99;
     bool rejected = false;
-    auto failed = upload_prepared_scene_mesh(run.engine, item, images, prepare_image,
-                                             [] { assert(false && "failed image uploaded"); });
+    auto failed = prepare_scene_textures(run.engine, {&run.render_plan}, images, prepare_image);
     try {
         while (failed.advance())
             std::this_thread::sleep_for(std::chrono::milliseconds(1));

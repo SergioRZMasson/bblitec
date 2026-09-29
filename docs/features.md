@@ -409,7 +409,9 @@ including skinned assets without animation clips.
 Sprite2D, billboards, atlases, animation, offscreen/depth targets, custom fragments and Y-sort are bounded.
 Transparent billboards and meshes share the pinned distance/order sort; mixed exact depth/order ties
 and mixed draws without a camera refuse because native lists lack the source's stable binding order.
-Custom cutout billboard order, handle-object APIs, coverage gamma and broader picking combinations refuse.
+Custom cutout billboard order, alpha-to-coverage changes to a cutout system a registered
+multisampled scene draws, billboard, depth-hosted layer and text attachment after `disposeScene`,
+handle-object APIs, coverage gamma and broader picking combinations refuse.
 Broader atlas options remain limited.
 UV-scroll attributes require float32 scalar/vector formats.
 

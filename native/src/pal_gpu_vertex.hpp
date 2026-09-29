@@ -198,8 +198,6 @@ struct SharedGeometryIdentity {
 /** Below this many vertices a cached geometry also keeps its bytes. */
 inline constexpr std::size_t shared_geometry_bytes_kept_below = 4096;
 
-std::uint64_t fnv1a_append(std::uint64_t hash, const void* data, std::size_t size);
-
 SharedGeometryIdentity shared_geometry_identity(const std::vector<GpuVertex>& vertices,
                                                 const std::vector<std::uint32_t>& indices);
 

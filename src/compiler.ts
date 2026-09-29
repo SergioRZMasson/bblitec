@@ -4,6 +4,7 @@ import { cppIdentifiers } from "./compiler/cpp-identifiers.js";
 import {
     isStringValue,
     optionalPresentCpp,
+    optionalValueCpp,
     presenceFlagCpp,
     valueForKind,
 } from "./compiler/types.js";
@@ -38,6 +39,7 @@ import {
     type NativeEmission,
     type NativeStatement,
 } from "./compiler/native-statements.js";
+import { sourceProfileScope } from "./compiler/source-profile.js";
 import ts from "typescript";
 import { CallbackLowerer } from "./compiler/callbacks.js";
 import { AsyncActivations } from "./compiler/async-activations.js";
@@ -208,6 +210,7 @@ import {
     isDeclaredInside,
     isUpdateExpression,
     objectProperty,
+    sourceFunctionName,
     stringLiteralText,
     unwrappedIdentifier,
 } from "./compiler/syntax.js";
@@ -219,6 +222,7 @@ import {
     renderClosure,
     renderCoroutineInvocation,
     type CapturedClosure,
+    type ClosureBorrowing,
     type NativeCaptureBinding,
 } from "./compiler/closure-captures.js";
 import {
@@ -498,6 +502,9 @@ function compileSourceApplication(
             ...(options.nativeHostUi && !workers?.namespace
                 ? { nativeHostUi: options.nativeHostUi }
                 : {}),
+            ...(options.sourceProfile?.length
+                ? { sourceProfile: options.sourceProfile }
+                : {}),
         };
         // Each demand belongs to a source binding, not its spelling. Reuse the
         // frontend and rebuild emission so earlier aliases use the same storage.
@@ -565,13 +572,38 @@ function compileSourceApplication(
             const { file, line, character } = sourceLocation(node);
             throw new CompileError(file.fileName, line, character, message);
         });
-    if (usesWorkers(frontend)) return application();
-    try {
-        return compile(frontend);
-    } catch (error) {
-        if (!(error instanceof ApplicationRealmRequired)) throw error;
-        return application();
-    }
+    const lowered = (): CompileResult => {
+        if (usesWorkers(frontend)) return application();
+        try {
+            return compile(frontend);
+        } catch (error) {
+            if (!(error instanceof ApplicationRealmRequired)) throw error;
+            return application();
+        }
+    };
+    const result = lowered();
+    requireSourceProfileScopes(options.sourceProfile, result);
+    return result;
+}
+
+/**
+ * Every `--source-profile` name must scope a native body in some realm: a
+ * name that selects none would leave its profile silently empty.
+ */
+function requireSourceProfileScopes(
+    selected: readonly string[] | undefined,
+    result: CompileResult,
+): void {
+    const scoped = new Set(result.sourceProfileScopes);
+    const unmatched = [...new Set(selected)].filter(
+        (name) => !scoped.has(name),
+    );
+    if (unmatched.length === 0) return;
+    throw new Error(
+        `--source-profile selects no timed source function named ${unmatched.map((name) => `'${name}'`).join(", ")}. ` +
+            "A name is a function's own, Class.method for a class member, or the variable or property an unnamed " +
+            "function is bound to; async functions, generators and functions lowered inline at their calls carry no scope.",
+    );
 }
 
 class Compiler implements LoweringServices {
@@ -714,7 +746,12 @@ class Compiler implements LoweringServices {
     >();
     private readonly nativeBindingTypes = new EmissionMap<
         string,
-        { readonly type: string | undefined; readonly constant: boolean }
+        {
+            readonly type: string | undefined;
+            readonly constant: boolean;
+            /** A local declared by value (not a reference): it owns its storage. */
+            readonly owned: boolean;
+        }
     >();
     private readonly allocatedCppNames = new EmissionMap<string, number>();
     private readonly nativeTemporaries =
@@ -918,6 +955,9 @@ class Compiler implements LoweringServices {
             cmake,
             assetPayloads: this.assetPayloads,
             ...(particles.sets.length > 0 ? { nodeParticles: particles } : {}),
+            ...(this.sourceProfileScopes.size > 0
+                ? { sourceProfileScopes: [...this.sourceProfileScopes] }
+                : {}),
             manifest: {
                 source: this.options.fileName,
                 // The compiler's half of the reached-file list is the
@@ -4848,6 +4888,7 @@ class Compiler implements LoweringServices {
         this.nativeBindingTypes.set(name, {
             type: cppType.replace(/^const /, ""),
             constant: previous?.constant ?? cppType.startsWith("const "),
+            owned: previous?.owned ?? false,
         });
     }
 
@@ -5094,7 +5135,7 @@ class Compiler implements LoweringServices {
 
     public captureManagedClosureLines(
         emitBody: () => void,
-        byReference: boolean | "entry" = false,
+        byReference: ClosureBorrowing = false,
     ): CapturedClosure {
         const capture = new ClosureCaptures(
             this.allocateTemporaryCppName("environment"),
@@ -5323,9 +5364,72 @@ class Compiler implements LoweringServices {
                 "a function return",
             );
         }
-        this.emit(
-            `${returnKeyword} ${this.dataLowerer.compileForSink(statement.expression, returnType)};`,
+        const returned = this.dataLowerer.compileForSink(
+            statement.expression,
+            returnType,
         );
+        this.emit(
+            `${returnKeyword} ${this.movesReturnedLocal(statement, returned) ? `std::move(${returned})` : returned};`,
+        );
+    }
+
+    /**
+     * Whether a return hands back the present value of an optional local its
+     * own frame declared by value: nothing reads the local after the return,
+     * so its value moves out rather than copying. C++ moves a returned local
+     * only when the return names it bare. A `finally` around the return still
+     * runs afterwards and may read it, and a cell's value is shared, so
+     * neither moves.
+     */
+    private movesReturnedLocal(
+        statement: ts.ReturnStatement,
+        returned: string,
+    ): boolean {
+        const expression =
+            statement.expression && this.unwrap(statement.expression);
+        if (!expression || !ts.isIdentifier(expression)) return false;
+        const local = this.bindings.lookupOptional(expression);
+        // The local's optional storage: a nullable data local itself, or the
+        // storage behind an optional resource whose value `cpp` reads.
+        const nullable = local?.dataType;
+        const storage =
+            local?.optionalStorageCpp ??
+            (nullable?.kind === "optional" &&
+            !(
+                nullable.inner.kind === "struct" &&
+                this.dataTypes.isReferenceStruct(nullable.inner.name)
+            )
+                ? local?.cpp
+                : undefined);
+        const declaration = this.symbols
+            .valueSymbol(expression)
+            ?.declarations?.find(ts.isVariableDeclaration);
+        const owner = ts.findAncestor(statement.parent, ts.isFunctionLike);
+        if (
+            !local ||
+            storage === undefined ||
+            local.sharedStorageCpp !== undefined ||
+            !this.nativeBindingTypes.get(storage)?.owned ||
+            // The sink handed back the local's own present value, not a
+            // copy or conversion of it.
+            returned !== optionalValueCpp(storage) ||
+            !owner ||
+            !declaration ||
+            ts.findAncestor(declaration.parent, ts.isFunctionLike) !== owner
+        )
+            return false;
+        for (
+            let current: ts.Node = statement;
+            current !== owner;
+            current = current.parent
+        ) {
+            if (
+                ts.isTryStatement(current.parent) &&
+                current.parent.finallyBlock
+            )
+                return false;
+        }
+        return true;
     }
 
     public emitNativeThrow(
@@ -6893,6 +6997,41 @@ class Compiler implements LoweringServices {
         return this.features.has("material:lightmap");
     }
 
+    /** The `--source-profile` names a native body has been scoped under. */
+    private readonly sourceProfileScopes = new EmissionSet<string>();
+
+    /**
+     * A selected source function times its whole native body
+     * (`--source-profile`): these locals open the scope, ahead of everything
+     * else the body runs.
+     */
+    public sourceProfileScopeDeclarations(
+        declaration: ts.SignatureDeclaration,
+    ): NativeDeclaration[] {
+        const selected = this.options.sourceProfile;
+        if (!selected) return [];
+        const name = sourceFunctionName(declaration);
+        if (name === undefined || !selected.includes(name)) return [];
+        // A scope lives on the native stack; a suspended body would outlive it.
+        if (
+            ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Async ||
+            (ts.isFunctionLike(declaration) &&
+                "asteriskToken" in declaration &&
+                declaration.asteriskToken)
+        )
+            return [];
+        this.reachFeature("profile:source", declaration);
+        this.sourceProfileScopes.add(name);
+        return sourceProfileScope(
+            name,
+            {
+                function: this.allocateTemporaryCppName("source_function"),
+                scope: this.allocateTemporaryCppName("source_scope"),
+            },
+            (text) => this.cppString(text),
+        );
+    }
+
     /**
      * Adds a runtime feature to the reached set and records the first
      * reaching scene-source call site as "file:line" for the manifest's
@@ -7088,6 +7227,7 @@ class Compiler implements LoweringServices {
             this.nativeBindingTypes.set(line.name, {
                 type: facts.type?.replace(/^const /, "") ?? aliased?.type,
                 constant: facts.constant || aliased?.constant === true,
+                owned: facts.type !== undefined && !facts.reference,
             });
             line = {
                 ...line,

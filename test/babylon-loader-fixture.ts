@@ -42,7 +42,7 @@ export function runBabylonLoaderCheck(
         executable = join(directory, "check.exe");
     writeFileSync(
         source,
-        `#include <bblite/pal_image.hpp>
+        `#include <bblite/pal_texture_texels.hpp>
 #include <fstream>
 #include <cassert>
 ${lights.lowerMatrix().source}

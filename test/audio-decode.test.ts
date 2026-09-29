@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import {
     cppFunction,
+    cppRecord,
     optionalNativeFixtureTools,
     runNativeFixtureCompiler,
 } from "./native-fixture.js";
@@ -111,10 +112,18 @@ test(
         const source = resolve(output, "check.cpp"),
             executable = resolve(output, "check.exe");
         const wave = writeWave(output);
-        const decode = cppFunction(
-            readFileSync("native/src/pal_audio_labsound.cpp", "utf8"),
-            "AudioBufferHandle audio_decode_buffer(",
+        const labsound = readFileSync(
+            "native/src/pal_audio_labsound.cpp",
+            "utf8",
         );
+        const decode = [
+            cppRecord(labsound, "struct DecodedAudio {"),
+            ...[
+                "std::shared_ptr<const DecodedAudio> audio_decode_samples(",
+                "AudioBufferHandle audio_buffer_from_decoded(",
+                "AudioBufferHandle audio_decode_buffer(",
+            ].map((signature) => cppFunction(labsound, signature)),
+        ].join("\n");
         writeFileSync(
             source,
             `

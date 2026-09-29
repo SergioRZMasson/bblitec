@@ -1,3 +1,17 @@
+/** The packaged BRDF table every loaded IBL environment reads. */
+export function gltfIblBrdfLutCpp(): string {
+    return `/** EXT_lights_image_based's split-sum BRDF table, packaged as rgba16f. */
+std::vector<std::uint8_t> gltf_ibl_brdf_lut() {
+    return pal::read_binary_file(asset_path("gltf-ibl-brdf-lut.rgba16f"));
+}`;
+}
+
+/** prepare_gltf's read of that table, for a plan that loads an IBL environment. */
+export function gltfIblPreparationCpp(): string {
+    return `    if (!required(required(mesh_plan, "ibl").as_object(), "textures").as_array().empty())
+        file.brdf_lut = GltfLoadPromise<std::vector<std::uint8_t>>::settle(gltf_ibl_brdf_lut);`;
+}
+
 /** Storage and ordered scene writes for the executed EXT_lights_image_based feature. */
 export function gltfIblLoadingCpp(): string {
     return `
@@ -27,7 +41,7 @@ export function gltfIblLoadingCpp(): string {
         environment.lod_generation_scale = static_cast<float>(required(prepared, "lodScale").as_number());
         environment.brdf_lut_width = static_cast<std::uint32_t>(unsigned_value(required(prepared, "brdfWidth")));
         if (environment.brdf_lut_width != 256) throw std::runtime_error("Unsupported glTF IBL BRDF storage.");
-        environment.brdf_lut.bytes = pal::read_binary_file(asset_path("gltf-ibl-brdf-lut.rgba16f"));
+        environment.brdf_lut.bytes = take_prepared(&file.brdf_lut, gltf_ibl_brdf_lut);
         environment.brdf_lut_rgba16f = true;
         ibl_textures.push_back({std::move(environment), next_scene_uniform_object_identity()});
     }

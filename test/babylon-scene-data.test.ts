@@ -185,7 +185,7 @@ test("Babylon scene data preserves material map replacement, light guards and lo
         executable = join(directory, "check.exe");
     writeFileSync(
         source,
-        `#include <bblite/pal_image.hpp>
+        `#include <bblite/pal_texture_texels.hpp>
 #include <fstream>
 #include <cassert>
 ${new LightLowerer(context).lowerMatrix().source}

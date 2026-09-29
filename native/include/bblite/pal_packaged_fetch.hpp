@@ -3,6 +3,7 @@
 #include <bblite/pal.hpp>
 #include <bblite/runtime.hpp>
 #include <bblite/pal_fetch_response.hpp>
+#include <bblite/pal_native_job.hpp>
 #include <array>
 
 namespace bbl::pal {
@@ -13,18 +14,13 @@ struct PackagedFetchEntry {
     std::string_view output;
 };
 
-/** Snapshot the selection before yielding; file failures reject the response promise. */
+/** A native job reads the selected file; a read failure rejects the response promise. */
 inline js::Promise<HttpResponse> fetch_packaged(std::string url, std::string path) {
-    js::Promise<HttpResponse> result;
-    EventLoop::current().post([result, url = std::move(url), path = std::move(path)] {
-        try {
-            result.resolve(js::make_ref<HttpResponseData>(
-                HttpResponseData{200, url, read_binary_file(path), false}));
-        } catch (...) {
-            result.reject(std::current_exception());
-        }
-    });
-    return result;
+    return run_native_job<HttpResponse>([path = std::move(path)] { return read_binary_file(path); },
+                                        [url = std::move(url)](std::vector<std::uint8_t> body) {
+                                            return js::make_ref<HttpResponseData>(
+                                                HttpResponseData{200, url, std::move(body), false});
+                                        });
 }
 
 template <std::size_t Count>

@@ -6,6 +6,7 @@
 #define BBLITE_GPU_DEFORMATION 0
 #include "matrix.hpp"
 #include "world.hpp"
+#include <bblite/byte_hash.hpp>
 #include <cassert>
 #include <cstring>
 #include "geometry.hpp"
@@ -45,6 +46,23 @@ void check_shared_geometry() {
     cache[0]->indices.clear();
     assert(find_shared_shader_geometry(cache, cache[0]->identity, vertices, indices) ==
            cache[0].get());
+    // Above the kept size the hash alone is the identity: every byte of the
+    // last vertex reaches it, as do the last index of an odd count (a
+    // half-word tail) and the vertex count.
+    const std::vector<std::uint32_t> odd{0, 1, 2, 2, 1};
+    const std::uint64_t large = shared_geometry_identity(vertices, odd).hash;
+    auto* last = reinterpret_cast<unsigned char*>(&vertices.back());
+    for (std::size_t byte = 0; byte < sizeof(GpuVertex); ++byte) {
+        last[byte] ^= 0x10;
+        assert(shared_geometry_identity(vertices, odd).hash != large);
+        last[byte] ^= 0x10;
+    }
+    assert(shared_geometry_identity(vertices, odd).hash == large);
+    auto changed = odd;
+    changed.back() = 3;
+    assert(shared_geometry_identity(vertices, changed).hash != large);
+    const std::vector<GpuVertex> fewer(vertices.begin(), vertices.end() - 1);
+    assert(shared_geometry_identity(fewer, odd).hash != large);
 }
 void check_shader_blocks() {
     Engine engine;

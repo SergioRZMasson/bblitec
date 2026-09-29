@@ -257,7 +257,7 @@ test("owns an optional Map Set before delete-argument side effects", () => {
         assert.match(
             result.cpp,
             new RegExp(
-                `auto (v_bblite_optional_chain_\\d+) = ${owner}\\.get_owned\\("entry"\\);[\\s\\S]*?if \\(.*\\1\\.has_value\\(\\)[^\\n]+\\n[^\\n]+const double (v_bblite_shared_result_\\d+) = bbl::js::make_closure\\(bblscene::bbl_environment_\\w+\\{std::ref\\(${owner}\\)[^\\n]+\\n[^\\n]+\\(\\*\\1\\)\\.erase\\(\\2\\)`,
+                `auto (v_bblite_optional_chain_\\d+) = ${owner}\\.get_owned\\("entry"\\);[\\s\\S]*?if \\(.*\\1\\.has_value\\(\\)[^\\n]+\\n[^\\n]+const double (v_bblite_shared_result_\\d+) = bbl::js::make_closure\\(bblscene::bbl_environment_\\w+\\{${owner}[,}][^\\n]+\\n[^\\n]+\\(\\*\\1\\)\\.erase\\(\\2\\)`,
             ),
         );
     }

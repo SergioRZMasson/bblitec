@@ -43,6 +43,8 @@
 #include <bblite/upstream/sprite_layer.hpp>
 #endif
 
+#include <bblite/byte_hash.hpp>
+
 #include <cstring>
 #include <iterator>
 #include <sstream>
@@ -421,7 +423,8 @@ void begin_sprite_renderer_update(Engine& engine, SpriteRendererHandle renderer,
 #endif
 
 #if BBLITE_HAS_SPRITES
-BillboardDrawPlan billboard_draw_plan(const BillboardSystemRecord& system) {
+BillboardDrawPlan billboard_draw_plan(const BillboardSystemRecord& system,
+                                      std::uint32_t sample_count) {
     const bool axis_locked = system.orientation == BillboardOrientation::axis_locked;
     // The particle family's Multiply program is a module of the pin's own,
     // outside both sprite composers: it declares no fx block, and its
@@ -440,13 +443,18 @@ BillboardDrawPlan billboard_draw_plan(const BillboardSystemRecord& system) {
     }
     const bool cutout = system.depth_mode == BillboardDepthMode::cutout;
     BillboardDrawPlan plan{};
+    // getOrCreateBillboardPipeline: `depthEntry.writeEnabled && sampleCount
+    // > 1` gate the setting, so a transparent system or a single-sample
+    // target draws without coverage (the billboard lowerer asserts it).
+    plan.alpha_to_coverage =
+        alpha_to_coverage_enabled(cutout && system.alpha_to_coverage, sample_count);
     // Each program is the module the pin composes for the system, deployed
     // whole under these stems (`emitSpriteBillboard`, upstream-lower.ts).
     // The custom composer takes the orientation and has no depth arm; the
     // stock cutout arm discards below the cutoff, and with alpha-to-coverage
     // the pin drops the discard and lets sample coverage carry the edge, so
     // that permutation shares the transparent program.
-    const bool discards = cutout && !system.alpha_to_coverage;
+    const bool discards = cutout && !plan.alpha_to_coverage;
     plan.program_stem =
         particle_multiply      ? "billboard_particle_multiply"
         : system.custom_shader ? (axis_locked ? "billboard_custom_axis_locked" : "billboard_custom")
@@ -457,6 +465,27 @@ BillboardDrawPlan billboard_draw_plan(const BillboardSystemRecord& system) {
     plan.cutout_writes_depth = cutout;
     plan.particle_passes = system.blend.particle_passes;
     return plan;
+}
+
+BillboardPassSource billboard_pass_source(const Engine& engine, BillboardSystemHandle handle,
+                                          std::uint32_t sample_count) {
+    const BillboardSystemRecord& system = handle_at(engine.billboard_systems, handle);
+    const SpriteAtlasRecord& atlas = handle_at(engine.sprite_atlases, system.atlas);
+    BillboardPassSource source;
+    source.system = handle;
+    source.plan = billboard_draw_plan(system, sample_count);
+    source.blend = system.blend;
+    source.add_pass_blend = system.add_pass_blend;
+    source.capacity = system.capacity;
+    source.custom_shader = system.custom_shader != 0u;
+    source.custom_textures = system.custom_textures;
+    source.custom_texture_names = system.custom_texture_names;
+    source.atlas = system.atlas;
+    source.atlas_width = atlas.width;
+    source.atlas_height = atlas.height;
+    source.atlas_mip_levels = atlas_mip_levels(atlas);
+    source.atlas_sampler = atlas.sampler;
+    return source;
 }
 
 #endif
@@ -569,20 +598,12 @@ std::vector<GpuVertex> mesh_gpu_vertices(const ModelGeometry& geometry,
     return result;
 }
 
-std::uint64_t fnv1a_append(std::uint64_t hash, const void* data, std::size_t size) {
-    const auto* bytes = static_cast<const std::uint8_t*>(data);
-    for (std::size_t index = 0; index < size; ++index) {
-        hash ^= bytes[index];
-        hash *= 1099511628211ull;
-    }
-    return hash;
-}
-
 SharedGeometryIdentity shared_geometry_identity(const std::vector<GpuVertex>& vertices,
                                                 const std::vector<std::uint32_t>& indices) {
-    std::uint64_t hash = 14695981039346656037ull;
-    hash = fnv1a_append(hash, vertices.data(), vertices.size() * sizeof(GpuVertex));
-    hash = fnv1a_append(hash, indices.data(), indices.size() * sizeof(std::uint32_t));
+    // A streamed chunk mesh's half megabyte hashes eight bytes a step.
+    const std::uint64_t hash =
+        hash_bytes(indices.data(), indices.size() * sizeof(std::uint32_t),
+                   hash_bytes(vertices.data(), vertices.size() * sizeof(GpuVertex)));
     return {vertices.size(), indices.size(), hash};
 }
 
@@ -2123,6 +2144,16 @@ PinnedBackgroundDraws select_pinned_backgrounds(const FrameOptions& options,
     if (options.ground_enabled(environment))
         draws.ground = environment.enable_noise ? Kind::ground_dither : Kind::ground;
     return draws;
+}
+
+std::vector<PinnedBackgroundArmBuffers>
+pinned_background_arm_buffers(const PinnedBackgroundDraws& draws, const Scene& scene) {
+    std::vector<PinnedBackgroundArmBuffers> arms;
+    draws.for_each([&](upstream::PinnedBackgroundArmKind kind) {
+        arms.push_back({kind, upstream::pinned_background_buffers(
+                                  upstream::pinned_background_arm(kind), scene)});
+    });
+    return arms;
 }
 #endif
 

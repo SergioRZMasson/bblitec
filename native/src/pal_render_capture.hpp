@@ -94,6 +94,8 @@ class NodeGpuCapture;
 // The system UBO builder, the instance layout and the pinned quad the
 // billboard lowerer generated out of the pinned pipeline module.
 #include <bblite/upstream/billboard_system.hpp>
+// The surface sample count a system's pipeline resolves alpha-to-coverage at.
+#include <bblite/upstream/pinned_surface.hpp>
 #endif
 #endif // BBLITE_HAS_PBR_RENDERER
 #if BBLITE_HAS_BILLBOARDS || BBLITE_HAS_SPRITE_RENDERER
@@ -1236,8 +1238,8 @@ inline void write_sprite_atlas_reference(JsonWriter& json, const Engine& engine,
         json.field("frameCount", record.frames.size());
         json.field("premultipliedAlpha", record.premultiplied_alpha);
         json.field("mipMaps", record.mip_maps);
-        json.field("byteLength", record.rgba.size());
-        json.field("digest", payload_digest(record.rgba));
+        json.field("byteLength", record.rgba->size());
+        json.field("digest", payload_digest(*record.rgba));
     }
     json.end_object();
 }
@@ -1272,7 +1274,13 @@ inline void write_billboard_draw_list(JsonWriter& json, const Scene& scene, cons
     // The same view the frame builds once for the sort and the draw.
     const std::array<float, 16> view =
         upstream::build_view_matrix(upstream::camera_world_matrix(camera));
-    for (const BillboardSystemHandle handle : scene.billboard_systems) {
+    // The pin's surface sample count, which the passes are built at unless
+    // BBLITE_MSAA=1 forces a single-sample diagnostic run.
+    const std::uint32_t sample_count =
+        upstream::preferred_sample_count(engine.options.msaa_samples);
+    // The systems the scene draws, which the passes follow; a pick source
+    // added after registration draws nothing until the scene builds again.
+    for (const BillboardSystemHandle handle : scene.state->billboard_renderables) {
         if (handle.value >= engine.billboard_systems.size())
             continue;
         const BillboardSystemRecord& system = handle_at(engine.billboard_systems, handle);
@@ -1280,7 +1288,7 @@ inline void write_billboard_draw_list(JsonWriter& json, const Scene& scene, cons
         // draw, so it must not describe one here either.
         if (!system.visible || system.count == 0)
             continue;
-        const BillboardDrawPlan plan = billboard_draw_plan(system);
+        const BillboardDrawPlan plan = billboard_draw_plan(system, sample_count);
         const bool cutout = system.depth_mode == BillboardDepthMode::cutout;
         json.begin_object();
         // The slot the depth mode gives it: cutout draws among the opaque
@@ -1301,7 +1309,7 @@ inline void write_billboard_draw_list(JsonWriter& json, const Scene& scene, cons
         // A transparent system stages its instances back to front for the
         // view; a cutout one uploads in logical insertion order.
         json.field("sorted", !cutout);
-        json.field("alphaToCoverage", system.alpha_to_coverage);
+        json.field("alphaToCoverage", plan.alpha_to_coverage);
         json.field("alphaCutoff", system.alpha_cutoff);
         json.field("opacity", system.opacity);
         json.field("axis", system.axis);
@@ -1838,7 +1846,7 @@ inline void write_render_capture(const std::string& path, const char* backend, c
     json.field("lightCount", scene.lights.size());
     json.field("taskCount", scene.tasks.size());
 #if BBLITE_HAS_BILLBOARDS
-    json.field("billboardSystemCount", scene.billboard_systems.size());
+    json.field("billboardSystemCount", scene.state->billboard_renderables.size());
 #endif
 #if BBLITE_HAS_SPRITE_RENDERER
     json.field("spriteRendererCount", engine.sprite_renderers.size());

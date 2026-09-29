@@ -185,13 +185,16 @@ struct ContextRecord {
 #if BBLITE_AUDIO_CAPTURE
     std::shared_ptr<lab::RecorderNode> recorder;
 #endif
-    int channels = 2;
+    /** The stream a new context requests; `channels`/`sample_rate` are what it got. */
+    static constexpr int requested_channels = 2;
+    static constexpr double requested_sample_rate = 48000.0;
+    int channels = requested_channels;
     /**
      * Not derivable from `context->sampleRate()`: that reads the
      * destination's `SamplingInfo`, which is zero on an offline context
      * until a render has run.
      */
-    double sample_rate = 48000.0;
+    double sample_rate = requested_sample_rate;
     /** Index 0 is the node `ctx.destination` names; see `audio_create_context`. */
     audio_handles::Registry<AudioNodeRecord> nodes;
     AudioNodeHandle destination_handle;
@@ -715,41 +718,85 @@ CaptureStats measure(const lab::AudioBus& bus) {
 
 } // namespace
 
-AudioContextHandle audio_create_context() {
-    require_runtime_execution("audio device creation");
-#if BBLITE_AUDIO_CAPTURE
-    const bool capture = capture_request().wanted();
-#else
-    constexpr bool capture = false;
-    if (!environment_variable("BBLITE_AUDIO_CAPTURE").empty()) {
-        throw std::runtime_error("Audio capture was not compiled. Configure with "
-                                 "BBLITE_AUDIO_CAPTURE=ON.");
-    }
-#endif
-    const std::uint32_t id = next_context_id();
+namespace {
+/** The stream a new context asks for: the record's own rate and width. */
+lab::AudioStreamConfig requested_output() {
+    lab::AudioStreamConfig out_config;
+    out_config.device_index = 0;
+    out_config.desired_channels = static_cast<std::uint32_t>(ContextRecord::requested_channels);
+    out_config.desired_samplerate = static_cast<float>(ContextRecord::requested_sample_rate);
+    return out_config;
+}
 
+/** Whether `BBLITE_AUDIO_CAPTURE` asks for offline rendering, which opens no device. */
+bool audio_capture_requested() {
+#if BBLITE_AUDIO_CAPTURE
+    return capture_request().wanted();
+#else
+    return !environment_variable("BBLITE_AUDIO_CAPTURE").empty();
+#endif
+}
+} // namespace
+
+void audio_announce_subsystem() {
+    if (!audio_capture_requested())
+        detail::SdlAudioSubsystem::instance().announce();
+}
+
+void audio_initialize_subsystem() {
+    if (!audio_capture_requested())
+        detail::SdlAudioSubsystem::instance().initialize();
+}
+
+bool audio_begin_context() {
+    require_runtime_execution("audio device creation");
     // LabSound ships rxi's logger at TRACE, which floods stderr from the
-    // graph-update thread. Warnings and errors still surface; the lower
-    // levels are opt-in diagnostics.
+    // graph-update thread and the device it opens. Warnings and errors still
+    // surface; the lower levels are opt-in diagnostics.
     const std::string log_level = environment_variable("BBLITE_AUDIO_LOG");
     log_set_level(log_level == "trace"   ? LOGLEVEL_TRACE
                   : log_level == "debug" ? LOGLEVEL_DEBUG
                   : log_level == "info"  ? LOGLEVEL_INFO
                   : log_level == "error" ? LOGLEVEL_ERROR
                                          : LOGLEVEL_WARN);
+    if (audio_capture_requested()) {
+#if BBLITE_AUDIO_CAPTURE
+        return true;
+#else
+        throw std::runtime_error("Audio capture was not compiled. Configure with "
+                                 "BBLITE_AUDIO_CAPTURE=ON.");
+#endif
+    }
+    detail::SdlAudioSubsystem::instance().prepare();
+    return false;
+}
 
+std::shared_ptr<AudioPlaybackDevice> audio_open_device(bool capture) {
+    if (capture)
+        return nullptr;
+    std::shared_ptr<AudioPlaybackDevice> device;
+    if (detail::SdlAudioSubsystem::instance().available())
+        device =
+            std::make_shared<AudioPlaybackDevice>(lab::AudioStreamConfig{}, requested_output());
+    if (!device || !device->opened()) {
+        throw std::runtime_error("Audio: SDL could not open a playback device. bblitec has no "
+                                 "silent fallback -- an unavailable device is the answer.");
+    }
+    return device;
+}
+
+namespace {
+/** A null `device` is a capture context, which renders offline; a device is always open. */
+AudioContextHandle create_context(const std::shared_ptr<AudioPlaybackDevice>& device) {
+    [[maybe_unused]] const bool capture = !device;
+    const std::uint32_t id = next_context_id();
     ContextRecord record;
-
-    lab::AudioStreamConfig out_config;
-    out_config.device_index = 0;
-    out_config.desired_channels = static_cast<std::uint32_t>(record.channels);
-    out_config.desired_samplerate = static_cast<float>(record.sample_rate);
-    const lab::AudioStreamConfig in_config{};
-
     record.context = std::make_shared<lab::AudioContext>(capture, false);
 
 #if BBLITE_AUDIO_CAPTURE
     if (capture) {
+        const lab::AudioStreamConfig in_config{};
+        const lab::AudioStreamConfig out_config = requested_output();
         record.destination = std::make_shared<lab::AudioDestinationNode>(
             *record.context, std::make_shared<lab::AudioDevice_Null>(in_config, out_config));
         record.context->setDestinationNode(record.destination);
@@ -759,11 +806,6 @@ AudioContextHandle audio_create_context() {
     } else
 #endif
     {
-        auto device = std::make_shared<detail::AudioDeviceSdl3>(in_config, out_config);
-        if (!device->opened()) {
-            throw std::runtime_error("Audio: SDL could not open a playback device. bblitec has no "
-                                     "silent fallback -- an unavailable device is the answer.");
-        }
         // The device may have opened at a different rate or width than
         // asked for; the graph runs at what it got.
         record.sample_rate = device->getOutputConfig().desired_samplerate;
@@ -798,6 +840,11 @@ AudioContextHandle audio_create_context() {
     contexts().emplace(id, std::move(record));
     return handle;
 }
+} // namespace
+
+AudioContextHandle audio_create_context() {
+    return create_context(audio_open_device(audio_begin_context()));
+}
 
 void audio_close_context(AudioContextHandle context) {
     const auto found = contexts().find(context.value);
@@ -819,9 +866,14 @@ void audio_close_context(AudioContextHandle context) {
 }
 
 AudioContextHandle audio_create_context(std::shared_ptr<AudioSession>& session) {
+    return audio_create_context(session, audio_open_device(audio_begin_context()));
+}
+
+AudioContextHandle audio_create_context(std::shared_ptr<AudioSession>& session,
+                                        std::shared_ptr<AudioPlaybackDevice> device) {
     if (!session)
         session = std::make_shared<AudioSession>();
-    const auto context = audio_create_context();
+    const auto context = create_context(device);
     try {
         session->contexts_.push_back(context);
     } catch (...) {
@@ -975,31 +1027,51 @@ AudioBufferHandle audio_create_buffer(AudioContextHandle context, std::uint32_t 
 #endif
 }
 
-AudioBufferHandle audio_decode_buffer(AudioContextHandle context,
-                                      const bbl::js::ArrayBuffer& encoded) {
+struct DecodedAudio {
+#if BBLITE_HAS_AUDIO_BUFFER_SOURCE && BBLITE_HAS_AUDIO_DECODE_FILE
+    std::unique_ptr<lab::AudioBus> bus;
+#endif
+};
+
+std::shared_ptr<const DecodedAudio>
+audio_decode_samples([[maybe_unused]] const std::vector<std::uint8_t>& bytes,
+                     [[maybe_unused]] double sample_rate) {
 #if BBLITE_HAS_AUDIO_BUFFER_SOURCE && BBLITE_HAS_AUDIO_DECODE_FILE
     try {
-        ContextRecord& context_record = require_context(context.value);
-        const auto extension = audio_container_extension({encoded.data(), encoded.byte_length()});
+        const auto extension = audio_container_extension(bytes);
         if (extension.empty())
-            return {};
-        const std::vector<std::uint8_t> bytes(encoded.data(),
-                                              encoded.data() + encoded.byte_length());
+            return nullptr;
         const auto source = decode_audio_bus(bytes, extension);
-        const auto decoded =
-            source ? lab::AudioBus::createBySampleRateConverting(
-                         source.get(), false, static_cast<float>(context_record.sample_rate))
-                   : nullptr;
-        if (!decoded || decoded->numberOfChannels() <= 0 || decoded->length() <= 0) {
-            return {};
-        }
-        const auto channel_count = static_cast<std::uint32_t>(decoded->numberOfChannels());
-        const auto frame_count = static_cast<std::uint32_t>(decoded->length());
-        const AudioBufferHandle handle =
-            allocate_audio_buffer(context, channel_count, frame_count, context_record.sample_rate);
+        auto decoded = std::make_shared<DecodedAudio>();
+        if (source)
+            decoded->bus = lab::AudioBus::createBySampleRateConverting(
+                source.get(), false, static_cast<float>(sample_rate));
+        if (!decoded->bus || decoded->bus->numberOfChannels() <= 0 || decoded->bus->length() <= 0)
+            return nullptr;
+        return decoded;
+    } catch (...) {
+        return nullptr;
+    }
+#else
+    return nullptr;
+#endif
+}
+
+AudioBufferHandle
+audio_buffer_from_decoded([[maybe_unused]] AudioContextHandle context,
+                          [[maybe_unused]] const std::shared_ptr<const DecodedAudio>& decoded) {
+#if BBLITE_HAS_AUDIO_BUFFER_SOURCE && BBLITE_HAS_AUDIO_DECODE_FILE
+    if (!decoded)
+        return {};
+    try {
+        const lab::AudioBus& bus = *decoded->bus;
+        const auto channel_count = static_cast<std::uint32_t>(bus.numberOfChannels());
+        const auto frame_count = static_cast<std::uint32_t>(bus.length());
+        const AudioBufferHandle handle = allocate_audio_buffer(
+            context, channel_count, frame_count, require_context(context.value).sample_rate);
         auto buffer = require_buffer(handle);
         for (std::uint32_t channel = 0; channel < channel_count; ++channel) {
-            const float* samples = decoded->channel(channel)->data();
+            const float* samples = bus.channel(static_cast<int>(channel))->data();
             std::copy_n(samples, frame_count, buffer->channels[channel].begin());
         }
         return handle;
@@ -1008,10 +1080,21 @@ AudioBufferHandle audio_decode_buffer(AudioContextHandle context,
         return {};
     }
 #else
-    (void)context;
-    (void)encoded;
     return {};
 #endif
+}
+
+AudioBufferHandle audio_decode_buffer(AudioContextHandle context,
+                                      const bbl::js::ArrayBuffer& encoded) {
+    try {
+        const std::vector<std::uint8_t> bytes(encoded.data(),
+                                              encoded.data() + encoded.byte_length());
+        return audio_buffer_from_decoded(
+            context, audio_decode_samples(bytes, require_context(context.value).sample_rate));
+    } catch (...) {
+        // Decode failure uses the optional-buffer sentinel.
+        return {};
+    }
 }
 
 bbl::js::F32Array audio_buffer_channel(AudioBufferHandle buffer, std::uint32_t channel) {

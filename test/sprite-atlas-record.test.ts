@@ -47,7 +47,7 @@ test("stored sprite atlases remain warning-clean under LTCG with and without ima
         source,
         `
 #include <bblite/runtime.hpp>
-#include <bblite/pal_image.hpp>
+#include <bblite/pal_texture_texels.hpp>
 #include "pal_image.cpp"
 #include <cassert>
 namespace bbl::pal { std::string environment_variable(const char*) { return {}; } }
@@ -68,7 +68,7 @@ int main() {
     const auto first = bblscene::${helper}(engine,texture,1,1,true,frames);
     const auto& atlas = engine.sprite_atlases.at(first.value);
     const std::vector<std::uint8_t> original{80,40,20,128};
-    assert(atlas.rgba == original && atlas.width == 1 && atlas.height == 1);
+    assert(*atlas.rgba == original && atlas.width == 1 && atlas.height == 1);
     assert(atlas.frames.size() == 1 && atlas.frames[0].pivot.x == 0.5f);
     assert(atlas.premultiplied_alpha && !atlas.mip_maps);
     bbl::FileTexture file;
@@ -78,7 +78,7 @@ int main() {
 #if BBLITE_HAS_IMAGE_DECODER
     const auto second = bblscene::${helper}(engine,texture,1,1,true,frames);
     const std::vector<std::uint8_t> expected{40,20,10,128};
-    assert(engine.sprite_atlases.at(second.value).rgba == expected);
+    assert(*engine.sprite_atlases.at(second.value).rgba == expected);
 #else
     try {
         bblscene::${helper}(engine,texture,1,1,true,frames);

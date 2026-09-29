@@ -105,6 +105,11 @@ std::uint32_t target_samples(const State& state, std::uint32_t requested) {
     return requested == 4 ? state.samples : 1u;
 }
 
+/** The sample count a target's passes draw at (`render_target_requested_samples`). */
+std::uint32_t target_samples(const State& state, const RenderTargetRecord& record) {
+    return target_samples(state, render_target_requested_samples(record));
+}
+
 WGPUTexture create_texture(State& state, WGPUTextureFormat format, std::uint32_t samples,
                            std::uint32_t width, std::uint32_t height, WGPUTextureUsage usage) {
     WGPUTextureDescriptor descriptor = WGPU_TEXTURE_DESCRIPTOR_INIT;
@@ -263,10 +268,9 @@ void record_post_process(State& state, Engine& engine, TaskHandle task_handle,
         source_height = source.height;
     }
     if (gpu.program == npos) {
-        gpu.program = post_process_program(
-            state, info, output.format,
-            output_record.swapchain ? 1u : target_samples(state, output_record.samples),
-            pass.alpha_mode, pass.extra_textures.size());
+        gpu.program =
+            post_process_program(state, info, output.format, target_samples(state, output_record),
+                                 pass.alpha_mode, pass.extra_textures.size());
         const PostProcessProgram& program = state.programs[gpu.program];
         if (program.uniform_size > 0) {
             WGPUBufferDescriptor descriptor = WGPU_BUFFER_DESCRIPTOR_INIT;
@@ -444,14 +448,13 @@ public:
                     handle_at(engine.render_targets, task.effect.target);
                 const Target& output = state.targets.at(task.effect.target.value);
                 if (!pass.pipeline) {
-                    pass = create_dawn_effect_pass(
-                        state, engine, task.effect.effect, output.format,
-                        record.swapchain ? 1u : target_samples(state, record.samples));
+                    pass = create_dawn_effect_pass(state, engine, task.effect.effect, output.format,
+                                                   target_samples(state, record));
                 }
                 upload_dawn_effect_pass(state.queue, engine, pass, task.effect.effect);
                 WGPURenderPassColorAttachment attachment = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
                 attachment.view = record.swapchain ? surface_view : output.view;
-                if (!record.swapchain && target_samples(state, record.samples) > 1) {
+                if (target_samples(state, record) > 1) {
                     attachment.resolveTarget = output.sampled_view;
                 }
                 attachment.loadOp = task.effect.clear ? WGPULoadOp_Clear : WGPULoadOp_Load;

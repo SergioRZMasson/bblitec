@@ -1,0 +1,157 @@
+{
+    "angles": ["reuse", "simplification", "efficiency", "altitude"],
+    "findings": [
+        {
+            "summary": "Billboard passes follow the scene's published renderables (deferred publication drained at registration, renderable version trigger) on both backends, with one build path per backend and no first-frame completion flag.",
+            "applied": true
+        },
+        {
+            "summary": "Resolve billboard alpha-to-coverage through alpha_to_coverage_enabled in the shared draw plan, and refuse a change only where the pin would observe it (cutout, multisampled, drawn by a registered scene).",
+            "applied": true
+        },
+        {
+            "summary": "Share the billboard instance-buffer growth check between backends (ensure_billboard_instance_capacity).",
+            "applied": true
+        },
+        {
+            "summary": "Snapshot a small billboard pass source instead of whole records, and share immutable atlas texels with preparation jobs instead of copying them.",
+            "applied": true
+        },
+        {
+            "summary": "One add_deferred_scene_renderables helper for text, billboards and depth-hosted sprite layers, refusing attachment after disposal; text and sprite layers follow the renderable version too.",
+            "applied": true
+        },
+        {
+            "summary": "Split Dawn's material dispatch into ensure_draw_state and write_draw_blocks so setup shares the frame's ensure half; setup makes per-draw buffers only, groups build in the frame.",
+            "applied": true
+        },
+        {
+            "summary": "Run native preparation unguarded in every build and stop re-testing Dawn device synchronization per draw.",
+            "applied": true
+        },
+        {
+            "summary": "One owner for a render target's requested sample count (render_target_requested_samples) used by both backends' scene and frame-graph code.",
+            "applied": true
+        },
+        {
+            "summary": "Return background arm buffers as (kind, buffers) pairs instead of index-coupled walks.",
+            "applied": true
+        },
+        {
+            "summary": "One shared setup coroutine (prepare_scene_pipelines) builds backgrounds beside pipeline compilation for both backends.",
+            "applied": true
+        },
+        {
+            "summary": "Prepare every row's new textures in one native job and wait once, instead of one frame wait per mesh (upload_scene_meshes).",
+            "applied": true
+        },
+        {
+            "summary": "Skip motion-state synchronization on all but the last physics sub-step.",
+            "applied": false,
+            "blockedBy": "Declined after measurement: skipping needed a catch-up that restores Bullet's interpolation transforms around its own sync for bodies that sleep mid-step, for about 0.05 ms per step; the parallel per-sub-step sync is kept.",
+            "filedIn": "pull request description (declined with measurement)"
+        },
+        {
+            "summary": "Per-thread sparse landing lists merged in manifold order replace the dense per-manifold scratch.",
+            "applied": true
+        },
+        {
+            "summary": "Keep physics world membership in one owner_world pointer written only by admit and leave (shared by evict and close).",
+            "applied": true
+        },
+        {
+            "summary": "Check the thread's last recovery entry first and pad per-thread slots to cache lines.",
+            "applied": true
+        },
+        {
+            "summary": "Split hull sourcing from derivation, use range assignment, and key the hull table by bytes with sweep-on-doubling.",
+            "applied": true
+        },
+        {
+            "summary": "for_each_index takes begin, end and grain and replaces the hand-written SetupWork loop.",
+            "applied": true
+        },
+        {
+            "summary": "Guard the Bullet internals the physics PAL mirrors with a static_assert on BT_BULLET_VERSION naming each copied function.",
+            "applied": true
+        },
+        {
+            "summary": "Read typed value facts instead of matching emitted (*name) text in movesReturnedLocal and namesStableOwner; record ownership on nativeBindingTypes; spell optional reads through optionalValueCpp.",
+            "applied": true
+        },
+        {
+            "summary": "Give the audio main-bus graph one statement builder used by both the direct and the realm paths.",
+            "applied": true
+        },
+        {
+            "summary": "Store an environment struct's concreteness instead of deriving borrowed-member references from an unstated invariant.",
+            "applied": true
+        },
+        {
+            "summary": "Emit the source-profile scope and the recent-results memo through one function-body prologue, and fail generation on --source-profile names that time nothing.",
+            "applied": true
+        },
+        {
+            "summary": "One function naming rule (sourceFunctionName) for profiling, the survey and refusal messages, including method and callback refusals.",
+            "applied": true
+        },
+        {
+            "summary": "Apply the RecentStrings memo to every pure number-to-string function shape, not only top-level declarations.",
+            "applied": true
+        },
+        {
+            "summary": "Collapse native jobs to one layer on a bounded worker pool with idle exit, a cap that leaves the physics workers' share, and a refusal for native work that waits on native work.",
+            "applied": true
+        },
+        {
+            "summary": "Record the start-order settlement rule and why per-kind queues would change observable settlement order.",
+            "applied": true
+        },
+        {
+            "summary": "One SDL audio rule: the main thread initializes audio once for the run, overlapping the application thread's start; devices open on any thread and never quit it.",
+            "applied": true
+        },
+        {
+            "summary": "Make the playback device an alias of the SDL device, give the capture check one owner, and share one display wait in the window realm.",
+            "applied": true
+        },
+        {
+            "summary": "Define the native cache directory independently of ccache so content-addressed headers never land at the drive root.",
+            "applied": true
+        },
+        {
+            "summary": "Decode loadTexture2D images once at load with the upload transforms, share them with atlases and the first upload, and drop untaken texels at the next frame boundary; one orientation owner and one read-and-decode helper.",
+            "applied": true
+        },
+        {
+            "summary": "Keep pal_image.hpp codec-only by moving texture-record texel helpers to pal_texture_texels.hpp.",
+            "applied": true
+        },
+        {
+            "summary": "Remove the process-wide image decoder mutex so native workers decode in parallel.",
+            "applied": false,
+            "blockedBy": "SDL_image updates unsynchronized codec counters on every load; making them atomic needs an sdl3-image overlay-port patch, which re-keys the vcpkg installation and rebuilds every scene.",
+            "filedIn": "TODO.md Performance (playroom row)"
+        },
+        {
+            "summary": "Replace the Map/Set lookup caches with an open-addressing index, a lazily built dense index for small integer keys, and SameValueZero keys; clear keeps capacity.",
+            "applied": true
+        },
+        {
+            "summary": "One seeded byte hash (byte_hash.hpp) for string keys and shared geometry identity; entry keys are returned by pointer.",
+            "applied": true
+        },
+        {
+            "summary": "Split realm glTF loading into a native read/parse/prepare job and a realm apply, with one decode owner per planned primitive, tables built once, ORM composites and the BRDF table prepared off the realm, and stored errors rethrown in document order.",
+            "applied": true
+        },
+        {
+            "summary": "Share the backgrounds-beside-pipelines setup block, the billboard membership match, and the physics member reset instead of copying them per site.",
+            "applied": true
+        },
+        {
+            "summary": "State backend facts once in docs/backends.md and leave worker and texel mechanics to the code that owns them.",
+            "applied": true
+        }
+    ]
+}

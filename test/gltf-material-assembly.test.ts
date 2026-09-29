@@ -555,6 +555,8 @@ test(
             "std::string string_or(",
             "std::vector<double> double_array(",
             "const ts::JsonValue* texture_transform_value(",
+            "template <typename Prepared, typename Compute> auto take_prepared(Prepared* prepared,",
+            "template <typename Prepared, typename Compute> auto take_prepared(std::vector<Prepared>* prepared,",
         ]
             .map((signature) => cppFunction(loader, signature))
             .join("\n");
@@ -599,6 +601,7 @@ test(
                 ]
                     .map((signature) => cppFunction(loader, signature))
                     .join("\n")}
+                ${cppRecord(loader, "struct GltfPreparedMaterials {")}
                 ${cppFunction(loader, "MaterialHandle load_material(")}
             }`,
                 )

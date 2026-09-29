@@ -173,6 +173,8 @@ void release(GpuState& state) {
         geometry.vertex_buffer.reset();
         geometry.index_buffer.reset();
     });
+    // After the meshes, which keep their buffers here as they go.
+    state.kept_buffers.clear(state.device);
     release_all_shared(state.shared_shader_material_textures,
                        [](SharedShaderMaterialTextures& textures) { textures.clear(); });
 #if BBLITE_HAS_MATERIAL_PLUGIN_TEXTURES
@@ -356,6 +358,8 @@ class SdlSceneRun {
         std::vector<SDL_GPUTexture*> sprite_render_textures;
         SceneSpritePass scene_sprite_pass;
         bool has_scene_sprite_pass = false;
+        /** The scene's `renderable_version` the scene sprite pass follows. */
+        std::uint64_t scene_sprite_renderable_version = 0;
 #endif
         ~Resources() {
 #if BBLITE_HAS_UI && !BBLITE_WORKERS
@@ -521,7 +525,7 @@ class SdlSceneRun {
 
     void prepare_pipeline([[maybe_unused]] const Scene& scene,
                           const upstream::RenderDrawCommand& draw, const FrameTaskRecord* task,
-                          [[maybe_unused]] std::vector<std::function<void()>>& pending) {
+                          std::vector<std::function<void()>>& pending) {
         auto& state = data_.resources.state;
         const auto& engine = data_.engine;
         const auto* geometry = task && task->kind == FrameTaskKind::geometry ? task : nullptr;
@@ -542,7 +546,7 @@ class SdlSceneRun {
                                  task->render.depth.source == RenderTextureSource::geometry_depth
                                      ? state.depth_format
                                      : gpu.depth_format,
-                                 task_sample_count(state, record.samples)};
+                                 target_sample_count(state, record)};
         }
         [[maybe_unused]] const auto samples =
             target ? std::optional<SDL_GPUSampleCount>{target->samples}
@@ -551,14 +555,13 @@ class SdlSceneRun {
             geometry ? static_cast<std::size_t>(geometry->geometry.shader_index) : npos;
         const auto kind = draw.pipeline;
         [[maybe_unused]] const bool shadow_pass = shadow != nullptr;
+        // A geometry-output pipeline reads its task record, so it is made here
+        // on the renderer thread; every other one joins the native preparation.
         const auto prepare = [&](auto action) {
-#if BBLITE_WORKERS
-            if (!geometry) {
+            if (geometry)
+                action();
+            else
                 pending.emplace_back(std::move(action));
-                return;
-            }
-#endif
-            action();
         };
         switch (draw.item.material_kind) {
 #if BBLITE_PBR_VARIANTS > 0
@@ -923,12 +926,10 @@ public:
         // in handle order both here and immediately after each callback run.
         sync_sdl_gpu_scene_sprites(state, engine, sprite_passes, sprite_render_textures,
                                    swapchain_format);
-        if (!scene.depth_hosted_sprite_layers.empty()) {
-            scene_sprite_pass = create_scene_sprite_pass(
-                state.device, engine, scene.depth_hosted_sprite_layers, sprite_render_textures,
-                color_target.format, state.depth_format, state.sample_count);
-            has_scene_sprite_pass = true;
-        }
+        sync_scene_sprite_pass(
+            state.device, engine, scene, scene_sprite_pass, has_scene_sprite_pass,
+            data_.resources.scene_sprite_renderable_version, sprite_render_textures,
+            color_target.format, state.depth_format, state.sample_count);
 #endif
         // Every material family and scene stage targets this frame attachment.
         state.frame_color_format = color_target.format;
@@ -943,13 +944,11 @@ public:
 #endif
 
 #if BBLITE_HAS_BILLBOARDS
-        // One pass per system the scene registered, targeting the same
+        // One pass per system the scene draws by now, targeting the same
         // attachment and depth the scene's own draws do.
-        for (const BillboardSystemHandle system : scene.billboard_systems) {
-            state.billboard_passes.push_back(
-                create_billboard_pass(state.device, engine, system, color_target.format,
-                                      state.depth_format, state.sample_count));
-        }
+        sync_billboard_passes(state.device, engine, scene, state.billboard_passes,
+                              state.billboard_renderable_version, state.frame_color_format,
+                              state.depth_format, state.sample_count);
 #endif
         // The shared material vertex with no fragment: the PBR fragment text
         // is retired -- PBR draws run the pin's own composed stages -- so this
@@ -1211,8 +1210,8 @@ public:
         pipeline_info.depth_stencil_state.enable_depth_write = false;
 #if BBLITE_PINNED_BACKGROUNDS
         // The background arms build over the pass state every scene
-        // pipeline shares; their own buffers and textures upload with the
-        // environment below.
+        // pipeline shares; their own buffers and textures upload beside the
+        // material pipelines below.
         const SDL_GPUGraphicsPipelineCreateInfo background_base = pipeline_info;
         const SDL_GPUColorTargetDescription background_target = color_target;
 #endif
@@ -1314,21 +1313,31 @@ public:
         }
 #endif
         cpu_startup_mark("shaders-pipelines");
-        state.environment =
-            upload_environment(state.device, scene.environment, 6, false, &state.environment_gpu);
-        state.brdf_lut = upload_brdf_lut(state.device, scene.environment);
-        if (use_standard_material) {
-            state.reflection_fallback = upload_cube_texture(state.device, nullptr);
-            state.reflection_cubes.reserve(engine.reflection_cubes.size());
-            for (const auto& cube : engine.reflection_cubes) {
-                state.reflection_cubes.push_back(upload_cube_texture(state.device, &cube));
-            }
+        {
+            // Environment and reflection-cube decoding and uploads read these
+            // snapshots and write backend state only. Mesh uploads bind the
+            // reflection cubes, so this job finishes before them.
+            const EnvironmentState environment = scene.environment;
+            const auto reflection_cubes = use_standard_material
+                                              ? engine.reflection_cubes
+                                              : std::vector<std::array<TextureData, 6>>{};
+            std::vector<std::function<void()>> environment_jobs;
+            environment_jobs.emplace_back([&] {
+                state.environment =
+                    upload_environment(state.device, environment, 6, false, &state.environment_gpu);
+                state.brdf_lut = upload_brdf_lut(state.device, environment);
+                if (use_standard_material) {
+                    state.reflection_fallback = upload_cube_texture(state.device, nullptr);
+                    state.reflection_cubes.reserve(reflection_cubes.size());
+                    for (const auto& cube : reflection_cubes)
+                        state.reflection_cubes.push_back(upload_cube_texture(state.device, &cube));
+                }
+            });
+            auto environment_preparation = run_native_preparation(std::move(environment_jobs));
+            while (environment_preparation.advance())
+                co_yield false;
         }
-#if BBLITE_PINNED_BACKGROUNDS
-        state.background_draws = pal::select_pinned_backgrounds(frame_options, scene.environment);
-        create_background_arms(state, scene, background_base, background_target);
-#endif
-        cpu_startup_mark("environment-background");
+        cpu_startup_mark("environment");
         if (startup_budget.exhausted()) {
             co_yield false;
             startup_budget.resume();
@@ -1379,54 +1388,16 @@ public:
             return OwnedSdlTexture{upload_texture(state.device, data, srgb, fallback),
                                    {state.device}};
         };
-        for (const upstream::RenderItem& item : render_plan.items) {
-            auto upload = upload_prepared_scene_mesh(
-                engine, item, state.shared_material_images, prepare_image, [&] {
-                    state.meshes.push_back(
-                        upload_sdl_gpu_scene_mesh(state, engine, item, &startup_uploads));
-                });
-            while (upload.advance())
-                co_yield false;
-            startup_uploads.submit();
-            if (startup_budget.exhausted()) {
-                co_yield false;
-                startup_budget.resume();
-            }
-        }
-        // Swapchain overlay layers: every scene registered after the first.
-        // `configureSwapchainOverlayScene` is the pin's own trigger -- a
-        // later scene sharing the surface keeps the base scene's colour and
-        // clears only its own depth -- so registration order is what makes
-        // a layer, exactly as it does upstream. Each layer owns a plan and
-        // an uploaded mesh array because a draw command indexes its plan.
-        // Each layer rematches changed rows before encoding the next frame.
-
-        for (std::size_t layer = 1; layer < data_.active_registered_scenes.size(); ++layer) {
-            Scene* overlay_scene = data_.active_registered_scenes[layer].get();
-            if (!overlay_scene)
-                continue;
-            upstream::RenderPlan overlay_plan = upstream::build_render_plan(*overlay_scene, engine);
-            validate_render_plan_items(overlay_plan);
-            std::vector<GpuMesh> overlay_layer_meshes;
-            overlay_layer_meshes.reserve(overlay_plan.items.size());
-            for (const upstream::RenderItem& item : overlay_plan.items) {
-                auto upload = upload_prepared_scene_mesh(
-                    engine, item, state.shared_material_images, prepare_image, [&] {
-                        overlay_layer_meshes.push_back(
-                            upload_sdl_gpu_scene_mesh(state, engine, item, &startup_uploads));
-                    });
-                while (upload.advance())
-                    co_yield false;
+        auto uploads = upload_scene_meshes(
+            engine, active_registered_scenes, render_plan, state.meshes, overlay_plans,
+            state.overlay_meshes, overlay_topology_versions, state.shared_material_images,
+            prepare_image, [&](const upstream::RenderItem& item) {
+                GpuMesh mesh = upload_sdl_gpu_scene_mesh(state, engine, item, &startup_uploads);
                 startup_uploads.submit();
-                if (startup_budget.exhausted()) {
-                    co_yield false;
-                    startup_budget.resume();
-                }
-            }
-            overlay_plans.push_back(std::move(overlay_plan));
-            state.overlay_meshes.push_back(std::move(overlay_layer_meshes));
-            overlay_topology_versions.push_back(overlay_scene->render_topology_version);
-        }
+                return mesh;
+            });
+        while (uploads.advance())
+            co_yield false;
         cpu_startup_mark("mesh-uploads");
         task_draw_lists.resize(engine.frame_tasks.size());
 
@@ -1440,25 +1411,34 @@ public:
             create_frame_graph_textures(state, engine, swapchain_format,
                                         static_cast<std::uint32_t>(engine.options.width),
                                         static_cast<std::uint32_t>(engine.options.height));
-        std::vector<std::function<void()>> pipeline_jobs;
-        for (std::size_t layer = 0; layer < active_registered_scenes.size(); ++layer) {
-            const Scene& layer_scene = *active_registered_scenes[layer];
-            auto pipelines = prepare_scene_pipeline_draws(
-                engine, layer_scene, layer == 0 ? render_plan : overlay_plans[layer - 1],
+        {
+            std::vector<std::function<void()>> background_jobs;
+#if BBLITE_PINNED_BACKGROUNDS
+            // The background arms read the environment uploaded above and write
+            // only `background_arms`.
+            const EnvironmentState environment = scene.environment;
+            state.background_draws = pal::select_pinned_backgrounds(frame_options, environment);
+            auto background_arms =
+                pal::pinned_background_arm_buffers(state.background_draws, scene);
+            if (!background_arms.empty())
+                background_jobs.emplace_back([&] {
+                    create_background_arms(state, environment, std::move(background_arms),
+                                           background_base, background_target);
+                });
+#endif
+            auto preparation = prepare_scene_pipelines(
+                engine, active_registered_scenes, render_plan, overlay_plans,
                 [&](TaskHandle handle) -> const upstream::RenderDrawLists& {
                     return handle_at(task_draw_lists, handle);
                 },
-                [&](const upstream::RenderDrawCommand& draw, const FrameTaskRecord* task) {
-                    prepare_pipeline(layer_scene, draw, task, pipeline_jobs);
-                });
-            while (pipelines.advance())
+                [&](const Scene& layer_scene, const upstream::RenderDrawCommand& draw,
+                    const FrameTaskRecord* task, std::vector<std::function<void()>>& jobs) {
+                    prepare_pipeline(layer_scene, draw, task, jobs);
+                },
+                std::move(background_jobs), {}, /*native=*/true);
+            while (preparation.advance())
                 co_yield false;
         }
-#if BBLITE_WORKERS
-        auto preparation = run_native_preparation(std::move(pipeline_jobs));
-        while (preparation.advance())
-            co_yield false;
-#endif
         cpu_startup_mark("draw-pipelines");
 
 #if BBLITE_HAS_TEXT
@@ -1697,9 +1677,9 @@ public:
             // SDL retires a released buffer only once the command buffers
             // still holding it have finished.
             const std::size_t rows = mesh.instance_matrices.size();
-            SDL_ReleaseGPUBuffer(state.device, gpu.instances);
-            gpu.instances = uploads.upload(
-                SDL_GPU_BUFFERUSAGE_VERTEX | SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
+            state.kept_buffers.release(state.device, gpu.instances);
+            gpu.instances = state.kept_buffers.upload(
+                uploads, SDL_GPU_BUFFERUSAGE_VERTEX | SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
                 mesh.instance_matrices.data(), rows * sizeof(mesh.instance_matrices.front()));
 #if BBLITE_GPU_INSTANCE_COLORS
             if (gpu.instance_colors) {
@@ -1708,10 +1688,10 @@ public:
                 // does.
                 std::vector<float> instance_colors = instance_colors_for_upload(mesh);
                 instance_colors.resize(rows * 4, 1.0f);
-                SDL_ReleaseGPUBuffer(state.device, gpu.instance_colors);
-                gpu.instance_colors =
-                    uploads.upload(SDL_GPU_BUFFERUSAGE_VERTEX, instance_colors.data(),
-                                   instance_colors.size() * sizeof(float));
+                state.kept_buffers.release(state.device, gpu.instance_colors);
+                gpu.instance_colors = state.kept_buffers.upload(
+                    uploads, SDL_GPU_BUFFERUSAGE_VERTEX, instance_colors.data(),
+                    instance_colors.size() * sizeof(float));
             }
 #endif
         }
@@ -1777,6 +1757,14 @@ public:
                 upload_sprite_pass(rows.state.device, data.engine, sprite_pass, delta_ms,
                                    rows.uploads);
             }
+            // A build since the last frame (its renderable version) may have
+            // published depth-hosted layers; the scene pass follows them.
+            if (resources.scene_sprite_renderable_version != data.scene.state->renderable_version)
+                sync_scene_sprite_pass(
+                    rows.state.device, data.engine, data.scene, resources.scene_sprite_pass,
+                    resources.has_scene_sprite_pass, resources.scene_sprite_renderable_version,
+                    resources.sprite_render_textures, rows.state.frame_color_format,
+                    rows.state.depth_format, rows.state.sample_count);
             if (resources.has_scene_sprite_pass) {
                 upload_scene_sprite_pass(rows.state.device, data.engine,
                                          resources.scene_sprite_pass, delta_ms, rows.uploads);
@@ -1966,11 +1954,19 @@ public:
         void upload_billboards([[maybe_unused]] const SceneSyncOutcome& outcome,
                                [[maybe_unused]] double delta_ms) {
 #if BBLITE_HAS_BILLBOARDS
-            // Uploaded here because the upload submits a command buffer of
-            // its own; the draw reads the same view.
-            for (BillboardPass& billboard : rows.state.billboard_passes) {
-                upload_billboard_pass(rows.state.device, run.data_.scene, run.data_.engine,
-                                      billboard, outcome.pass.matrices.view, delta_ms);
+            // A build since the last frame (its renderable version) may have
+            // changed the systems the scene draws; their passes follow before
+            // any draw reads them. Uploaded here because the upload submits a
+            // command buffer of its own; the draw reads the same view.
+            GpuState& state = rows.state;
+            if (state.billboard_renderable_version != run.data_.scene.state->renderable_version)
+                sync_billboard_passes(state.device, run.data_.engine, run.data_.scene,
+                                      state.billboard_passes, state.billboard_renderable_version,
+                                      state.frame_color_format, state.depth_format,
+                                      state.sample_count);
+            for (BillboardPass& billboard : state.billboard_passes) {
+                upload_billboard_pass(state.device, run.data_.scene, run.data_.engine, billboard,
+                                      outcome.pass.matrices.view, delta_ms);
             }
 #endif
         }
@@ -2982,7 +2978,7 @@ public:
                             // *allocated* at, not the one it asked for: a run
                             // forced to one sample resolves nothing.
                             if (task.render.resolve_target.value != invalid_handle &&
-                                task_sample_count(state, target_record.samples) !=
+                                target_sample_count(state, target_record) !=
                                     SDL_GPU_SAMPLECOUNT_1) {
                                 target_info.store_op = SDL_GPU_STOREOP_RESOLVE_AND_STORE;
                                 target_info.resolve_texture =
@@ -3045,7 +3041,7 @@ public:
                                        handle_at(task_draw_lists, handle), nullptr, nullptr,
                                        nullptr, nullptr, nullptr, false, &prepared.draws,
                                        task.scene_uniforms,
-                                       task_sample_count(state, target_record.samples));
+                                       target_sample_count(state, target_record));
                             temporal_passes.emplace_back(std::move(prepared));
                             continue;
 #endif
@@ -3060,8 +3056,7 @@ public:
                                 if (!task_depth_pointer ||
                                     target.color_format != state.frame_color_format ||
                                     target.depth_format != state.depth_format ||
-                                    task_sample_count(state, target_record.samples) !=
-                                        state.sample_count)
+                                    target_sample_count(state, target_record) != state.sample_count)
                                     throw std::runtime_error(
                                         "Compiler-owned scene stages require the frame attachment formats and sample count.");
 #if BBLITE_PINNED_BACKGROUNDS
@@ -3090,7 +3085,7 @@ public:
                                                             ? state.depth_format
                                                             : target.depth_format)
                                                      : SDL_GPU_TEXTUREFORMAT_INVALID,
-                                                 task_sample_count(state, target_record.samples)});
+                                                 target_sample_count(state, target_record)});
                             if (task.render.scene_stages) {
 #if BBLITE_PINNED_BACKGROUNDS
                                 draw_task_background(task_pass, handle, task_matrix, task_camera,
@@ -3287,10 +3282,8 @@ public:
                                     // matches the 1-sample texture the gate
                                     // allocated (Dawn's site reads the same
                                     // gate).
-                                    target_record.swapchain
-                                        ? 1u
-                                        : gpu_sample_count_value(
-                                              task_sample_count(state, target_record.samples)));
+                                    gpu_sample_count_value(
+                                        target_sample_count(state, target_record)));
                             }
                             SDL_GPUColorTargetInfo effect_target{};
                             effect_target.texture = target_texture(task.effect.target, false);
@@ -3498,9 +3491,11 @@ public:
                         blit_target.store_op = SDL_GPU_STOREOP_STORE;
                         SdlRenderPass blit_pass{
                             SDL_BeginGPURenderPass(command, &blit_target, 1, nullptr)};
-                        SDL_BindGPUGraphicsPipeline(blit_pass, target_record.samples == 4
-                                                                   ? state.blit_msaa_pipeline
-                                                                   : state.blit_pipeline);
+                        SDL_BindGPUGraphicsPipeline(blit_pass,
+                                                    target_sample_count(state, target_record) ==
+                                                            SDL_GPU_SAMPLECOUNT_1
+                                                        ? state.blit_pipeline
+                                                        : state.blit_msaa_pipeline);
                         if (force_full_viewport || copy.has_viewport) {
 #if BBLITE_HAS_GEOMETRY_OUTPUT
                             const GpuRenderTarget& target =

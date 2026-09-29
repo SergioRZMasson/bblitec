@@ -627,7 +627,9 @@ for (const [variant, context] of [
         #include <cassert>
         #include <fstream>
         #include <functional>
+        #include <map>
         #include <optional>
+        #include <set>
         #include <type_traits>
         namespace bbl {
             void enable_scene_transmission(Scene& scene) { scene.transmission_enabled = true; }
@@ -643,6 +645,8 @@ for (const [variant, context] of [
                 "std::string string_or(",
                 "std::vector<double> double_array(",
                 "const ts::JsonValue* texture_transform_value(",
+                "template <typename Prepared, typename Compute> auto take_prepared(Prepared* prepared,",
+                "template <typename Prepared, typename Compute> auto take_prepared(std::vector<Prepared>* prepared,",
             ]
                 .map((signature) => cppFunction(loader, signature))
                 .join("\n")}
@@ -858,6 +862,32 @@ for (const [variant, context] of [
                 const auto& orm = engine.materials.back().metallic_roughness_texture;
                 assert(orm.rgba_width == 2 && orm.rgba_height == 1);
                 assert((std::vector<std::uint8_t>(orm.bytes.begin(), orm.bytes.end()) == std::vector<std::uint8_t>{20,40,60,255, 35,44,66,255}));
+                // A realm load's job composes the pairs ahead, keyed by their
+                // images; the material takes the composite without decoding,
+                // and a failed composition raises its own error there.
+                using Pairs = std::set<std::pair<std::size_t, std::size_t>>;
+                assert((gltf_orm_composite_pairs(object, object.at("images").as_array()) == Pairs{{0, 1}}));
+                const auto shared = ts::json_parse(R"({"materials":[{"pbrMetallicRoughness":{"metallicRoughnessTexture":{"index":0}},"occlusionTexture":{"index":1}}],"textures":[{"source":0},{"source":0}],"images":[{}]})");
+                assert(gltf_orm_composite_pairs(shared.as_object(), shared.as_object().at("images").as_array()).empty());
+                const auto unassembled = ts::json_parse(R"({"materials":[{"pbrMetallicRoughness":{"metallicRoughnessTexture":{"index":0}},"occlusionTexture":{"index":1}}],"textures":[{"source":0},{"source":1}],"images":[{}]})");
+                assert(gltf_orm_composite_pairs(unassembled.as_object(), unassembled.as_object().at("images").as_array()).empty());
+                const auto load_prepared = [&](GltfPreparedMaterials& prepared) {
+                    load_material(engine, core._rawMatDef->as_object(), core, {}, {}, {}, object.at("images").as_array(), object.at("textures").as_array(),
+                        {}, fetcher, false, features, false, false, false, nullptr, nullptr,
+                        [&](const TextureData&) { ++decodes; return pal::DecodedImage{}; }, false, nullptr, false, &prepared);
+                };
+                GltfPreparedMaterials prepared;
+                prepared.orm_composites[{0, 1}] = GltfLoadPromise<std::shared_ptr<const pal::DecodedImage>>{
+                    std::make_shared<const pal::DecodedImage>(pal::DecodedImage{1, 1, {7, 8, 9, 255}})};
+                load_prepared(prepared);
+                const auto& taken = engine.materials.back().metallic_roughness_texture;
+                assert(decodes == 2 && taken.rgba_width == 1 && taken.rgba_height == 1);
+                assert((std::vector<std::uint8_t>(taken.bytes.begin(), taken.bytes.end()) == std::vector<std::uint8_t>{7, 8, 9, 255}));
+                prepared.orm_composites[{0, 1}] = GltfLoadPromise<std::shared_ptr<const pal::DecodedImage>>::settle(
+                    []() -> std::shared_ptr<const pal::DecodedImage> { throw std::runtime_error("Canvas2D composition of compressed glTF images is unsupported."); });
+                std::string raised;
+                try { load_prepared(prepared); } catch (const std::runtime_error& error) { raised = error.what(); }
+                assert(raised == "Canvas2D composition of compressed glTF images is unsupported." && decodes == 2);
                 const auto bitmap = GltfPbrValue{core._metallicRoughnessImage};
                 unsigned uploads = 0;
                 const auto upload = [&](GltfMaterialImage image, bool srgb) { ++uploads; return GltfPbrValue{GltfMaterialTexture{std::move(image), srgb, std::nullopt, nullptr}}; };

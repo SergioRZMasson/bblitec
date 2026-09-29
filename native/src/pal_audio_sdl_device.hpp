@@ -32,21 +32,81 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <memory>
+#include <mutex>
+#include <stdexcept>
 #include <vector>
 
 namespace bbl::pal::detail {
+
+/**
+ * SDL's audio subsystem for the run. SDL's main thread initializes it, once,
+ * never a worker; device streams then open and close on any thread and never
+ * quit it (SDL_Quit at exit does). A host whose realm runs on another thread
+ * announces the initialization before starting that realm and performs it
+ * while the realm starts; device opens wait for it. The main thread performs
+ * it before it ever waits on that realm, so the wait always ends.
+ */
+class SdlAudioSubsystem {
+public:
+    static SdlAudioSubsystem& instance() {
+        static SdlAudioSubsystem subsystem;
+        return subsystem;
+    }
+
+    /** On SDL's main thread: device opens wait for `initialize`. */
+    void announce() {
+        const std::lock_guard lock(mutex_);
+        if (state_ != State::initialized || !SDL_WasInit(SDL_INIT_AUDIO))
+            state_ = State::announced;
+    }
+    /** On SDL's main thread: initialize for the run, again after SDL_Quit or a failure. */
+    void initialize() {
+        {
+            const std::lock_guard lock(mutex_);
+            if (state_ == State::initialized && SDL_WasInit(SDL_INIT_AUDIO))
+                return;
+        }
+        const bool initialized = SDL_InitSubSystem(SDL_INIT_AUDIO);
+        {
+            const std::lock_guard lock(mutex_);
+            state_ = initialized ? State::initialized : State::failed;
+        }
+        ready_.notify_all();
+    }
+    /** A new context's step on its realm: initialize on SDL's main thread; elsewhere, refuse
+     * unless the main thread has initialized or announced it. */
+    void prepare() {
+        if (SDL_IsMainThread()) {
+            initialize();
+            return;
+        }
+        const std::lock_guard lock(mutex_);
+        if (state_ == State::absent)
+            throw std::runtime_error("Audio: SDL initializes its audio subsystem on its main "
+                                     "thread, which has neither initialized nor announced it.");
+    }
+    /** Any thread, before a device opens: whether SDL's audio is up, once announced work ends. */
+    bool available() {
+        std::unique_lock lock(mutex_);
+        ready_.wait(lock, [&] { return state_ != State::announced; });
+        return state_ == State::initialized;
+    }
+
+private:
+    enum class State { absent, announced, initialized, failed };
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    State state_ = State::absent;
+};
 
 class AudioDeviceSdl3 final : public lab::AudioDevice {
 public:
     AudioDeviceSdl3(const lab::AudioStreamConfig& input_config,
                     const lab::AudioStreamConfig& output_config)
         : lab::AudioDevice(input_config, output_config) {
-        if (!stream_.initialized) {
-            return;
-        }
-
         SDL_AudioSpec spec{};
         spec.format = SDL_AUDIO_F32;
         spec.channels =
@@ -210,7 +270,6 @@ private:
     static constexpr float kHigh = 1.0f;
 
     struct StreamOwner {
-        bool initialized = SDL_InitSubSystem(SDL_INIT_AUDIO);
         SDL_AudioStream* value = nullptr;
         bool trace = runtime_trace_enabled();
         std::uint64_t frames = 0;
@@ -226,8 +285,6 @@ private:
             if (trace && value)
                 std::fprintf(stderr, "[bblite trace] audio playback frames=%llu peak=%g\n",
                              static_cast<unsigned long long>(frames), static_cast<double>(peak));
-            if (initialized)
-                SDL_QuitSubSystem(SDL_INIT_AUDIO);
         }
     };
 
@@ -239,8 +296,8 @@ private:
     bool running_ = false;
     float sample_rate_ = 0.0f;
     // Destroy first, including when construction throws: closing the stream
-    // joins its callback before the scratch and buses die. Each device releases
-    // only its own SDL audio initialization, preserving other live sessions.
+    // joins its callback before the scratch and buses die. The subsystem it
+    // opened under stays up for the run (`SdlAudioSubsystem`).
     StreamOwner stream_;
 };
 

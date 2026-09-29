@@ -42,4 +42,8 @@ test("realm promises schedule reactions, adopt results, recover and release susp
         result.stderr,
         /\[cpu\]\[timer\] realm=\S+ id=\d+ repeat=[01] delay_ms=[\d.]+ now_ms=[\d.]+/,
     );
+    assert.match(
+        result.stderr,
+        /\[cpu\]\[timer-set\] realm=\S+ id=\d+ repeat=[01] delay_ms=[\d.]+ now_ms=[\d.]+/,
+    );
 });

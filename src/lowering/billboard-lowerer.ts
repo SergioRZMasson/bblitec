@@ -615,7 +615,11 @@ inline double billboard_sort_compare(
         );
     }
 
-    /** `addFacingBillboardSystem` joins the scene's own renderables. */
+    /**
+     * `addFacingBillboardSystem` registers the system's pick source at once
+     * and its renderable through the scene's deferred builders, which the
+     * scene runs when it builds (`add_billboard_system`).
+     */
     private assertSceneRegistration(): void {
         const { declaration } = this.context.functionDeclaration(
             sceneModule,
@@ -626,20 +630,39 @@ inline double billboard_sort_compare(
             "addBillboardSystem(scene, system)",
             "addFacingBillboardSystem",
         );
-        if (
-            !this.context.hasCall(
-                this.context.functionDeclaration(
-                    sceneModule,
-                    "addBillboardSystem",
-                ).declaration,
-                "addDeferredSceneRenderables",
-            )
-        ) {
-            this.context.contractError(
-                declaration,
-                "Expected a billboard system to register as a deferred scene renderable.",
-            );
+        const registration = this.context.functionDeclaration(
+            sceneModule,
+            "addBillboardSystem",
+        ).declaration;
+        for (const [call, meaning] of [
+            ["registerPickSource", "a pick source"],
+            ["addDeferredSceneRenderables", "a deferred scene renderable"],
+        ] as const) {
+            if (!this.context.hasCall(registration, call)) {
+                this.context.contractError(
+                    registration,
+                    `Expected a billboard system to register as ${meaning}.`,
+                );
+            }
         }
+    }
+
+    /**
+     * `getOrCreateBillboardPipeline` resolves alpha-to-coverage for each
+     * binding: only a depth-writing (cutout) system on a multisampled target
+     * reads the setting. The shared draw plan and the registered-system
+     * refusal both apply this rule.
+     */
+    private assertAlphaToCoverageRule(): void {
+        const { declaration } = this.context.functionDeclaration(
+            pipelineModule,
+            "getOrCreateBillboardPipeline",
+        );
+        this.context.assertExpressionShape(
+            this.context.variableInitializer(declaration, "alphaToCoverage"),
+            "depthEntry.writeEnabled && sampleCount > 1 && !!alphaToCoverageResolver?.(system)",
+            "billboard alpha-to-coverage resolution",
+        );
     }
 
     // -----------------------------------------------------------------
@@ -797,6 +820,7 @@ inline double billboard_sort_compare(
         this.assertInstanceSlots();
         this.assertQuad();
         this.assertSceneRegistration();
+        this.assertAlphaToCoverageRule();
         // The squared axis length below which the axis-locked factory
         // refuses the axis as zero, read off its own `lengthSq < <floor>`.
         const axisLocked = this.context.functionDeclaration(
@@ -1027,6 +1051,8 @@ inline void billboard_upload_instances(
 // resolveSpriteFrame is the shared atlas module's, lowered once beside the
 // 2D layer's own layout.
 #include <bblite/upstream/sprite_layer.hpp>
+// The surface sample count an alpha-to-coverage change is observable at.
+#include <bblite/upstream/pinned_surface.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -1428,8 +1454,15 @@ void set_billboard_shader_params(
 }
 
 // render/alpha-to-coverage.ts setAlphaToCoverage: membership of the enabled
-// set, which the pipeline owner reads when it builds. A flag on the record
-// is the same fact without the WeakSet, because the record IS the target.
+// set, a flag on the record because the record IS the target. The pin reads
+// it when a scene binds the system's renderable (render-task-base.ts
+// _buildBindings -> billboard-pipeline.ts getOrCreateBillboardPipeline), and
+// only for a cutout system on a multisampled target; a native pass resolves
+// it the same way when it is built. A registered scene rebinds a renderable
+// it already draws only when a later scene mutation bumps its renderable
+// version, which the native passes do not track, so the one change that
+// binding would observe refuses; every other change is the pin's no-op or
+// is read when the renderable binds.
 void set_billboard_alpha_to_coverage(
     Engine& engine,
     BillboardSystemHandle system,
@@ -1437,9 +1470,31 @@ void set_billboard_alpha_to_coverage(
     if (system.value >= engine.billboard_systems.size()) {
         throw std::runtime_error("Invalid billboard system handle.");
     }
-    ${recordAt("engine.billboard_systems", "system")}.alpha_to_coverage = enabled;
+    BillboardSystemRecord& record = ${recordAt("engine.billboard_systems", "system")};
+    if (record.alpha_to_coverage == enabled) return;
+    const bool observable = record.depth_mode == BillboardDepthMode::cutout &&
+        upstream::preferred_sample_count(engine.options.msaa_samples) > 1u;
+    if (observable)
+        for (const auto& registered : engine.scenes()) {
+            if (!registered) continue;
+            const auto& drawn = registered->state->billboard_renderables;
+            if (std::any_of(drawn.begin(), drawn.end(),
+                            [&](BillboardSystemHandle member) { return member.value == system.value; })) {
+                throw std::runtime_error(
+                    "setAlphaToCoverage: alpha-to-coverage is immutable WebGPU pipeline state, so call "
+                    "this before registerScene; a cutout billboard system a registered multisampled "
+                    "scene draws takes the change only when that scene rebinds its renderables, which "
+                    "is not represented.");
+            }
+        }
+    record.alpha_to_coverage = enabled;
 }
 
+// billboard-scene.ts addBillboardSystem: the pick source registers at once,
+// and the renderable through addDeferredSceneRenderables, whose builder the
+// scene runs when it builds (\`register_scene\`). A system added to a scene
+// already registered therefore draws from the scene's next registration,
+// and one added twice draws twice.
 void add_billboard_system(
     Scene& scene,
     BillboardSystemHandle system) {
@@ -1449,6 +1504,9 @@ void add_billboard_system(
     if (system.value >= scene.engine->billboard_systems.size()) {
         throw std::runtime_error("Invalid billboard system handle.");
     }
+    add_deferred_scene_renderables(scene, [system](SceneState& state) {
+        state.billboard_renderables.push_back(system);
+    });
     scene.billboard_systems.push_back(system);
 }
 

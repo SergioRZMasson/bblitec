@@ -66,7 +66,6 @@ static void check_loop_and_playback_rate() {
 static void check_session_isolation() {
     // Finishing one engine preserves another's contexts and SDL audio device.
     _putenv_s("BBLITE_AUDIO_CAPTURE", "");
-    const SDL_InitFlags external_audio = SDL_WasInit(SDL_INIT_AUDIO);
     std::shared_ptr<AudioSession> first_session;
     std::shared_ptr<AudioSession> second_session;
     const auto first_context = audio_create_context(first_session);
@@ -88,20 +87,19 @@ static void check_session_isolation() {
     second_session.reset();
     assert(!contexts().contains(second_context.value));
     assert(second_device.expired());
-    assert(SDL_WasInit(SDL_INIT_AUDIO) == external_audio);
+    // Devices never quit SDL's audio: it stays up for the run.
+    assert(SDL_WasInit(SDL_INIT_AUDIO));
 }
 
 int main() {
     if (!environment_variable("BBLITE_TEST_REALTIME").empty()) {
         assert(!SDL_WasInit(SDL_INIT_AUDIO));
         check_session_isolation();
-        // A separately held SDL initialization survives both device owners;
-        // releasing it then shuts audio down, proving neither device leaked a ref.
+        // Releasing a separately held SDL initialization leaves the run's.
         assert(SDL_InitSubSystem(SDL_INIT_AUDIO));
         check_session_isolation();
-        assert(SDL_WasInit(SDL_INIT_AUDIO));
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
-        assert(!SDL_WasInit(SDL_INIT_AUDIO));
+        assert(SDL_WasInit(SDL_INIT_AUDIO));
         _putenv_s("BBLITE_AUDIO_CAPTURE", "");
         const auto context = audio_create_context();
         const auto destination = audio_destination(context);
@@ -140,6 +138,10 @@ int main() {
         assert(last.expired());
         assert(require_context(context.value).graph.size() == 1);
         audio_close_context(context);
+        // The run initialized SDL's audio once, and no device took or released a
+        // reference: releasing that one shuts audio down.
+        assert(SDL_WasInit(SDL_INIT_AUDIO));
+        SDL_QuitSubSystem(SDL_INIT_AUDIO);
         assert(!SDL_WasInit(SDL_INIT_AUDIO));
         std::cout << "audio-lifetime-check: ok (realtime)\n";
         return 0;

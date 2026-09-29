@@ -305,6 +305,9 @@ function compilerArguments(scene: SceneDefinition): string[] {
     ) {
         arguments_.push("--id-diagnostics");
     }
+    // Diagnostic CPU scopes for the named source functions (docs/debugging.md).
+    const sourceProfile = process.env.BBLITE_SOURCE_PROFILE;
+    if (sourceProfile) arguments_.push("--source-profile", sourceProfile);
     return arguments_;
 }
 

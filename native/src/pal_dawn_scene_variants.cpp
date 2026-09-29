@@ -641,7 +641,8 @@ build_pinned_draw_group(DawnState& state, DawnMesh& mesh, std::size_t variant,
 }
 
 DawnDrawState& ensure_pinned_draw_bindings(DawnState& state, DawnMesh& mesh, std::uint32_t material,
-                                           std::size_t variant, const MaterialRecord* record) {
+                                           std::size_t variant, const MaterialRecord* record,
+                                           bool build_group) {
     DawnDrawState& draw_state = mesh.pinned_states.try_emplace(material, state).first->second;
     auto& allocations = draw_state.plugin_texture_allocations;
     std::size_t allocation_count = 0;
@@ -687,14 +688,17 @@ DawnDrawState& ensure_pinned_draw_bindings(DawnState& state, DawnMesh& mesh, std
         draw_state.mesh_uniforms = uniform_buffer(sizeof(upstream::MeshUniforms));
     }
     // Sized by the variant, so a swap to one with more fields reallocates.
-    if (WGPUBuffer old =
-            std::exchange(draw_state.material_uniforms, uniform_buffer(entry.material_ubo_bytes))) {
-        wgpuBufferRelease(old);
+    if (!draw_state.material_uniforms || draw_state.group_key != variant) {
+        if (WGPUBuffer old = std::exchange(draw_state.material_uniforms,
+                                           uniform_buffer(entry.material_ubo_bytes))) {
+            wgpuBufferRelease(old);
+        }
+        draw_state.material_upload.reset();
     }
-    draw_state.material_upload.reset();
-    draw_state.group = build_pinned_draw_group(state, mesh, variant, draw_state.mesh_uniforms,
-                                               draw_state.material_uniforms, nullptr, record);
     draw_state.group_key = variant;
+    if (build_group)
+        draw_state.group = build_pinned_draw_group(state, mesh, variant, draw_state.mesh_uniforms,
+                                                   draw_state.material_uniforms, nullptr, record);
     return draw_state;
 }
 

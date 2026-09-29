@@ -46,6 +46,8 @@ export interface CapturedClosure {
 interface EnvironmentStruct {
     readonly name: string;
     readonly lines: readonly string[];
+    /** Every capture type resolved: a declared struct rather than a template. */
+    readonly concrete: boolean;
     readonly declaration?: string;
 }
 
@@ -131,6 +133,15 @@ function copiesScalarParameter(type: DataType): boolean {
     );
 }
 
+/**
+ * Which captures an environment borrows rather than owns. `true` borrows the
+ * bindings that allow a reference, `"entry"` only those living as long as the
+ * entry. `"call"` is an environment built for one synchronous call and
+ * released when it returns: every capture is a binding of the caller, which
+ * outlives the call, so it borrows them all and a call copies no owner.
+ */
+export type ClosureBorrowing = boolean | "entry" | "call";
+
 /** Named aliases preserve all companion expressions while the typed environment
  * exposes the actual owning captures, including mutable cells, to the GC. */
 export class ClosureCaptures {
@@ -139,7 +150,7 @@ export class ClosureCaptures {
     constructor(
         readonly environment: string,
         readonly boundary: number,
-        private readonly byReference: boolean | "entry" = false,
+        private readonly byReference: ClosureBorrowing = false,
         private readonly bindingType?: (
             binding: NativeCaptureBinding,
         ) => string | undefined,
@@ -162,9 +173,10 @@ export class ClosureCaptures {
     }
 
     get initializer(): string {
-        return `bblscene::${this.environmentStruct.name}{${[...this.bindings]
+        const struct = this.environmentStruct;
+        return `bblscene::${struct.name}{${[...this.bindings]
             .map((binding) =>
-                this.borrows(binding)
+                this.wraps(binding, struct)
                     ? `std::ref(${binding.name})`
                     : binding.name,
             )
@@ -183,13 +195,16 @@ export class ClosureCaptures {
     /**
      * Members are numbered captures, so environments of one shape share a
      * struct and bodies that differ only in capture names stay one body.
-     * Owned members are traced; borrowed ones are references.
+     * Owned members are traced; borrowed ones are references. A call
+     * environment of concrete types holds C++ references, so it is built from
+     * the same initializer text as an owning one.
      */
     get environmentStruct(): EnvironmentStruct {
         if (this.struct) return this.struct;
         const bindings = [...this.bindings];
         const types = bindings.map((binding) => this.bindingType?.(binding));
         const concrete = types.every((type) => type !== undefined);
+        const references = this.holdsReferences(concrete);
         const members = bindings.map((binding, index) => {
             const type = types[index];
             const borrowed = this.borrows(binding);
@@ -197,9 +212,11 @@ export class ClosureCaptures {
                 name: `capture${index}`,
                 type:
                     concrete && type !== undefined
-                        ? borrowed
-                            ? `std::reference_wrapper<${type}>`
-                            : `std::decay_t<${type}>`
+                        ? references
+                            ? `std::remove_reference_t<${type}>&`
+                            : borrowed
+                              ? `std::reference_wrapper<${type}>`
+                              : `std::decay_t<${type}>`
                         : `T${index}`,
                 borrowed,
             };
@@ -210,6 +227,7 @@ export class ClosureCaptures {
             .slice(0, 16)}`;
         return (this.struct = {
             name,
+            concrete,
             lines: [
                 ...(concrete
                     ? []
@@ -232,15 +250,33 @@ export class ClosureCaptures {
     }
 
     get declarations(): string[] {
+        const struct = this.environmentStruct;
         return [...this.bindings].map(
             (binding, index) =>
-                `auto& ${binding.name} = ${this.environment}.capture${index}${this.borrows(binding) ? ".get()" : ""};`,
+                `auto& ${binding.name} = ${this.environment}.capture${index}${this.wraps(binding, struct) ? ".get()" : ""};`,
         );
+    }
+
+    /** A borrowed capture held through `std::reference_wrapper`. */
+    private wraps(
+        binding: NativeCaptureBinding,
+        struct: EnvironmentStruct,
+    ): boolean {
+        return !this.holdsReferences(struct.concrete) && this.borrows(binding);
+    }
+
+    /**
+     * A call environment of concrete types holds its borrowed captures as C++
+     * references initialized from the bindings.
+     */
+    private holdsReferences(concrete: boolean): boolean {
+        return concrete && this.byReference === "call";
     }
 
     private borrows(binding: NativeCaptureBinding): boolean {
         return (
             binding.borrowed ||
+            this.byReference === "call" ||
             (binding.allowReference &&
                 (this.byReference === true ||
                     (this.byReference === "entry" && binding.entryLifetime)))

@@ -1,7 +1,7 @@
 import ts from "typescript";
 
 import { dataTypesEqual, doubleLiteral, type DataType } from "../data-types.js";
-import { presenceFlagCpp, type Value } from "../types.js";
+import { optionalValueCpp, presenceFlagCpp, type Value } from "../types.js";
 
 import type { DataSinkHost, DataSinkOperations } from "./contracts.js";
 
@@ -81,7 +81,7 @@ function valueOptional(
         let converted = "";
         const lines = lowerer.context.captureEmittedLines(() => {
             converted = lowerer.compileKnownValueForSink(
-                lowerer.leafValue(`(*${source})`, sourceType),
+                lowerer.leafValue(optionalValueCpp(source), sourceType),
                 dataType.inner,
                 node,
             );

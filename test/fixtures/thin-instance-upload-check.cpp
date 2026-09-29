@@ -19,8 +19,16 @@ using SDL_GPUBuffer = Buffer;
 using WGPUBuffer = Buffer*;
 constexpr unsigned SDL_GPU_BUFFERUSAGE_VERTEX = 1, SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ = 2;
 constexpr unsigned WGPUBufferUsage_Vertex = 1, WGPUBufferUsage_Storage = 2;
+struct Uploads;
+// SDL's kept-buffer pool, passed straight through: every release releases and
+// every upload creates, so the counts below are the rows' own.
+struct KeptBuffers {
+    Buffer* upload(Uploads& uploads, unsigned usage, const void* data, std::size_t bytes);
+    void release(int device, Buffer* buffer);
+};
 struct State {
     int device = 0, queue = 0;
+    KeptBuffers kept_buffers;
 };
 std::deque<Buffer> buffers;
 unsigned writes = 0, releases = 0;
@@ -63,6 +71,10 @@ struct Uploads {
         bbl::update(buffer, data, bytes);
     }
 };
+Buffer* KeptBuffers::upload(Uploads& uploads, unsigned usage, const void* data, std::size_t bytes) {
+    return uploads.upload(usage, data, bytes);
+}
+void KeptBuffers::release(int device, Buffer* buffer) { SDL_ReleaseGPUBuffer(device, buffer); }
 struct UploadedMesh {
     Buffer* instances = nullptr;
     Buffer* instance_colors = nullptr;

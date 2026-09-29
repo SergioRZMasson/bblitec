@@ -6,9 +6,14 @@ import type { LoweringServices } from "../lowering-services.js";
 import ts from "typescript";
 import { argumentAt } from "../syntax.js";
 import type { Value } from "../types.js";
+import type { DataType } from "../data-types.js";
 import type { IntrinsicCallContext } from "./context.js";
 import { refuseAudioName } from "../audio-surface.js";
 import { EmissionWeakMap } from "../emission-transaction.js";
+import {
+    nativeStatementCode,
+    type NativeStatement,
+} from "../native-statements.js";
 import { lowerAudioSourceDisposal } from "../../lowering/audio-source-lowerer.js";
 
 export interface AudioIntrinsicContext
@@ -24,6 +29,7 @@ export interface AudioIntrinsicContext
             | "audioSessionCpp"
             | "expectObjectLiteral"
             | "nativeEmission"
+            | "options"
         > {}
 
 const sourceDisposers = new EmissionWeakMap<object, string>();
@@ -87,6 +93,42 @@ const REFUSED_BY_NAME: Readonly<Record<string, string>> = {
         "hold yet; it arrives with the lowered `bus.ts`",
 };
 
+/** The data type of a lowered `createAudioEngineAsync` result. */
+const audioEngineType: DataType = { kind: "handle", handle: "audio-engine" };
+
+/**
+ * The pin's own output graph, from `bus.ts`, on the context `ctx` names:
+ *   createMainOut  -- a GainNode connected to ctx.destination
+ *   createMainBus  -- a GainNode connected to mainOut._gain
+ * A sound source connects into `mainBus._in`, which is that second gain.
+ * Two nodes, and the shape is the contract. The nodes are the locals
+ * `<engine>_main_out` and `<engine>_main_bus`.
+ */
+function mainOutputGraph(engine: string, ctx: string): NativeStatement[] {
+    return [
+        {
+            kind: "declaration",
+            type: "const bbl::pal::AudioNodeHandle",
+            name: `${engine}_main_out`,
+            initializer: `bbl::pal::audio_create_gain(${ctx})`,
+        },
+        {
+            kind: "expression",
+            code: `bbl::pal::audio_connect(${engine}_main_out, bbl::pal::audio_destination(${ctx}));`,
+        },
+        {
+            kind: "declaration",
+            type: "bbl::pal::AudioNodeHandle",
+            name: `${engine}_main_bus`,
+            initializer: `bbl::pal::audio_create_gain(${ctx})`,
+        },
+        {
+            kind: "expression",
+            code: `bbl::pal::audio_connect(${engine}_main_bus, ${engine}_main_out);`,
+        },
+    ];
+}
+
 function requireAbsentOptions(
     context: AudioIntrinsicContext,
     argument: ts.Expression | undefined,
@@ -136,45 +178,39 @@ export function compileAudioIntrinsic(
             context.reachFeature("audio:engine", call);
 
             const engine = context.allocateTemporaryCppName("audio_engine");
-            // The pin's own output graph, from `bus.ts`:
-            //   createMainOut  -- a GainNode connected to ctx.destination
-            //   createMainBus  -- a GainNode connected to mainOut._gain
-            // A sound source connects into `mainBus._in`, which is that
-            // second gain. Two nodes, and the shape is the contract.
+            const graph = mainOutputGraph(engine, `${engine}_ctx`);
+            if (context.options.workers) {
+                // A realm's context opens its device in a native job, and
+                // the engine promise settles after that device transition
+                // (the audio contract); the graph is built on the realm.
+                return {
+                    kind: "promise",
+                    cpp:
+                        `bbl::pal::audio_create_context_async(${context.audioSessionCpp()})` +
+                        `.then([](const bbl::pal::AudioContextHandle& ${engine}_ctx) { ` +
+                        `${graph.map(nativeStatementCode).join(" ")} ` +
+                        `return bbl::AudioEngineHandle{${engine}_ctx, ${engine}_main_bus}; })`,
+                    promiseType: "bbl::AudioEngineHandle",
+                    promiseResult: {
+                        kind: "audio-engine",
+                        cpp: "",
+                        dataType: audioEngineType,
+                    },
+                };
+            }
             context.emit({
                 kind: "declaration",
                 type: "bbl::pal::AudioContextHandle",
                 name: `${engine}_ctx`,
                 initializer: `bbl::pal::audio_create_context(${context.audioSessionCpp()})`,
             });
-            context.emit({
-                kind: "declaration",
-                type: "const bbl::pal::AudioNodeHandle",
-                name: `${engine}_main_out`,
-                initializer: `bbl::pal::audio_create_gain(${engine}_ctx)`,
-            });
-            context.emit({
-                kind: "expression",
-                code:
-                    `bbl::pal::audio_connect(${engine}_main_out, ` +
-                    `bbl::pal::audio_destination(${engine}_ctx));`,
-            });
-            context.emit({
-                kind: "declaration",
-                type: "bbl::pal::AudioNodeHandle",
-                name: `${engine}_main_bus`,
-                initializer: `bbl::pal::audio_create_gain(${engine}_ctx)`,
-            });
-            context.emit({
-                kind: "expression",
-                code: `bbl::pal::audio_connect(${engine}_main_bus, ${engine}_main_out);`,
-            });
+            for (const statement of graph) context.emit(statement);
             context.registerNativeTemporary(`${engine}_ctx`);
             context.registerNativeTemporary(`${engine}_main_bus`);
             return {
                 kind: "audio-engine",
                 cpp: `bbl::AudioEngineHandle{${engine}_ctx, ${engine}_main_bus}`,
-                dataType: { kind: "handle", handle: "audio-engine" },
+                dataType: audioEngineType,
             };
         }
 

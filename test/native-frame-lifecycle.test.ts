@@ -31,6 +31,8 @@ test("native frame clocks, continuation drains and capture budgets preserve fram
                 "class CaptureGate {",
             ].map((signature) => cppRecord(shared, signature)),
             cppFunction(shared, "void run_animation_frame_callbacks("),
+            // Source profiling is outside this fixture's frame contract.
+            "static void begin_profiled_frame() {}",
             cppFunction(
                 shared,
                 "double advance_frame(Engine& engine, FrameClock&",

@@ -49,6 +49,16 @@ inline bool render_target_samples_depth(const RenderTargetRecord& record) {
     return !record.has_color;
 }
 
+/**
+ * The sample count a render target's passes request: one for the swapchain,
+ * otherwise the record's own, which each backend's multisample gate then
+ * resolves. Setup's pipeline warm-up and the draw both read it, so the
+ * pipeline prepared is the one drawn with.
+ */
+inline std::uint32_t render_target_requested_samples(const RenderTargetRecord& record) {
+    return record.swapchain ? 1u : record.samples;
+}
+
 /** The refusal both backends owe a depth-only target with no depth. */
 [[noreturn]] inline void fail_render_target_has_no_texture() {
     throw std::runtime_error("Depth-only render target has no color texture.");

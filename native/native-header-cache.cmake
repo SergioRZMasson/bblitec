@@ -11,6 +11,9 @@
 # every unit of a checkout's trees uses the same precompiled header wherever its
 # inputs agree, so a unit two trees generate alike is one cache entry.
 
+if(NOT BBLITE_NATIVE_CACHE_DIR)
+    message(FATAL_ERROR "native-header-cache.cmake requires the cache root compiler-cache.cmake sets (BBLITE_NATIVE_CACHE_DIR).")
+endif()
 set(BBLITE_GENERATED_INCLUDE_DIR "${BBLITE_GENERATED_DIR}/upstream/include")
 
 # The files one file includes: repository files (beside it or under

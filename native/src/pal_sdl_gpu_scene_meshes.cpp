@@ -317,7 +317,7 @@ void bind_shader_material_textures(GpuState& state, SDL_GPURenderPass* pass,
 
 void release_gpu_mesh_resources([[maybe_unused]] GpuState* state, GpuMeshResources& mesh) noexcept {
     if (mesh.owns_geometry_buffers) {
-        SDL_ReleaseGPUBuffer(state->device, mesh.vertices);
+        state->kept_buffers.release(state->device, mesh.vertices);
     } else if (mesh.shared_geometry) {
         release_shared_user(mesh.shared_geometry, "Shader geometry reference count underflow.");
     }
@@ -347,16 +347,16 @@ void release_gpu_mesh_resources([[maybe_unused]] GpuState* state, GpuMeshResourc
 #endif
 #endif
     if (mesh.owns_geometry_buffers) {
-        SDL_ReleaseGPUBuffer(state->device, mesh.indices);
+        state->kept_buffers.release(state->device, mesh.indices);
     }
-    SDL_ReleaseGPUBuffer(state->device, mesh.instances);
+    state->kept_buffers.release(state->device, mesh.instances);
 #if BBLITE_GPU_INSTANCE_COLORS
-    SDL_ReleaseGPUBuffer(state->device, mesh.instance_colors);
+    state->kept_buffers.release(state->device, mesh.instance_colors);
 #endif
 #if BBLITE_GPU_MORPH_STORAGE
     if (mesh.owns_morph_buffers) {
-        SDL_ReleaseGPUBuffer(state->device, mesh.morph_deltas);
-        SDL_ReleaseGPUBuffer(state->device, mesh.morph_weights);
+        state->kept_buffers.release(state->device, mesh.morph_deltas);
+        state->kept_buffers.release(state->device, mesh.morph_weights);
     }
 #endif
     if (mesh.shared_composed_textures) {
@@ -394,8 +394,8 @@ void release_gpu_mesh_resources([[maybe_unused]] GpuState* state, GpuMeshResourc
 
 void prune_shared_shader_geometries(GpuState& state) {
     prune_unused_shared(state.shared_shader_geometries, [&](SharedShaderGeometry& geometry) {
-        geometry.vertex_buffer.reset();
-        geometry.index_buffer.reset();
+        state.kept_buffers.release(state.device, geometry.vertex_buffer.release());
+        state.kept_buffers.release(state.device, geometry.index_buffer.release());
     });
 }
 
@@ -439,7 +439,7 @@ GpuMesh upload_sdl_gpu_scene_mesh(GpuState& state, Engine& engine, const upstrea
     const std::vector<GpuVertex> vertices = mesh_gpu_vertices(geometry, mesh_record);
     const auto upload_mesh_buffer = [&, buffer_uploads](SDL_GPUBufferUsageFlags usage,
                                                         const void* data, std::size_t size) {
-        return buffer_uploads ? buffer_uploads->upload(usage, data, size)
+        return buffer_uploads ? state.kept_buffers.upload(*buffer_uploads, usage, data, size)
                               : upload_buffer(state.device, usage, data, size);
     };
     GpuMesh gpu_mesh{&state};

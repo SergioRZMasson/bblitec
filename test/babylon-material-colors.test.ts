@@ -195,7 +195,7 @@ test("Babylon material hydration copies pinned RGB, defaults and retained aliase
         source,
         `#include <bblite/runtime.hpp>
 #include <bblite/js_data.hpp>
-#include <bblite/pal_image.hpp>
+#include <bblite/pal_texture_texels.hpp>
 #include <nlohmann/json.hpp>
 #include <cassert>
 #include <fstream>

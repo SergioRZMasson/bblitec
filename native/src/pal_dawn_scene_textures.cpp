@@ -435,8 +435,9 @@ WGPUVertexFormat dawn_vertex_format(upstream::PinnedVertexFormat format) {
     throw std::runtime_error("Unmapped pinned vertex format.");
 }
 
-void initialize_dawn_backgrounds(DawnState& state, const Scene& scene) {
-    state.background_draws.for_each([&](upstream::PinnedBackgroundArmKind kind) {
+void initialize_dawn_backgrounds(DawnState& state, const EnvironmentState& environment,
+                                 std::vector<PinnedBackgroundArmBuffers> arms) {
+    for (auto& [kind, data] : arms) {
         const upstream::PinnedBackgroundArm& arm = upstream::pinned_background_arm(kind);
         DawnBackgroundArm resources;
         resources.arm = &arm;
@@ -512,7 +513,6 @@ void initialize_dawn_backgrounds(DawnState& state, const Scene& scene) {
                 ("background pipeline " + std::string(arm.fragment_stem) + " creation failed.")
                     .c_str());
         }
-        upstream::PinnedBackgroundBuffers data = upstream::pinned_background_buffers(arm, scene);
         for (std::vector<std::uint8_t>& bytes : data.vertex) {
             resources.vertex_buffers.emplace_back(
                 create_padded_buffer(state, WGPUBufferUsage_Vertex, std::move(bytes)));
@@ -530,8 +530,8 @@ void initialize_dawn_backgrounds(DawnState& state, const Scene& scene) {
         case upstream::PinnedBackgroundArmKind::ground:
         case upstream::PinnedBackgroundArmKind::ground_dither: {
             std::uint32_t ground_mips = 1;
-            resources.texture = upload_material_texture(state, scene.environment.ground_texture,
-                                                        false, {255, 255, 255, 255}, ground_mips);
+            resources.texture = upload_material_texture(state, environment.ground_texture, false,
+                                                        {255, 255, 255, 255}, ground_mips);
             resources.texture_view = create_dawn_texture_view(resources.texture, nullptr);
             view = resources.texture_view;
             sampler = state.ground_sampler;
@@ -539,7 +539,7 @@ void initialize_dawn_backgrounds(DawnState& state, const Scene& scene) {
         }
         case upstream::PinnedBackgroundArmKind::dds_skybox:
         case upstream::PinnedBackgroundArmKind::dds_skybox_no_dither:
-            resources.texture = upload_dawn_dds_skybox(state, scene.environment);
+            resources.texture = upload_dawn_dds_skybox(state, environment);
             resources.texture_view = dawn_cube_view(resources.texture);
             view = resources.texture_view;
             sampler = state.clamp_sampler;
@@ -549,7 +549,7 @@ void initialize_dawn_backgrounds(DawnState& state, const Scene& scene) {
             sampler = state.clamp_sampler;
             break;
         case upstream::PinnedBackgroundArmKind::image_skybox:
-            resources.texture = upload_reflection_cube(state, scene.environment.image_skybox_faces);
+            resources.texture = upload_reflection_cube(state, environment.image_skybox_faces);
             resources.texture_view = dawn_cube_view(resources.texture);
             view = resources.texture_view;
             sampler = state.default_sampler;
@@ -586,7 +586,7 @@ void initialize_dawn_backgrounds(DawnState& state, const Scene& scene) {
                            .c_str());
         }
         state.background_arms.push_back(std::move(resources));
-    });
+    }
 }
 
 void draw_dawn_background_arm(WGPURenderPassEncoder pass, const DawnBackgroundArm& arm,

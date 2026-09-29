@@ -68,6 +68,11 @@ export function optionalPresentCpp(cpp: string): string {
     return `${cpp}.has_value()`;
 }
 
+/** The native read of the value an optional expression holds. */
+export function optionalValueCpp(cpp: string): string {
+    return `(*${cpp})`;
+}
+
 /**
  * The presence flag a maybe-absent value carries BESIDE its storage: a
  * search's found bit, a guarded element read's in-range test, or the

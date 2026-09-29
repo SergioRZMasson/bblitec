@@ -644,10 +644,15 @@ test("captures an integer loop counter a shared helper body reads", () => {
     `);
 
     assert.match(result.cpp, /std::int64_t v_\w+_i = 0;/);
-    assert.match(result.cpp, /std::reference_wrapper<std::int64_t>/);
+    // A shared body's environment lives for one call, so it holds the
+    // caller's counter by reference rather than a copy.
     assert.match(
         result.cpp,
-        /auto& (v_\w+_i) = v_bblite_environment_\d+\.capture\d+\.get\(\);[^]*std::fmod\(static_cast<double>\(\1\), 3\.0\)/,
+        /std::remove_reference_t<std::int64_t>& capture\d+;/,
+    );
+    assert.match(
+        result.cpp,
+        /auto& (v_\w+_i) = v_bblite_environment_\d+\.capture\d+;[^]*std::fmod\(static_cast<double>\(\1\), 3\.0\)/,
     );
 });
 
@@ -1316,7 +1321,7 @@ test("borrows stable Ref parameters and snapshots rebindable call arguments", ()
     assert.match(result.cpp, /bblscene::add\(v_stable, 2\.0\)/);
     assert.match(
         result.cpp,
-        /auto (v_bblite_function_argument_\d+) = bbl::js::snapshot_value\(v_current\);\s+\[\[maybe_unused\]\] const double (v_bblite_shared_result_\d+) = bbl::js::make_closure\(bblscene::bbl_environment_\w+\{std::ref\(v_current\)\}, bblscene::\w+\)\(\);[\s\S]*bblscene::add\(\1, \2\)/,
+        /auto (v_bblite_function_argument_\d+) = bbl::js::snapshot_value\(v_current\);\s+\[\[maybe_unused\]\] const double (v_bblite_shared_result_\d+) = bbl::js::make_closure\(bblscene::bbl_environment_\w+\{v_current\}, bblscene::\w+\)\(\);[\s\S]*bblscene::add\(\1, \2\)/,
     );
 });
 
@@ -2201,19 +2206,32 @@ test("proves const typed-array lengths for static stores and checks runtime ones
             lane[w] = value;
             w++;
         }
-        console.log(lane.length);
+        let spare = new Float32Array(4);
+        function regrow(): number {
+            spare = new Float32Array(8);
+            return 2;
+        }
+        spare[1] = regrow();
+        console.log(lane.length, spare.length);
     `);
 
     // The const binding of a fixed-size construction proves the static
-    // store in bounds, so the retained slot skips the dynamic bounds check.
+    // store in bounds, so the slot skips the dynamic bounds check; a value
+    // that runs no store cannot release the named owner, so the slot
+    // borrows it.
     assert.match(
         result.cpp,
-        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::typed_array_slot\(v_lane, bbl::js::array_index\(3\.0\)\);\s+\1 = static_cast<float>\(0\.5\);/,
+        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::typed_array_borrowed_slot\(v_lane, bbl::js::array_index\(3\.0\)\);\s+\1 = static_cast<float>\(0\.5\);/,
     );
     // The counter-driven store cannot be proven and is checked.
     assert.match(
         result.cpp,
-        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::array_store_checked\(v_lane, v_w, "[^"]+:\d+:\d+"\);\s+\1 = /,
+        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::array_store_borrowed\(v_lane, v_w, "[^"]+:\d+:\d+"\);\s+\1 = /,
+    );
+    // A value that rebinds the array keeps the evaluated view alive.
+    assert.match(
+        result.cpp,
+        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::array_store_checked\(v_spare, 1\.0, "[^"]+:\d+:\d+"\);[\s\S]*?\1 = /,
     );
 });
 
@@ -2536,15 +2554,27 @@ test("materializes runtime-valued static maps as native arrays", () => {
         let offset = 2;
         const mapped = ["a", "b"].map((_, index) => offset + index);
         const picked = mapped[Math.floor(Math.random() * mapped.length)]!;
+        let current = [1, 2, 3];
+        function replace(): number {
+            current = [4];
+            return 0;
+        }
+        const first = current[replace()]!;
     `);
 
     assert.match(
         result.cpp,
         /bbl::js::Array<double> v_mapped = bbl::js::Array<double>\{/,
     );
+    // An index that runs code but cannot rebind the array reads it in place;
+    // one that may rebind it reads the array it evaluated first.
     assert.match(
         result.cpp,
-        /auto (v_bblite_indexed_array_\d+) = v_mapped;[\s\S]*bbl::js::array_index_checked\(\1, /,
+        /double v_picked = bbl::js::array_index_checked\(v_mapped, /,
+    );
+    assert.match(
+        result.cpp,
+        /auto (v_bblite_indexed_array_\d+) = v_current;[\s\S]*bbl::js::array_index_checked\(\1, /,
     );
 });
 
@@ -2567,9 +2597,15 @@ test("hoists module record factories out of hot dynamic lookups", () => {
         const selected = opaque(Math.random() < 0.5 ? 1 : 2);
     `);
 
+    // One inline accessor per table: a hot lookup inlines it, and the
+    // entries build in a function of their own.
     assert.match(
         result.cpp,
-        /static thread_local bbl::js::Map<double, bblscene::Definition> values\{/,
+        /inline bbl::js::Map<double, bblscene::Definition>& (bbl_static_table_\d+)\(\) \{\s+static thread_local bbl::js::Map<double, bblscene::Definition> values = \1_values\(\);/,
+    );
+    assert.match(
+        result.cpp,
+        /bbl::js::Map<double, bblscene::Definition> bbl_static_table_\d+_values\(\) \{\s+return bbl::js::Map<double, bblscene::Definition>\{/,
     );
     assert.doesNotMatch(result.cpp, /bool opaque\([^)]*\) \{\s+bbl::js::Map/);
 });
@@ -2979,7 +3015,7 @@ test("guards optional class method calls before evaluating their body", () => {
 
     assert.match(
         result.cpp,
-        /if \(static_cast<bool>\(\(\*v_bblite_class_field_target_\d+\)\)\) \{\s*bbl::js::make_closure\(bblscene::bbl_environment_\w+\{std::ref\(v_bblite_target_receiver_\d+\)\}, bblscene::bbl_recursive_fn\d+_group\)\(\);/,
+        /if \(static_cast<bool>\(\(\*v_bblite_class_field_target_\d+\)\)\) \{\s*bbl::js::make_closure\(bblscene::bbl_environment_\w+\{v_bblite_target_receiver_\d+\}, bblscene::bbl_recursive_fn\d+_group\)\(\);/,
     );
     assert.match(
         result.cpp,
@@ -4943,17 +4979,19 @@ test("lowers typed arrays with storage-exact reads and writes", () => {
     // `data` comes from a call, so its length is not statically known
     // and even static indices are checked; the literal-constructed
     // arrays below prove their lengths and skip dynamic bounds checks.
+    // Every stored value here runs no store, so each slot borrows its
+    // named array instead of retaining it.
     assert.match(
         result.cpp,
         /double v_first = static_cast<double>\(bbl::js::array_index_checked\(v_data, 0\.0, "[^"]+"\)\);/,
     );
     assert.match(
         result.cpp,
-        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::array_store_checked\(v_data, 1\.0, "[^"]+"\);\s+\1 = static_cast<float>\(2\.5\);/,
+        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::array_store_borrowed\(v_data, 1\.0, "[^"]+"\);\s+\1 = static_cast<float>\(2\.5\);/,
     );
     assert.match(
         result.cpp,
-        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::typed_array_slot\(v_indices, bbl::js::array_index\(0\.0\)\);\s+\1 = bbl::js::to_uint32\(7\.0\);/,
+        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::typed_array_borrowed_slot\(v_indices, bbl::js::array_index\(0\.0\)\);\s+\1 = bbl::js::to_uint32\(7\.0\);/,
     );
     assert.match(
         result.cpp,
@@ -4966,7 +5004,7 @@ test("lowers typed arrays with storage-exact reads and writes", () => {
     );
     assert.match(
         result.cpp,
-        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::typed_array_slot\(v_signed, bbl::js::array_index\(0\.0\)\);\s+\1 = bbl::js::to_int32\(4294967295\.0\);/,
+        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::typed_array_borrowed_slot\(v_signed, bbl::js::array_index\(0\.0\)\);\s+\1 = bbl::js::to_int32\(4294967295\.0\);/,
     );
     assert.match(
         result.cpp,
@@ -4974,7 +5012,7 @@ test("lowers typed arrays with storage-exact reads and writes", () => {
     );
     assert.match(
         result.cpp,
-        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::typed_array_slot\(v_signedShorts, bbl::js::array_index\(0\.0\)\);\s+\1 = bbl::js::to_int16\(65535\.0\);/,
+        /auto&& (v_bblite_typed_slot_\d+) = bbl::js::typed_array_borrowed_slot\(v_signedShorts, bbl::js::array_index\(0\.0\)\);\s+\1 = bbl::js::to_int16\(65535\.0\);/,
     );
 });
 
@@ -5349,11 +5387,17 @@ test("lowers early bare returns of inlined closures through a wrapper", () => {
 
     assert.match(result.cpp, /if \(v_fn\d+_value < 0\.0\) \{\s+return;/);
     assert.equal(result.cpp.match(/v_values\.push_back/g)?.length, 1);
+    // Each call builds the shared body's environment for that call alone,
+    // holding the array by reference.
     assert.equal(
         result.cpp.match(
-            /make_closure\(bblscene::bbl_environment_\w+\{std::ref\(v_values\)\}/g,
+            /make_closure\(bblscene::bbl_environment_\w+\{v_values\}/g,
         )?.length,
         2,
+    );
+    assert.match(
+        result.cpp,
+        /std::remove_reference_t<bbl::js::Array<double>>& capture0;/,
     );
 });
 

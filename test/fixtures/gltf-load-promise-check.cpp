@@ -49,4 +49,16 @@ int main() {
         absent = true;
     }
     assert(absent);
+    // A prepared product is taken once: its value moves out, or its rejection
+    // is raised where it is taken, and the promise is then absent.
+    auto owned = GltfLoadPromise<std::shared_ptr<int>>::settle([&] { return image; });
+    assert(owned.fulfilled() && !retained.fulfilled() && !value.fulfilled());
+    assert(owned.take() == image && !owned && !owned.fulfilled());
+    bool taken_rejection = false;
+    try {
+        (void)retained.take();
+    } catch (const Rejection& error) {
+        taken_rejection = error.identity == identity;
+    }
+    assert(taken_rejection);
 }

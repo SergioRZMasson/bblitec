@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 #include "pal_record_sync.hpp"
 #if BBLITE_HAS_SPRITES
 #include "pal_gpu_billboard_upload.hpp"
@@ -32,6 +33,30 @@ struct SpriteLayerPipelinePlan {
 };
 
 SpriteLayerPipelinePlan sprite_layer_pipeline_plan(const Sprite2DLayerRecord& layer);
+
+/**
+ * The scene's depth-hosted layer pass follows the layers the scene draws.
+ * `addDepthHostedSpriteLayer` publishes a layer through the scene's deferred
+ * builders, so a build only appends: the layers it appended join the pass
+ * (`append(first)`) beside the ones it drew, which keep their clocks, uploads
+ * and pipelines. Any other change -- disposal emptying the list -- replaces the
+ * pass (`create()`), or releases it when no layer is left.
+ */
+template <class Pass, class Create, class Append>
+void follow_scene_sprite_layers(Pass& pass, bool& has_pass,
+                                const std::vector<Sprite2DLayerHandle>& members, Create&& create,
+                                Append&& append) {
+    if (has_pass && pass.handles.size() <= members.size() &&
+        std::equal(pass.handles.begin(), pass.handles.end(), members.begin(),
+                   [](Sprite2DLayerHandle drawn, Sprite2DLayerHandle member) {
+                       return drawn.value == member.value;
+                   })) {
+        append(pass.handles.size());
+        return;
+    }
+    pass = members.empty() ? Pass{} : create();
+    has_pass = !members.empty();
+}
 
 /**
  * A layer's program: the pin's module for its permutation, deployed whole
@@ -195,11 +220,41 @@ struct BillboardDrawPlan {
      *  is what makes the sorted draw order the composite, and `cutout`
      *  with writes on, which lets the GPU resolve overlap instead. */
     bool cutout_writes_depth;
+    /** getOrCreateBillboardPipeline's resolution: the setting counts only
+     *  for a depth-writing system on a multisampled target. */
+    bool alpha_to_coverage;
 
     std::uint32_t particle_passes;
 };
 
-BillboardDrawPlan billboard_draw_plan(const BillboardSystemRecord& system);
+/** The plan for a pass whose target has `sample_count` samples. */
+BillboardDrawPlan billboard_draw_plan(const BillboardSystemRecord& system,
+                                      std::uint32_t sample_count);
+
+/**
+ * What building one system's pass reads, snapshotted from the records: the
+ * plan, blends, capacity and custom-shader bindings, and the atlas's size,
+ * chain and sampler. A native job builds from it off the realm; the atlas
+ * texels travel beside it, owned by whoever runs the build.
+ */
+struct BillboardPassSource {
+    BillboardSystemHandle system{};
+    BillboardDrawPlan plan{};
+    SpriteBlendDescriptor blend{};
+    SpriteBlendDescriptor add_pass_blend{};
+    std::uint32_t capacity = 0;
+    bool custom_shader = false;
+    std::vector<PixelsTexture> custom_textures;
+    std::vector<std::string> custom_texture_names;
+    SpriteAtlasHandle atlas{};
+    std::uint32_t atlas_width = 0;
+    std::uint32_t atlas_height = 0;
+    std::uint32_t atlas_mip_levels = 1;
+    TextureSamplerState atlas_sampler{};
+};
+
+BillboardPassSource billboard_pass_source(const Engine& engine, BillboardSystemHandle system,
+                                          std::uint32_t sample_count);
 
 #endif
 

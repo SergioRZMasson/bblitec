@@ -76,7 +76,7 @@ int main() {
             u::on_physics_after_step(handle, [&](float) { ++added; });
         }
         for (const auto& native : native_handles)
-            assert(native.ownership->body && native.ownership->world == 0);
+            assert(native.ownership->body && native.ownership->owner_world == nullptr);
         assert(ordinary.handle.ownership->body);
     });
     u::on_physics_collision(handle, [&](const u::PhysicsCollisionInfo& info) {

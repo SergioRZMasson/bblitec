@@ -47,6 +47,7 @@ import {
     isCompileTimeOnlyValue,
     nativeDataMetadata,
     optionalPresentCpp,
+    optionalValueCpp,
     presenceFlagCpp,
     statedTruthinessCpp,
     valueForKind,
@@ -165,7 +166,7 @@ export class DeclarationLowerer {
         );
         const stored: Value = {
             ...value,
-            cpp: shared ? `(**${cppName})` : `(*${cppName})`,
+            cpp: shared ? `(**${cppName})` : optionalValueCpp(cppName),
             optionalFoundCpp: shared
                 ? `${cppName}->has_value()`
                 : optionalPresentCpp(cppName),
@@ -392,7 +393,7 @@ export class DeclarationLowerer {
                     valueForKind(resource.kind, {
                         cpp: sharedClosureStorage
                             ? `(**${cppName})`
-                            : `(*${cppName})`,
+                            : optionalValueCpp(cppName),
                         ...((resource.kind === "ui-element" ||
                             resource.kind === "pointer-drag") &&
                         this.context.defaultEngineCpp
@@ -1043,7 +1044,7 @@ export class DeclarationLowerer {
                 narrowed.dataType.kind === "optional" &&
                 narrowed.dataType.inner.kind === "handle"
                     ? this.context.dataLowerer.leafValue(
-                          `(*${boundCpp})`,
+                          optionalValueCpp(boundCpp),
                           narrowed.dataType.inner,
                       )
                     : undefined;

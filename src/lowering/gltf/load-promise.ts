@@ -5,10 +5,18 @@ public:
     GltfLoadPromise() = default;
     explicit GltfLoadPromise(T value) : result_(std::in_place_index<1>, std::move(value)) {}
     explicit operator bool() const { return result_.index() != 0; }
+    bool fulfilled() const { return result_.index() == 1; }
     const T& get() const {
         if (result_.index() == 0) throw std::runtime_error("Cannot await an absent glTF promise.");
         if (const auto* error = std::get_if<2>(&result_)) std::rethrow_exception(*error);
         return std::get<1>(result_);
+    }
+    /** Await the value once, moving it out; the promise is then absent. */
+    T take() {
+        static_cast<void>(get());
+        T value = std::move(std::get<1>(result_));
+        result_.template emplace<0>();
+        return value;
     }
     template<class Resolve> static GltfLoadPromise settle(Resolve resolve) {
         try { return GltfLoadPromise{resolve()}; }

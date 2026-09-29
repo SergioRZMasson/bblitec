@@ -48,6 +48,7 @@ export const featureSources: Record<Feature, string[]> = {
     "engine:dispose": [],
     "engine:gpu-retirement": [],
     "engine:gpu-task-timing": [],
+    "profile:source": ["src/pal_source_profile.cpp"],
     "compute:storage-texture": [],
     "compute:texture-mipmaps": [],
     "compute:storage-buffer": [],
@@ -649,9 +650,9 @@ export function renderMainCpp(projection: MainCppProjection): ApplicationCpp {
         : "";
     // Keyed on this translation unit's own decode emission, not on
     // `texture:file`: the texture loaders decode inside their own generated
-    // TUs, so only a drawn-atlas record puts `bbl::pal::decode_image` here.
+    // TUs, so only a drawn-atlas record reads a texture's texels here.
     const imageInclude = imageDecodeReached
-        ? "#include <bblite/features/has_image_decoder.hpp>\n#include <bblite/pal_image.hpp>\n"
+        ? "#include <bblite/features/has_image_decoder.hpp>\n#include <bblite/pal_texture_texels.hpp>\n"
         : "";
     const bakedMeshInclude =
         features.includes("mesh:csg") || features.includes("mesh:csg2")
@@ -733,6 +734,9 @@ export function renderMainCpp(projection: MainCppProjection): ApplicationCpp {
             : "") +
         (features.includes("browser:file")
             ? "#include <bblite/js_file.hpp>\n"
+            : "") +
+        (features.includes("profile:source")
+            ? "#include <bblite/source_profile.hpp>\n"
             : "");
     // A composite's factory is generated, so the scene calls it by a name
     // only its own generated header declares; a screen-space task's is the

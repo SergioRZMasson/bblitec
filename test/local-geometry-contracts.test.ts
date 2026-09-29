@@ -71,7 +71,6 @@ test("geometry stays local: shader draws share one world record and a mesh uploa
         ${cppFunction(shared, "bool block_is_shared_scene_matrix(")}
         ${cppFunction(shared, "void shader_stage_block_floats(")}
         ${shared.slice(shared.indexOf("struct SharedGeometryIdentity {"), shared.lastIndexOf("/**", shared.indexOf("inline void release_shared_user(")))}
-        ${cppFunction(shared, "std::uint64_t fnv1a_append(")}
         ${cppFunction(shared, "SharedGeometryIdentity shared_geometry_identity(")}
     }`,
     );

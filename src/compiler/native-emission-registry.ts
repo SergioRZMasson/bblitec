@@ -107,17 +107,33 @@ export class NativeEmissionRegistry {
             }
             return owner.runtimeRecordCpp;
         }
-        const initializer = `${mapType} values{${entries.join(", ")}};`;
-        const existing = this.staticRecordAccessors.get(initializer);
+        // The table's own construction text identifies it.
+        const table = `${mapType}{${entries.join(", ")}}`;
+        const existing = this.staticRecordAccessors.get(table);
         if (existing) return `bblscene::${existing}()`;
         const name = `bbl_static_table_${this.staticRecordAccessors.size}`;
-        this.registerNativeFunction(`${mapType}& ${name}();`, [
-            `${mapType}& ${name}() {`,
-            `    static thread_local ${initializer}`,
-            `    return values;`,
+        // The table is built by a function of its own: the entries'
+        // temporaries then size that frame, not the accessor's, which a hot
+        // lookup calls every time.
+        this.registerNativeFunction(`${mapType} ${name}_values();`, [
+            `${mapType} ${name}_values() {`,
+            `    return ${table};`,
             `}`,
         ]);
-        this.staticRecordAccessors.set(initializer, name);
+        // The accessor itself is inline in every unit that reads the table,
+        // so a lookup in a hot loop compiles to the table's own inline answer
+        // rather than a call into the unit that defines it.
+        this.registerNativeTemplate(
+            name,
+            [
+                `inline ${mapType}& ${name}() {`,
+                `    static thread_local ${mapType} values = ${name}_values();`,
+                `    return values;`,
+                `}`,
+            ],
+            `inline ${mapType}& ${name}();`,
+        );
+        this.staticRecordAccessors.set(table, name);
         return `bblscene::${name}()`;
     }
 

@@ -329,17 +329,23 @@ struct GltfPbrContext {
     bool base_color_definition = false;
     std::function<GltfPbrValue(const GltfPbrValue&, bool)> texture;
     std::function<GltfPbrValue(const GltfPbrValue&, bool)> upload_image;
-    std::function<pal::DecodedImage(const GltfMaterialImage&)> decode_image;
+    /** compositeOrm's bitmap of a material's metallic-roughness and occlusion images. */
+    std::function<std::shared_ptr<const pal::DecodedImage>(const GltfMaterialImage&, const GltfMaterialImage&)> composite_orm;
     std::function<GltfPbrValue(const GltfPbrValue&)> default_textures;
     std::function<GltfPbrValue(const GltfPbrValue&)> sampled_textures;
     std::function<GltfPbrValue(const GltfPbrValue&)> extended_textures;
 };
 ${lowerGltfOrmComposition(context)}
+/** compositeOrm over the two images \`decode\` turns into bitmaps, in the pin's order. */
+template <typename Decode, typename Image>
+std::shared_ptr<const pal::DecodedImage> gltf_orm_composite(const Decode& decode, const Image& mr, const Image& occ) {
+    const auto mr_image = decode(mr);
+    const auto occ_image = decode(occ);
+    return std::make_shared<const pal::DecodedImage>(gltf_composite_orm(mr_image, occ_image));
+}
 GltfPbrValue gltf_pbr_composite_orm(const GltfPbrContext& context, const GltfPbrValue& mr, const GltfPbrValue& occ) {
-    if (!context.decode_image) throw std::runtime_error("Missing glTF bitmap decoder.");
-    const auto mr_image = context.decode_image(mr.image());
-    const auto occ_image = context.decode_image(occ.image());
-    return GltfPbrValue{std::make_shared<GltfMaterialImageSource>(gltf_composite_orm(mr_image, occ_image))};
+    if (!context.composite_orm) throw std::runtime_error("Missing glTF bitmap decoder.");
+    return GltfPbrValue{std::make_shared<GltfMaterialImageSource>(context.composite_orm(mr.image(), occ.image()))};
 }
 GltfPbrValue gltf_pbr_apply_feature(GltfPbrValue feature, GltfPbrValue material, const GltfPbrContext& context);
 ${lowerGltfExtensionImages(context)}

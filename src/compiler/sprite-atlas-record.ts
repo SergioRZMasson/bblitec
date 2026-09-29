@@ -108,18 +108,11 @@ export function compileSpriteAtlasRecord(
     const engine = context.requireDefaultEngine(node);
     // Stored pixel textures still instantiate the variant's file arm. Omit
     // its decode continuation when codec-free shipping builds always throw.
-    const fileTextureSetup = (
-        cpp: string,
-        atlas: string,
-        decoded: string,
-    ): string =>
+    // The atlas samples the texture as its load uploads it: the texels that
+    // load decoded, shared, with its upload transforms (pal_texture_texels.hpp).
+    const fileTextureSetup = (cpp: string, atlas: string): string =>
         `if constexpr (BBLITE_HAS_IMAGE_DECODER) { ` +
-        `const auto ${decoded} = bbl::pal::decode_image(bbl::js::ArrayBuffer(${cpp}.data.bytes)); ` +
-        `${atlas}.rgba = ${decoded}.rgba; ` +
-        `if (${cpp}.data.premultiply_alpha) { ` +
-        `bbl::pal::DecodedImage premultiplied{${decoded}.width, ${decoded}.height, ${atlas}.rgba}; ` +
-        `bbl::pal::premultiply_image_alpha(premultiplied); ` +
-        `${atlas}.rgba = std::move(premultiplied.rgba); } ` +
+        `${atlas}.rgba = bbl::pal::shared_texture_texels(${cpp}.data).rgba; ` +
         `${atlas}.sampler = ${cpp}.data.sampler; ` +
         `} else { throw std::runtime_error("This scene was built without image decoding."); } `;
     const variantTexture =
@@ -128,7 +121,7 @@ export function compileSpriteAtlasRecord(
         texture.dataType?.kind === "handle" &&
         texture.dataType.handle === "texture";
     /**
-     * The reach calls key the entry TU's `pal_image.hpp` include (the
+     * The reach calls key the entry TU's `pal_texture_texels.hpp` include (the
      * decode lands in this translation unit either way, inline or inside
      * the registered helper); the pixels arm emits no decode.
      */
@@ -154,15 +147,14 @@ export function compileSpriteAtlasRecord(
     const textureSetup = (
         source: string,
         atlas: string,
-        decoded: string,
         stored: string,
     ): string => {
         if (texture.textureStorage === "file") {
-            return fileTextureSetup(source, atlas, decoded);
+            return fileTextureSetup(source, atlas);
         }
         if (texture.textureStorage === "pixels") {
             return (
-                `${atlas}.rgba = ${source}.rgba; ` +
+                `${atlas}.rgba = bbl::share_texels(${source}.rgba); ` +
                 `${atlas}.sampler = ${source}.sampler; `
             );
         }
@@ -170,8 +162,8 @@ export function compileSpriteAtlasRecord(
             `std::visit([&](const auto& ${stored}) { ` +
             `using Stored = std::decay_t<decltype(${stored})>; ` +
             `if constexpr (std::is_same_v<Stored, bbl::FileTexture>) { ` +
-            fileTextureSetup(stored, atlas, decoded) +
-            `} else { ${atlas}.rgba = ${stored}.rgba; ` +
+            fileTextureSetup(stored, atlas) +
+            `} else { ${atlas}.rgba = bbl::share_texels(${stored}.rgba); ` +
             `${atlas}.sampler = ${stored}.sampler; } ` +
             `}, ${source}); `
         );
@@ -208,12 +200,9 @@ export function compileSpriteAtlasRecord(
             `double width_px, double height_px, ` +
             `bool premultiplied_alpha, ` +
             `const ${framesCppType}& frames)`;
-        // The local shadowing rule sizes the names: the file arm declares
-        // a `premultiplied` image inside its `if`, so the parameter is
-        // `premultiplied_alpha` or /W4 reads the block local as hiding it.
         const bodyLines = [
             `bbl::SpriteAtlasRecord atlas;`,
-            textureSetup("texture", "atlas", "decoded", "stored").trimEnd(),
+            textureSetup("texture", "atlas", "stored").trimEnd(),
             `atlas.width = bbl::js::to_uint32(width_px);`,
             `atlas.height = bbl::js::to_uint32(height_px);`,
             `atlas.premultiplied_alpha = premultiplied_alpha;`,
@@ -258,7 +247,6 @@ export function compileSpriteAtlasRecord(
         );
     }
     const atlas = context.allocateTemporaryCppName("sprite_atlas");
-    const decoded = context.allocateTemporaryCppName("sprite_atlas_image");
     const frameProperty = (frame: Value, name: string): Value => {
         const property = frame.recordProperties?.[name];
         if (!property) {
@@ -288,7 +276,7 @@ export function compileSpriteAtlasRecord(
         : "";
     return (
         `([&]() { bbl::SpriteAtlasRecord ${atlas}; ` +
-        textureSetup(texture.cpp, atlas, decoded, stored) +
+        textureSetup(texture.cpp, atlas, stored) +
         `${atlas}.width = bbl::js::to_uint32(${tupleLane(size, 0)}); ` +
         `${atlas}.height = bbl::js::to_uint32(${tupleLane(size, 1)}); ` +
         `${atlas}.premultiplied_alpha = ${premultiplied.cpp}; ` +

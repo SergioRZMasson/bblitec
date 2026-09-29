@@ -94,6 +94,11 @@ SDL_GPUSampleCount target_samples(const State& state, std::uint32_t requested) {
     return requested == 4 ? state.samples : SDL_GPU_SAMPLECOUNT_1;
 }
 
+/** The sample count a target's passes draw at (`render_target_requested_samples`). */
+SDL_GPUSampleCount target_samples(const State& state, const RenderTargetRecord& record) {
+    return target_samples(state, render_target_requested_samples(record));
+}
+
 SDL_GPUTexture* create_texture(State& state, SDL_GPUTextureFormat format,
                                SDL_GPUSampleCount samples, std::uint32_t width,
                                std::uint32_t height, SDL_GPUTextureUsageFlags usage) {
@@ -266,9 +271,7 @@ void record_post_process(State& state, Engine& engine, TaskHandle task_handle,
     }
     if (gpu.program == npos) {
         gpu.program = post_process_program(state, info.module_index, output.format,
-                                           presents ? SDL_GPU_SAMPLECOUNT_1
-                                                    : target_samples(state, output_record.samples),
-                                           pass.alpha_mode);
+                                           target_samples(state, output_record), pass.alpha_mode);
         gpu.uniforms.assign(((info.uniform_byte_length + 15u) & ~15u) / 4u, 0.0f);
         const PostProcessProgram& program = state.programs[gpu.program];
         std::size_t extra = 0;
@@ -449,9 +452,7 @@ public:
                 if (!pass.pipeline) {
                     pass = create_effect_pass(
                         state.gpu.device, engine, task.effect.effect, output.format,
-                        record.swapchain
-                            ? 1u
-                            : gpu_sample_count_value(target_samples(state, record.samples)));
+                        gpu_sample_count_value(target_samples(state, record)));
                 }
                 SDL_GPUColorTargetInfo target{};
                 target.texture =
@@ -460,7 +461,7 @@ public:
                     SDL_FColor{task.effect.clear_color.r, task.effect.clear_color.g,
                                task.effect.clear_color.b, task.effect.clear_color.a};
                 target.load_op = task.effect.clear ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
-                const SDL_GPUSampleCount samples = target_samples(state, record.samples);
+                const SDL_GPUSampleCount samples = target_samples(state, record);
                 target.store_op = samples == SDL_GPU_SAMPLECOUNT_1 ? SDL_GPU_STOREOP_STORE
                                                                    : SDL_GPU_STOREOP_RESOLVE;
                 if (samples != SDL_GPU_SAMPLECOUNT_1) {

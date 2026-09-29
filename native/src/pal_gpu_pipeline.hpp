@@ -217,6 +217,16 @@ struct PinnedBackgroundDraws {
 
 PinnedBackgroundDraws select_pinned_backgrounds(const FrameOptions& options,
                                                 const EnvironmentState& environment);
+
+/** One drawn arm and the buffers its lowered builders read from the scene. */
+struct PinnedBackgroundArmBuffers {
+    upstream::PinnedBackgroundArmKind kind{};
+    upstream::PinnedBackgroundBuffers buffers;
+};
+
+/** Each drawn arm with its buffers, in `for_each` order, read before GPU preparation. */
+std::vector<PinnedBackgroundArmBuffers>
+pinned_background_arm_buffers(const PinnedBackgroundDraws& draws, const Scene& scene);
 #endif
 
 /**

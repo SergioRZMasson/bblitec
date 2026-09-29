@@ -3,6 +3,8 @@
 // reads no generated header, so it compiles once for every scene.
 #include "pal_gpu_images.hpp"
 
+#include <bblite/pal_texture_texels.hpp>
+
 namespace bbl::pal {
 
 DecodedImage decode_uploadable_image(const TextureData& texture_data,
@@ -20,24 +22,10 @@ DecodedImage decode_uploadable_image(const TextureData& texture_data,
         image.height = static_cast<int>(texture_data.rgba_height);
         image.rgba = texture_data.bytes;
     } else {
-        image = decode_image(
-            std::span<const std::uint8_t>{texture_data.bytes.data(), texture_data.bytes.size()});
+        // An encoded image: its load's decode or a new one, oriented either way.
+        return texture_image_texels(texture_data);
     }
-    if (texture_data.premultiply_alpha) {
-        premultiply_image_alpha(image);
-    }
-    if (texture_data.invert_y && image.height > 1) {
-        const std::size_t row_bytes = static_cast<std::size_t>(image.width) * 4;
-        std::vector<std::uint8_t> row(row_bytes);
-        for (int y = 0; y < image.height / 2; ++y) {
-            std::uint8_t* top = image.rgba.data() + static_cast<std::size_t>(y) * row_bytes;
-            std::uint8_t* bottom =
-                image.rgba.data() + static_cast<std::size_t>(image.height - 1 - y) * row_bytes;
-            std::memcpy(row.data(), top, row_bytes);
-            std::memcpy(top, bottom, row_bytes);
-            std::memcpy(bottom, row.data(), row_bytes);
-        }
-    }
+    orient_image(image, texture_data.invert_y, texture_data.premultiply_alpha);
     return image;
 }
 

@@ -20,20 +20,21 @@ const atlasModule = "src/sprite/shared/sprite-atlas.ts";
  * Both atlas loaders begin here: `loadSpriteAtlas` and the grid a particle
  * graph's `loadTexture2D` texture is partitioned into. The pin decodes
  * before it grids in both, because the frame table is derived from the
- * texture's own size.
+ * texture's own size. `transform` statements may rewrite the decoded
+ * `image` before the atlas keeps its texels.
  */
-export function decodeAtlasImageCpp(): string {
+export function decodeAtlasImageCpp(transform = ""): string {
     return `    SpriteAtlasRecord atlas;
     // loadTexture2D fetches, decodes and uploads before the grid is
     // built, so the decode has to happen here too: the frame table is
     // derived from the texture's own size.
     const std::vector<std::uint8_t> file_bytes =
         pal::read_binary_file(path);
-    const pal::DecodedImage image =
+    pal::DecodedImage image =
         pal::decode_image(js::ArrayBuffer(file_bytes));
-    atlas.rgba = image.rgba;
-    atlas.width = static_cast<std::uint32_t>(image.width);
-    atlas.height = static_cast<std::uint32_t>(image.height);`;
+${transform ? `${transform}\n` : ""}    atlas.width = static_cast<std::uint32_t>(image.width);
+    atlas.height = static_cast<std::uint32_t>(image.height);
+    atlas.rgba = share_texels(std::move(image.rgba));`;
 }
 
 /** The statements that hand the filled `atlas` back as its handle. */

@@ -16,6 +16,8 @@
 // The fx block a custom-shader system binds is the shared custom-shader
 // module's, which the sprite family's header carries for both.
 #include <bblite/upstream/sprite_layer.hpp>
+// The pass's scene block (`upstream::SceneUniforms`).
+#include "pal_gpu_variants.hpp"
 
 #include <algorithm>
 #include <array>
@@ -72,6 +74,8 @@ struct DawnBillboardResources {
     std::array<WGPUBindGroupLayout, 2> group_layouts{};
     WGPUBuffer index_buffer = nullptr;
     WGPUBuffer instances = nullptr;
+    // The system capacity `instances` holds; a grown system reallocates it.
+    std::uint32_t instance_capacity = 0;
     // The system block (group 1).
     WGPUBuffer system_uniforms = nullptr;
     // Group 0 as the program declares it -- the pin's scene block -- and
@@ -176,14 +180,28 @@ inline const DawnBillboardScene& dawn_billboard_task_scene(const DawnBillboardPa
     return found->second;
 }
 
+/** The instance buffer for `capacity` sprites (billboard-pipeline.ts createBillboardInstanceBuffer). */
+inline WGPUBuffer create_dawn_billboard_instances(WGPUDevice device, std::uint32_t capacity) {
+    WGPUBufferDescriptor descriptor = WGPU_BUFFER_DESCRIPTOR_INIT;
+    descriptor.usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst;
+    descriptor.size =
+        static_cast<std::uint64_t>(capacity) * upstream::billboard_instance_stride_bytes;
+    WGPUBuffer buffer = wgpuDeviceCreateBuffer(device, &descriptor);
+    if (!buffer)
+        dawn_error("wgpuDeviceCreateBuffer billboard instances");
+    return buffer;
+}
+
+/**
+ * A system's pass from its snapshot (`billboard_pass_source`) and its atlas's
+ * texels, neither of which a native job reads from the realm's records.
+ */
 inline DawnBillboardPass
-create_dawn_billboard_pass(WGPUDevice device, WGPUQueue queue, Engine& engine,
-                           BillboardSystemHandle system_handle, WGPUTextureFormat target_format,
+create_dawn_billboard_pass(WGPUDevice device, WGPUQueue queue, const BillboardPassSource& system,
+                           const std::vector<std::uint8_t>& texels, WGPUTextureFormat target_format,
                            WGPUTextureFormat depth_format, std::uint32_t sample_count) {
-    const BillboardSystemRecord& system = handle_at(engine.billboard_systems, system_handle);
-    const SpriteAtlasRecord& atlas = handle_at(engine.sprite_atlases, system.atlas);
     DawnBillboardPass pass{device};
-    pass.system = system_handle;
+    pass.system = system.system;
 
     {
         WGPUBufferDescriptor descriptor = WGPU_BUFFER_DESCRIPTOR_INIT;
@@ -199,9 +217,9 @@ create_dawn_billboard_pass(WGPUDevice device, WGPUQueue queue, Engine& engine,
     }
 
     // The program ladder and the pass rules, decided once for both
-    // backends (`billboard_draw_plan`, pal_gpu_shared.hpp); this side
+    // backends (`billboard_draw_plan`, pal_gpu_shared.cpp); this side
     // keeps only its API mechanics.
-    const BillboardDrawPlan plan = billboard_draw_plan(system);
+    const BillboardDrawPlan& plan = system.plan;
     // The program's one module, deployed whole under the fragment stem;
     // both stages enter where it declares them.
     const std::string stem = plan.program_stem;
@@ -281,10 +299,9 @@ create_dawn_billboard_pass(WGPUDevice device, WGPUQueue queue, Engine& engine,
     descriptor.depthStencil = &depth_state;
     descriptor.multisample.count = sample_count;
     descriptor.multisample.mask = 0xFFFFFFFFu;
-    // The one a2c rule (shared GPU helpers): at one sample WebGPU rejects
-    // an a2c pipeline outright.
-    descriptor.multisample.alphaToCoverageEnabled =
-        alpha_to_coverage_enabled(system.alpha_to_coverage, sample_count);
+    // The plan resolves a2c as the pin does, never at one sample, where
+    // WebGPU rejects an a2c pipeline outright.
+    descriptor.multisample.alphaToCoverageEnabled = plan.alpha_to_coverage;
     descriptor.fragment = &fragment_state;
     pass.pipeline = wgpuDeviceCreateRenderPipeline(device, &descriptor);
     if (!pass.pipeline) {
@@ -322,14 +339,8 @@ create_dawn_billboard_pass(WGPUDevice device, WGPUQueue queue, Engine& engine,
     pipeline_layout.reset();
 
     {
-        WGPUBufferDescriptor instance_descriptor = WGPU_BUFFER_DESCRIPTOR_INIT;
-        instance_descriptor.usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst;
-        instance_descriptor.size =
-            static_cast<std::uint64_t>(system.capacity) * upstream::billboard_instance_stride_bytes;
-        pass.instances = wgpuDeviceCreateBuffer(device, &instance_descriptor);
-        if (!pass.instances) {
-            dawn_error("wgpuDeviceCreateBuffer billboard instances");
-        }
+        pass.instances = create_dawn_billboard_instances(device, system.capacity);
+        pass.instance_capacity = system.capacity;
 
         WGPUBufferDescriptor uniform_descriptor = WGPU_BUFFER_DESCRIPTOR_INIT;
         uniform_descriptor.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
@@ -349,12 +360,12 @@ create_dawn_billboard_pass(WGPUDevice device, WGPUQueue queue, Engine& engine,
 
     // rgba8unorm: `loadTexture2D` leaves srgb off, so the atlas texels reach
     // the blend stage as the bytes on disk.
-    const std::uint32_t mip_levels = atlas_mip_levels(atlas);
-    pass.atlas = upload_dawn_rgba_texture(device, queue, atlas.rgba.data(), atlas.rgba.size(),
-                                          atlas.width, atlas.height, mip_levels);
-    pass.atlas_mip_levels = mip_levels;
+    pass.atlas =
+        upload_dawn_rgba_texture(device, queue, texels.data(), texels.size(), system.atlas_width,
+                                 system.atlas_height, system.atlas_mip_levels);
+    pass.atlas_mip_levels = system.atlas_mip_levels;
     pass.atlas_view = create_dawn_texture_view(pass.atlas, nullptr);
-    pass.sampler = create_texture_sampler(device, atlas.sampler);
+    pass.sampler = create_texture_sampler(device, system.atlas_sampler);
 
     for (const PixelsTexture& extra : system.custom_textures) {
         pass.extras.push_back(upload_dawn_extra_texture(device, queue, extra));
@@ -393,12 +404,18 @@ create_dawn_billboard_pass(WGPUDevice device, WGPUQueue queue, Engine& engine,
  * by the shared `billboard_needs_upload` rule, exactly as the SDL twin
  * gates it.
  */
-inline void upload_dawn_billboard_pass(WGPUQueue queue, const Scene& scene, Engine& engine,
-                                       DawnBillboardPass& pass,
+inline void upload_dawn_billboard_pass(WGPUDevice device, WGPUQueue queue, const Scene& scene,
+                                       Engine& engine, DawnBillboardPass& pass,
                                        const upstream::SceneUniforms& scene_block,
                                        double delta_ms) {
     const BillboardSystemRecord& system = handle_at(engine.billboard_systems, pass.system);
     const std::array<float, 16>& view = scene_block.view;
+
+    ensure_billboard_instance_capacity(system, pass, [&](std::uint32_t capacity) {
+        WGPUBuffer grown = create_dawn_billboard_instances(device, capacity);
+        wgpuBufferRelease(pass.instances);
+        pass.instances = grown;
+    });
 
     // The pass's scene block, which the program binds at group 0.
     DawnGpuDevice{queue}.write_buffer(pass.frame_scene.uniforms, 0, &scene_block,

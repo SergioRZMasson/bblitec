@@ -757,6 +757,9 @@ struct GpuState : SdlGpuDevice {
     std::vector<PinnedStageSlots> shader_fragment_slots;
     using StorageBuffer = VersionedGpuBuffer<SDL_GPUBuffer*>;
     std::vector<StorageBuffer> storage_buffers;
+    // The mesh buffers a released mesh leaves for the next one's upload;
+    // `release(GpuState&)` empties it after the meshes go.
+    SdlKeptBuffers kept_buffers;
     std::vector<SDL_GPUTextureSamplerBinding> shader_texture_binding_scratch;
 #if BBLITE_HAS_EFFECT_TASK
     // One built pass per effect render task, keyed by task index and built
@@ -941,7 +944,10 @@ struct GpuState : SdlGpuDevice {
     SDL_GPUTextureFormat depth_format = SDL_GPU_TEXTUREFORMAT_D16_UNORM;
     SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1;
 #if BBLITE_HAS_BILLBOARDS
+    /** One pass per system the scene draws, in its order (`sync_billboard_passes`). */
     std::vector<BillboardPass> billboard_passes;
+    /** The scene's `renderable_version` the passes follow. */
+    std::uint64_t billboard_renderable_version = 0;
 #endif
 #if BBLITE_HAS_SPLATS
     std::vector<SplatPass> splat_passes;
@@ -1702,12 +1708,14 @@ SDL_GPUVertexElementFormat pinned_vertex_format(upstream::PinnedVertexFormat for
 /**
  * Build every background arm the run draws: its pipeline over `base` (the
  * pass's formats, sample count and depth test) with the arm's own vertex
- * layouts, rasterizer, depth write and blend, and its buffers from the
- * lowered builders. The texture an arm samples is the one its factory binds:
- * the ground's own image, the DDS skybox's cube, the environment's specular
- * cube for the .env arm, and the image skybox's six faces.
+ * layouts, rasterizer, depth write and blend, and `arms`, the drawn arms with
+ * the buffers the lowered builders filled (`pinned_background_arm_buffers`).
+ * The texture an arm samples is the one its factory binds: the ground's own
+ * image, the DDS skybox's cube, the environment's specular cube for the .env
+ * arm, and the image skybox's six faces.
  */
-void create_background_arms(GpuState& state, const Scene& scene,
+void create_background_arms(GpuState& state, const EnvironmentState& environment,
+                            std::vector<PinnedBackgroundArmBuffers> arms,
                             const SDL_GPUGraphicsPipelineCreateInfo& base,
                             const SDL_GPUColorTargetDescription& base_target);
 
@@ -1742,6 +1750,12 @@ void create_transmission_color(GpuState& state);
 
 inline SDL_GPUSampleCount task_sample_count(const GpuState& state, std::uint32_t requested) {
     return requested == 4 ? state.sample_count : SDL_GPU_SAMPLECOUNT_1;
+}
+
+/** The sample count a render target's passes draw at (`render_target_requested_samples`). */
+inline SDL_GPUSampleCount target_sample_count(const GpuState& state,
+                                              const RenderTargetRecord& record) {
+    return task_sample_count(state, render_target_requested_samples(record));
 }
 
 inline SDL_GPUTextureFormat geometry_texture_format(const GeometryTextureDescription& description) {
@@ -1874,11 +1888,10 @@ prepare_post_process_pass(GpuState& state, Engine& engine, TaskHandle handle,
         // (the circle-of-confusion map is r16) or follow its source's. The
         // pin builds the pipeline against that target's own sample count and
         // resolves nothing; what it refuses is a multisampled *source*.
-        gpu.program = post_process_program(
-            state, shader_info.module_index,
-            handle_at(state.render_targets, pass.output_target).color_format,
-            presents ? SDL_GPU_SAMPLECOUNT_1 : task_sample_count(state, output_record.samples),
-            pass.alpha_mode);
+        gpu.program =
+            post_process_program(state, shader_info.module_index,
+                                 handle_at(state.render_targets, pass.output_target).color_format,
+                                 target_sample_count(state, output_record), pass.alpha_mode);
         gpu.uniform_data.assign(((shader_info.uniform_byte_length + 15u) & ~15u) / 4u, 0.0f);
         const GpuPostProcessProgram& created = state.post_process_programs[gpu.program];
         std::size_t extra_slot = 0;

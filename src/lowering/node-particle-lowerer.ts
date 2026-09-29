@@ -1244,7 +1244,7 @@ SpriteAtlasHandle grid_atlas_from_pixels(
     double cell_w,
     double cell_h) {
     SpriteAtlasRecord atlas;
-    atlas.rgba = texture.rgba;
+    atlas.rgba = share_texels(texture.rgba);
     atlas.width = texture.width;
     atlas.height = texture.height;
     atlas.premultiplied_alpha = false;

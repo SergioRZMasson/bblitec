@@ -66,7 +66,9 @@
 #include <bblite/features/workers.hpp>
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 #include <bblite/js_data.hpp>
 #include <bblite/pal_audio_types.hpp>
 #include <bblite/js_callback.hpp>
@@ -82,6 +84,12 @@ void audio_remove_ended_listener(AudioNodeHandle node, std::size_t identity, boo
 void audio_set_ended_handler(AudioNodeHandle node, js::Callback<void()> callback);
 #endif
 
+namespace detail {
+class AudioDeviceSdl3;
+}
+/** A real-time context's open playback device (`audio_open_device`); native data only. */
+using AudioPlaybackDevice = detail::AudioDeviceSdl3;
+
 /** Context ownership follows the generated engine, including failed startup. */
 class AudioSession {
 public:
@@ -93,7 +101,8 @@ public:
 
 private:
     std::vector<AudioContextHandle> contexts_;
-    friend AudioContextHandle audio_create_context(std::shared_ptr<AudioSession>& session);
+    friend AudioContextHandle audio_create_context(std::shared_ptr<AudioSession>& session,
+                                                   std::shared_ptr<AudioPlaybackDevice> device);
 };
 
 /** `OscillatorNode.type`. */
@@ -131,6 +140,33 @@ enum class BiquadFilterKind : std::uint8_t {
 AudioContextHandle audio_create_context();
 AudioContextHandle audio_create_context(std::shared_ptr<AudioSession>& session);
 
+/**
+ * The steps of `audio_create_context`. `audio_begin_context` runs on the realm:
+ * it sets LabSound's log level and says whether the context renders offline
+ * (refusing a capture request a build cannot honor); otherwise, on SDL's main
+ * thread, it initializes SDL's audio subsystem for the run, and elsewhere it
+ * refuses unless that thread has initialized or announced it.
+ * `audio_open_device` opens the playback device, none for capture, on any
+ * thread, once an announced initialization finishes; the context around it is
+ * created and joins `session` on the realm.
+ */
+bool audio_begin_context();
+std::shared_ptr<AudioPlaybackDevice> audio_open_device(bool capture);
+AudioContextHandle audio_create_context(std::shared_ptr<AudioSession>& session,
+                                        std::shared_ptr<AudioPlaybackDevice> device);
+
+/**
+ * SDL initializes its audio subsystem on its main thread, once for the run,
+ * never on a worker; devices never quit it (SDL_Quit at exit does). A host
+ * whose realm runs on another thread calls both on SDL's main thread:
+ * `audio_announce_subsystem` before starting that realm, and
+ * `audio_initialize_subsystem` while it starts, before waiting on it; the
+ * realm's device opens wait for the initialization. Neither does anything
+ * while `BBLITE_AUDIO_CAPTURE` renders contexts offline.
+ */
+void audio_announce_subsystem();
+void audio_initialize_subsystem();
+
 /** Idempotent session teardown; asynchronous close checks lifecycle separately. */
 void audio_close_context(AudioContextHandle context);
 
@@ -166,6 +202,18 @@ AudioBufferHandle audio_create_buffer(AudioContextHandle context, std::uint32_t 
 /** Decode encoded bytes at the context's sample rate. */
 AudioBufferHandle audio_decode_buffer(AudioContextHandle context,
                                       const bbl::js::ArrayBuffer& encoded);
+
+/**
+ * The two halves of `audio_decode_buffer`: `audio_decode_samples` decodes and
+ * resamples a copy of the encoded bytes on any thread (null when they are not
+ * decodable); `audio_buffer_from_decoded` makes the context's buffer on the
+ * realm, an empty handle when it cannot.
+ */
+struct DecodedAudio;
+std::shared_ptr<const DecodedAudio> audio_decode_samples(const std::vector<std::uint8_t>& bytes,
+                                                         double sample_rate);
+AudioBufferHandle audio_buffer_from_decoded(AudioContextHandle context,
+                                            const std::shared_ptr<const DecodedAudio>& decoded);
 
 /** `buffer.getChannelData(channel)`: a mutable view into retained PCM. */
 bbl::js::F32Array audio_buffer_channel(AudioBufferHandle buffer, std::uint32_t channel);

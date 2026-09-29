@@ -13,16 +13,16 @@
 
 #include <bblite/runtime.hpp>
 #include <bblite/pal_iteration.hpp>
+#include <bblite/pal_native_workers.hpp>
 #include <bblite/upstream/render_capabilities.hpp>
 #include <bblite/upstream/renderer_plan.hpp>
 
 #include <algorithm>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <future>
 #include <functional>
 #include <iterator>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -42,26 +42,51 @@
 
 namespace bbl::pal {
 
+/**
+ * Jobs contain native GPU data only; their owner outlives this preparation.
+ * They run as one piece of native work, yielding to the realm until it
+ * finishes, or in place, between startup-budget yields, in worker-free
+ * builds and when `native` is false. The first `advance` starts them, so a
+ * caller can start several preparations before awaiting any.
+ */
+inline Iteration<bool> run_native_preparation(std::vector<std::function<void()>> jobs,
+                                              [[maybe_unused]] bool native = true) {
 #if BBLITE_WORKERS
-/** Jobs contain native GPU data only; their owner outlives this preparation. */
-inline Iteration<bool> run_native_preparation(std::vector<std::function<void()>> jobs) {
-    if (jobs.empty())
+    if (native && !jobs.empty()) {
+        auto pending = start_native_work([jobs = std::move(jobs)] {
+            for (const auto& create : jobs)
+                create();
+        });
+        while (!pending.ready())
+            co_yield false;
+        pending.get();
         co_return true;
-    auto pending = std::async(std::launch::async, [jobs = std::move(jobs)] {
-        for (const auto& create : jobs)
-            create();
-    });
-    while (pending.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
-        co_yield false;
-    pending.get();
+    }
+#endif
+    StartupWorkBudget budget;
+    for (const auto& create : jobs) {
+        create();
+        if (budget.exhausted()) {
+            co_yield false;
+            budget.resume();
+        }
+    }
     co_return true;
 }
-#endif
 
-template <typename Resource, typename Prepare, typename Upload>
-Iteration<bool> upload_prepared_scene_mesh(const Engine& engine, const upstream::RenderItem& item,
-                                           TextureUploadCache<Resource>& cache, Prepare prepare,
-                                           Upload upload, bool asynchronous = true) {
+/**
+ * Setup's material images: every new one the `plans`' rows bind, decoded and
+ * uploaded through `cache` as one piece of native work, so the rows' uploads
+ * that follow find them there and never wait. The result holds the images
+ * until those bindings acquire them; the cache holds none. Worker-free builds,
+ * and `native` false, prepare nothing here: each row's upload then creates its
+ * own.
+ */
+template <typename Resource, typename Prepare>
+Iteration<std::vector<std::shared_ptr<Resource>>>
+prepare_scene_textures(const Engine& engine, std::vector<const upstream::RenderPlan*> plans,
+                       TextureUploadCache<Resource>& cache, Prepare prepare,
+                       [[maybe_unused]] bool native = true) {
 #if BBLITE_WORKERS
     struct Request {
         TextureData data;
@@ -70,7 +95,7 @@ Iteration<bool> upload_prepared_scene_mesh(const Engine& engine, const upstream:
     };
     std::vector<Request> sources;
     const auto add = [&](const TextureData& data, bool srgb, std::array<std::uint8_t, 4> fallback) {
-        if (!asynchronous || !data.has_image() || data.gpu_source || data.render_source ||
+        if (!data.has_image() || data.gpu_source || data.render_source ||
             cache.find(data, srgb, fallback))
             return;
         if (std::none_of(sources.begin(), sources.end(), [&](const auto& other) {
@@ -79,48 +104,108 @@ Iteration<bool> upload_prepared_scene_mesh(const Engine& engine, const upstream:
             }))
             sources.push_back({data, srgb, fallback});
     };
-    if (const auto* material = handle_find(engine.materials, item.material)) {
-        const bool standard = item.material_kind == upstream::RenderMaterialKind::standard;
-        if (standard || item.material_kind == upstream::RenderMaterialKind::pbr)
-            for (const auto& slot : upstream::material_texture_slots)
-                if (slot.slot != upstream::material_texture_no_slot)
-                    if (const auto* data = material_slot_texture(*material, slot.source, standard))
-                        add(*data, material_slot_srgb(slot.srgb, material, standard),
-                            material_slot_fallback(slot.fallback, material, standard));
-        if (material->shader_material || material->node_material)
-            for (const auto& texture : material->shader_textures)
-                add(texture.data, texture.srgb, {255, 255, 255, 255});
+    if (!native)
+        plans.clear();
+    for (const upstream::RenderPlan* plan : plans)
+        for (const upstream::RenderItem& item : plan->items) {
+            const auto* material = handle_find(engine.materials, item.material);
+            if (!material)
+                continue;
+            const bool standard = item.material_kind == upstream::RenderMaterialKind::standard;
+            if (standard || item.material_kind == upstream::RenderMaterialKind::pbr)
+                for (const auto& slot : upstream::material_texture_slots)
+                    if (slot.slot != upstream::material_texture_no_slot)
+                        if (const auto* data =
+                                material_slot_texture(*material, slot.source, standard))
+                            add(*data, material_slot_srgb(slot.srgb, material, standard),
+                                material_slot_fallback(slot.fallback, material, standard));
+            if (material->shader_material || material->node_material)
+                for (const auto& texture : material->shader_textures)
+                    add(texture.data, texture.srgb, {255, 255, 255, 255});
 #if BBLITE_HAS_MATERIAL_PLUGIN_TEXTURES
-        for (const auto& texture : material->plugin_textures)
-            add(texture.data, texture.srgb, {255, 255, 255, 255});
+            for (const auto& texture : material->plugin_textures)
+                add(texture.data, texture.srgb, {255, 255, 255, 255});
 #endif
-    }
+        }
     if (!sources.empty()) {
         // Only native snapshots and GPU handles cross the thread boundary.
-        auto pending = std::async(std::launch::async, [sources = std::move(sources), &cache,
-                                                       prepare = std::move(prepare)] {
-            std::vector<std::shared_ptr<Resource>> images;
-            images.reserve(sources.size());
-            for (const auto& source : sources)
-                images.push_back(cache.acquire(source.data, source.srgb, source.fallback, [&] {
-                    return prepare(source.data, source.srgb, source.fallback);
-                }));
-            return images;
-        });
-        while (pending.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        auto pending =
+            start_native_work([sources = std::move(sources), &cache, prepare = std::move(prepare)] {
+                std::vector<std::shared_ptr<Resource>> images;
+                images.reserve(sources.size());
+                for (const auto& source : sources)
+                    images.push_back(cache.acquire(source.data, source.srgb, source.fallback, [&] {
+                        return prepare(source.data, source.srgb, source.fallback);
+                    }));
+                return images;
+            });
+        while (!pending.ready())
             co_yield false;
-        const auto images = pending.get();
-        upload();
-        co_return true;
+        co_return pending.get();
     }
 #else
     static_cast<void>(engine);
-    static_cast<void>(item);
+    static_cast<void>(plans);
     static_cast<void>(cache);
     static_cast<void>(prepare);
-    static_cast<void>(asynchronous);
 #endif
-    upload();
+    co_return {};
+}
+
+/**
+ * Setup's mesh rows, in the order both scene backends run: the plans of the
+ * overlay layers (every registered scene after the first, the pin's
+ * `configureSwapchainOverlayScene` trigger; each owns a plan because a draw
+ * command indexes one), then the new material images every plan binds
+ * (`prepare_scene_textures`), then `upload(item)` for the root plan's rows and
+ * each layer's, between startup-budget yields. A layer's topology version is
+ * the one its plan was built from.
+ */
+template <typename Mesh, typename Resource, typename Prepare, typename Upload>
+Iteration<bool> upload_scene_meshes(const Engine& engine,
+                                    const std::vector<std::shared_ptr<Scene>>& layers,
+                                    const upstream::RenderPlan& plan, std::vector<Mesh>& meshes,
+                                    std::vector<upstream::RenderPlan>& overlay_plans,
+                                    std::vector<std::vector<Mesh>>& overlay_meshes,
+                                    std::vector<std::uint64_t>& overlay_versions,
+                                    TextureUploadCache<Resource>& cache, Prepare prepare,
+                                    Upload upload, bool native = true) {
+    std::vector<upstream::RenderPlan> overlays;
+    std::vector<std::uint64_t> versions;
+    for (std::size_t layer = 1; layer < layers.size(); ++layer) {
+        const Scene* overlay_scene = layers[layer].get();
+        if (!overlay_scene)
+            continue;
+        overlays.push_back(upstream::build_render_plan(*overlay_scene, engine));
+        validate_render_plan_items(overlays.back());
+        versions.push_back(overlay_scene->render_topology_version);
+    }
+    std::vector<const upstream::RenderPlan*> plans{&plan};
+    for (const upstream::RenderPlan& overlay : overlays)
+        plans.push_back(&overlay);
+    auto textures = prepare_scene_textures(engine, std::move(plans), cache, prepare, native);
+    while (textures.advance())
+        co_yield false;
+    const auto prepared = textures.result();
+    StartupWorkBudget budget;
+    for (std::size_t layer = 0; layer <= overlays.size(); ++layer) {
+        const upstream::RenderPlan& rows = layer == 0 ? plan : overlays[layer - 1];
+        std::vector<Mesh> layer_meshes;
+        std::vector<Mesh>& uploaded = layer == 0 ? meshes : layer_meshes;
+        uploaded.reserve(rows.items.size());
+        for (const upstream::RenderItem& item : rows.items) {
+            uploaded.push_back(upload(item));
+            if (budget.exhausted()) {
+                co_yield false;
+                budget.resume();
+            }
+        }
+        if (layer > 0) {
+            overlay_plans.push_back(std::move(overlays[layer - 1]));
+            overlay_meshes.push_back(std::move(layer_meshes));
+            overlay_versions.push_back(versions[layer - 1]);
+        }
+    }
     co_return true;
 }
 
@@ -159,6 +244,43 @@ Iteration<bool> prepare_scene_pipeline_draws(Engine& engine, const Scene& scene,
                 }
             }
     }
+    co_return true;
+}
+
+/**
+ * Setup's pipeline preparation, the order both scene backends run: the
+ * `background` job (the background arms', or none) starts first and builds
+ * beside the material pipelines `prepare` collects from every registered
+ * layer's reached draws, which run with the backend's `extra` jobs; both
+ * finish before the first frame.
+ */
+template <typename TaskLists, typename Prepare>
+Iteration<bool> prepare_scene_pipelines(Engine& engine,
+                                        const std::vector<std::shared_ptr<Scene>>& layers,
+                                        const upstream::RenderPlan& plan,
+                                        const std::vector<upstream::RenderPlan>& overlay_plans,
+                                        TaskLists task_lists, Prepare prepare,
+                                        std::vector<std::function<void()>> background,
+                                        std::vector<std::function<void()>> extra, bool native) {
+    auto backgrounds = run_native_preparation(std::move(background), native);
+    static_cast<void>(backgrounds.advance());
+    std::vector<std::function<void()>> jobs;
+    for (std::size_t layer = 0; layer < layers.size(); ++layer) {
+        const Scene& layer_scene = *layers[layer];
+        auto pipelines = prepare_scene_pipeline_draws(
+            engine, layer_scene, layer == 0 ? plan : overlay_plans[layer - 1], task_lists,
+            [&](const upstream::RenderDrawCommand& draw, const FrameTaskRecord* task) {
+                prepare(layer_scene, draw, task, jobs);
+            });
+        while (pipelines.advance())
+            co_yield false;
+    }
+    std::move(extra.begin(), extra.end(), std::back_inserter(jobs));
+    auto preparation = run_native_preparation(std::move(jobs), native);
+    while (preparation.advance())
+        co_yield false;
+    while (backgrounds.advance())
+        co_yield false;
     co_return true;
 }
 
@@ -299,14 +421,16 @@ void sync_plan_mesh_rows(const Scene& scene, Engine& engine, const upstream::Ren
 #if BBLITE_HAS_TEXT
 /**
  * The text scene's per-frame update over the scene pass, the same on both
- * backends: the retained bindings' scene checks, the capture's frame, then
- * the bindings' own updates through the pass camera and extent.
+ * backends: the retained bindings' scene checks, the capture's frame, the
+ * rebind a build since the last frame calls for, then the bindings' own
+ * updates through the pass camera and extent.
  */
 template <class TextState>
 void update_scene_text(TextState& text, const Scene& scene, long frame,
                        const PixelViewport& surface_extent, const PassCamera& pass) {
     validate_text_scene(scene);
     text.device->owner->capture.begin_frame(static_cast<std::uint64_t>(frame));
+    text.scene.follow(scene);
     text.scene.update_for_pass(pass.camera, pass.matrices.view_projection, pass.matrices.aspect,
                                static_cast<double>(surface_extent.width),
                                static_cast<double>(surface_extent.height));

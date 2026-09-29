@@ -1,8 +1,10 @@
 #define BBLITE_FLOATING_ORIGIN 0
 #include "pal_gpu_billboard_upload.hpp"
+#include <bblite/pal_iteration.hpp>
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <functional>
 #include <memory>
 
 struct Buffer {
@@ -36,7 +38,8 @@ using SDL_GPUTextureFormat = int;
 using SDL_GPUSampleCount = int;
 using WGPUTextureFormat = int;
 constexpr int SDL_GPU_TEXTUREFORMAT_INVALID = 0, SDL_GPU_SAMPLECOUNT_1 = 1,
-              WGPUTextureFormat_Undefined = 0;
+              SDL_GPU_SAMPLECOUNT_4 = 4, WGPUTextureFormat_Undefined = 0,
+              WGPUTextureFormat_RGBA8Unorm = 1, WGPUTextureFormat_Depth24PlusStencil8 = 2;
 constexpr int SDL_GPU_BUFFERUSAGE_VERTEX = 1, SDL_GPU_INDEXELEMENTSIZE_16BIT = 2;
 constexpr int WGPUBufferUsage_Vertex = 1, WGPUBufferUsage_CopyDst = 2, WGPUIndexFormat_Uint16 = 2;
 constexpr int WGPUBufferUsage_Index = 4, SDL_GPU_BUFFERUSAGE_INDEX = 4;
@@ -96,6 +99,13 @@ Buffer* bound = nullptr;
 bool fail_allocate = false, fail_write = false;
 float fx_seconds = 0;
 unsigned texture_uploads = 0;
+// Each billboard pass build: its system, the texels it read, and whether its
+// plan resolved alpha-to-coverage; and the Dawn atlas chains filled.
+std::vector<std::uint32_t> billboard_builds;
+std::vector<const std::vector<std::uint8_t>*> billboard_texels;
+std::vector<std::vector<std::uint8_t>> billboard_texel_bytes;
+std::vector<bool> billboard_coverage;
+unsigned mip_fills = 0;
 Buffer* allocate(std::size_t bytes) {
     if (fail_allocate)
         return nullptr;
@@ -208,6 +218,7 @@ struct SceneUniforms {
     std::array<float, 16> view{};
 };
 constexpr std::array<std::uint16_t, 6> billboard_index_data{};
+constexpr std::uint32_t billboard_instance_stride_bytes = 64;
 template <class Params>
 void build_sprite_fx_ubo(float seconds, const Params&, std::array<float, 4>& output) {
     capture::fx_seconds = seconds;
@@ -440,6 +451,54 @@ inline void release_dawn_sprite_layer_resources(Resource*, DawnSpriteLayerResour
 void release_dawn_sprite_layer(DawnSpriteLayer& layer) {
     release_dawn_sprite_layer_resources(nullptr, layer);
 }
+std::uint32_t atlas_mip_levels(const SpriteAtlasRecord&) { return 1u; }
+std::uint32_t gpu_sample_count_value(SDL_GPUSampleCount samples) {
+    return static_cast<std::uint32_t>(samples);
+}
+// The pass builders record what they were handed; the passes they return
+// draw their own instance buffer.
+template <class Pass>
+Pass fixture_billboard_pass(const BillboardPassSource& source,
+                            const std::vector<std::uint8_t>& texels) {
+    capture::billboard_builds.push_back(source.system.value);
+    capture::billboard_texels.push_back(&texels);
+    capture::billboard_texel_bytes.push_back(texels);
+    capture::billboard_coverage.push_back(source.plan.alpha_to_coverage);
+    Pass pass;
+    pass.system = source.system;
+    pass.instances = capture::allocate(16);
+    return pass;
+}
+BillboardPass create_billboard_pass(SDL_GPUDevice*, const BillboardPassSource& source,
+                                    const std::vector<std::uint8_t>& texels, SDL_GPUTextureFormat,
+                                    SDL_GPUTextureFormat, SDL_GPUSampleCount) {
+    return fixture_billboard_pass<BillboardPass>(source, texels);
+}
+DawnBillboardPass create_dawn_billboard_pass(WGPUDevice, WGPUQueue,
+                                             const BillboardPassSource& source,
+                                             const std::vector<std::uint8_t>& texels,
+                                             WGPUTextureFormat, WGPUTextureFormat, std::uint32_t) {
+    return fixture_billboard_pass<DawnBillboardPass>(source, texels);
+}
+struct DawnState {
+    WGPUDevice device = nullptr;
+    WGPUQueue queue = nullptr;
+    WGPUTextureFormat frame_color_format = WGPUTextureFormat_Undefined;
+    std::uint32_t sample_count = 4;
+    std::vector<DawnBillboardPass> billboard_passes;
+    std::uint64_t billboard_renderable_version = 0;
+};
+void generate_mipmaps(DawnState&, WGPUTexture, WGPUTextureFormat, std::uint32_t) {
+    ++capture::mip_fills;
+}
+// A native job: the realm runs one turn while it is pending, then it runs.
+Iteration<bool> run_native_preparation(std::vector<std::function<void()>> jobs, bool native) {
+    if (native && !jobs.empty())
+        co_yield false;
+    for (const auto& job : jobs)
+        job();
+    co_return true;
+}
 #include "functions.hpp"
 } // namespace bbl::pal
 
@@ -560,6 +619,220 @@ void check_pipeline_cache() {
            touched.version == 2);
 }
 
+// The passes follow the systems the scene draws (`billboard_renderables`,
+// which `addBillboardSystem`'s deferred builder fills when the scene builds,
+// advancing its `renderable_version`) on both backends: setup builds the
+// members it finds, a system a registration publishes between setup and the
+// first frame -- while Dawn's setup job is still running -- or after it gets a
+// pass that draws before the next frame, a frame with no build since follows
+// nothing, a kept member keeps its pass, a system added twice gets two, and a
+// scene's disposal releases them.
+void check_billboard_membership() {
+    using namespace bbl;
+    using namespace bbl::pal;
+    Engine engine;
+    // Two atlases, each holding the texels its creation took.
+    engine.sprite_atlases.resize(2);
+    engine.sprite_atlases[0].rgba = share_texels({1, 2, 3, 4});
+    engine.sprite_atlases[1].rgba = share_texels({5, 6, 7, 8});
+    engine.billboard_systems.resize(4);
+    for (auto& system : engine.billboard_systems) {
+        system.count = 1;
+        system.visible = true;
+        system.atlas = {0};
+    }
+    engine.billboard_systems[2].atlas = {1};
+    engine.billboard_systems[3].atlas = {1};
+    // A cutout system with alpha-to-coverage: the plan resolves it at four
+    // samples only.
+    engine.billboard_systems[1].depth_mode = BillboardDepthMode::cutout;
+    engine.billboard_systems[1].alpha_to_coverage = true;
+    Scene scene;
+    auto& members = scene.state->billboard_renderables;
+    auto& version = scene.state->renderable_version;
+    // register_scene: the deferred builders publish, and the version moves.
+    const auto publish = [&](std::initializer_list<std::uint32_t> published) {
+        for (const std::uint32_t system : published)
+            members.push_back({system});
+        ++version;
+    };
+    const auto systems = [](const auto& passes) {
+        std::vector<std::uint32_t> values;
+        for (const auto& pass : passes)
+            values.push_back(pass.system.value);
+        return values;
+    };
+    const auto draws = [&](const auto& record, const auto& passes) {
+        capture::reset();
+        for (const auto& pass : passes)
+            record(pass);
+        std::vector<Buffer*> wanted;
+        for (const auto& pass : passes)
+            wanted.push_back(pass.instances);
+        return capture::draws == wanted;
+    };
+
+    // SDL_GPU: one path at setup and in any frame whose scene built since.
+    std::vector<BillboardPass> sdl;
+    std::uint64_t sdl_version = 0;
+    const auto sync_sdl = [&](SDL_GPUSampleCount samples) {
+        sync_billboard_passes(nullptr, engine, scene, sdl, sdl_version, 0, 0, samples);
+    };
+    const auto frame_sdl = [&] {
+        if (sdl_version != version)
+            sync_sdl(SDL_GPU_SAMPLECOUNT_4);
+    };
+    const auto record_sdl = [&](const BillboardPass& pass) {
+        record_billboard_pass(nullptr, nullptr, engine, pass, bbl::upstream::SceneUniforms{});
+    };
+    publish({0});
+    capture::billboard_builds.clear();
+    capture::billboard_texels.clear();
+    sync_sdl(SDL_GPU_SAMPLECOUNT_4);
+    assert((systems(sdl) == std::vector<std::uint32_t>{0}) && sdl_version == version);
+    Buffer* const kept = sdl[0].instances;
+    frame_sdl();
+    assert(capture::billboard_builds.size() == 1u);
+    // Published between setup and the first frame, and after it.
+    publish({1});
+    frame_sdl();
+    assert((systems(sdl) == std::vector<std::uint32_t>{0, 1}) && sdl[0].instances == kept);
+    assert(capture::billboard_coverage.back() && draws(record_sdl, sdl));
+    publish({2, 1});
+    frame_sdl();
+    assert((systems(sdl) == std::vector<std::uint32_t>{0, 1, 2, 1}) && sdl[0].instances == kept);
+    assert((capture::billboard_builds == std::vector<std::uint32_t>{0, 1, 2, 1}));
+    assert(draws(record_sdl, sdl) && sdl_version == version);
+    // The realm's records serve the build in place.
+    assert(capture::billboard_texels[0] == engine.sprite_atlases[0].rgba.get());
+    // Disposal empties the list and moves the version.
+    members.clear();
+    ++version;
+    frame_sdl();
+    assert(sdl.empty());
+    publish({1});
+    sync_sdl(SDL_GPU_SAMPLECOUNT_1);
+    assert(!capture::billboard_coverage.back());
+
+    // Dawn: setup runs the same path as a native job, beside the realm.
+    DawnState state;
+    const auto record_dawn = [&](const DawnBillboardPass& pass) {
+        record_dawn_billboard_pass(nullptr, engine, pass, pass.frame_scene);
+    };
+    members.clear();
+    publish({0, 2, 3});
+    capture::billboard_builds.clear();
+    capture::billboard_texels.clear();
+    capture::billboard_texel_bytes.clear();
+    capture::mip_fills = 0;
+    auto setup = sync_dawn_billboard_passes(state, engine, scene, true);
+    assert(setup.advance());
+    // A registration publishes a system while the job runs.
+    const std::uint64_t setup_version = version;
+    publish({1});
+    while (setup.advance()) {
+    }
+    assert((systems(state.billboard_passes) == std::vector<std::uint32_t>{0, 2, 3}));
+    // The passes follow the version setup snapshot, so the frame follows again.
+    assert(state.billboard_renderable_version == setup_version && setup_version != version);
+    // The job shares each atlas's texels rather than copying them.
+    assert(capture::billboard_texels[0] == engine.sprite_atlases[0].rgba.get() &&
+           capture::billboard_texel_bytes[0] == *engine.sprite_atlases[0].rgba);
+    assert(capture::billboard_texels[1] == engine.sprite_atlases[1].rgba.get() &&
+           capture::billboard_texels[2] == capture::billboard_texels[1]);
+    assert(capture::mip_fills == 3u);
+    // The first frame follows, in place.
+    Buffer* const dawn_kept = state.billboard_passes[1].instances;
+    auto frame = sync_dawn_billboard_passes(state, engine, scene, false);
+    assert(!frame.advance());
+    assert((systems(state.billboard_passes) == std::vector<std::uint32_t>{0, 2, 3, 1}));
+    assert(state.billboard_passes[1].instances == dawn_kept && capture::mip_fills == 4u);
+    assert(state.billboard_renderable_version == version);
+    // In place too, the build reads the atlas record's shared texels.
+    assert(capture::billboard_texels.back() == engine.sprite_atlases[0].rgba.get());
+    assert(capture::billboard_coverage.back() && draws(record_dawn, state.billboard_passes));
+    members.erase(members.begin());
+    ++version;
+    auto disposal = sync_dawn_billboard_passes(state, engine, scene, false);
+    assert(!disposal.advance());
+    assert((systems(state.billboard_passes) == std::vector<std::uint32_t>{2, 3, 1}));
+    assert(capture::billboard_builds.size() == 4u);
+}
+
+// The depth-hosted layer pass follows the layers the scene draws on both
+// backends (`addDepthHostedSpriteLayer` publishes through the deferred
+// builders, advancing `renderable_version`): a build that publishes more
+// layers appends them beside the drawn ones, which keep their clocks, and
+// they share an earlier compatible layer's pipeline; disposal releases it.
+void check_scene_sprite_membership() {
+    using namespace bbl;
+    using namespace bbl::pal;
+    Engine engine;
+    engine.sprite_layers.resize(3);
+    for (auto& layer : engine.sprite_layers) {
+        layer.depth_mode = Sprite2DDepthMode::test_write;
+        layer.atlas = {0};
+        layer.pipeline_version = 1;
+        layer.custom_shader = 0;
+        layer.visible = false;
+    }
+    engine.sprite_layers[1].depth_mode = Sprite2DDepthMode::test;
+    Scene scene;
+    auto& members = scene.depth_hosted_sprite_layers;
+    auto& version = scene.state->renderable_version;
+    const auto publish = [&](std::initializer_list<std::uint32_t> published) {
+        for (const std::uint32_t layer : published)
+            members.push_back({layer});
+        ++version;
+    };
+    const auto layers = [](const auto& pass) {
+        std::vector<std::uint32_t> values;
+        for (const Sprite2DLayerHandle handle : pass.handles)
+            values.push_back(handle.value);
+        return values;
+    };
+    const auto follow = [&](auto sync, auto& pass, bool& has_pass, std::uint64_t& followed) {
+        // Setup, the scene with nothing published: no pass.
+        capture::pipelines = 0;
+        sync();
+        assert(!has_pass && followed == version);
+        publish({0});
+        sync();
+        assert(has_pass && (layers(pass) == std::vector<std::uint32_t>{0}) &&
+               capture::pipelines == 1 && followed == version);
+        pass.layers[0].elapsed_ms = 5.0;
+        publish({1, 2});
+        sync();
+        assert((layers(pass) == std::vector<std::uint32_t>{0, 1, 2}) &&
+               pass.layers[0].elapsed_ms == 5.0 && capture::pipelines == 2);
+        assert(pass.layers[2].pipeline == pass.layers[0].pipeline &&
+               pass.layers[1].pipeline != pass.layers[0].pipeline);
+        // Disposal empties the list and moves the version.
+        members.clear();
+        ++version;
+        sync();
+        assert(!has_pass && followed == version);
+    };
+    SceneSpritePass sdl;
+    bool has_sdl = false;
+    std::uint64_t sdl_version = 0;
+    follow(
+        [&] {
+            sync_scene_sprite_pass(nullptr, engine, scene, sdl, has_sdl, sdl_version, {}, 0, 0, 4);
+        },
+        sdl, has_sdl, sdl_version);
+    DawnSceneSpritePass dawn;
+    DawnMipGenerator mips;
+    bool has_dawn = false;
+    std::uint64_t dawn_version = 0;
+    follow(
+        [&] {
+            sync_dawn_scene_sprite_pass(nullptr, nullptr, mips, engine, scene, dawn, has_dawn,
+                                        dawn_version, {}, {}, 0, 0, 4);
+        },
+        dawn, has_dawn, dawn_version);
+}
+
 template <class Gpu, class Upload, class Record>
 void check_layer(Gpu& gpu, bbl::Engine& engine, Upload upload, Record record) {
     using namespace bbl;
@@ -658,6 +931,7 @@ int main() {
     using namespace bbl::pal;
     check_layer_sort();
     check_pipeline_cache();
+    check_scene_sprite_membership();
     Engine engine;
     engine.sprite_layers.resize(1);
     SpriteLayerGpu sdl;
@@ -764,9 +1038,56 @@ int main() {
         assert(capture::writes.size() == (frame == 1 ? 1u : 0u));
         assert((capture::textures == std::vector<Resource*>{&mask, &atlas}));
         capture::reset();
-        upload_dawn_billboard_pass(nullptr, scene, engine, dawn_billboard, scene_block, .25);
+        upload_dawn_billboard_pass(nullptr, nullptr, scene, engine, dawn_billboard, scene_block,
+                                   .25);
         assert(dawn_billboard.elapsed_ms == billboard.elapsed_ms);
         assert(capture::fx_seconds == static_cast<float>(dawn_billboard.elapsed_ms / 1000.0));
         assert(capture::writes.size() == (frame == 1 ? 4u : 3u));
     }
+
+    // ensureBillboardInstanceBuffer: a system grown past the buffer's capacity
+    // uploads every row into a new buffer sized for its capacity.
+    system.capacity = 2;
+    system.count = 2;
+    system.instance_data.assign(2u * system.instance_floats_per_sprite, 1.0f);
+    billboard.instance_capacity = 1;
+    dawn_billboard.instance_capacity = 1;
+    const auto* sdl_before = billboard.instances;
+    const auto* dawn_before = dawn_billboard.instances;
+    capture::reset();
+    upload_billboard_pass(nullptr, scene, engine, billboard, view, .25);
+    assert(billboard.instances != sdl_before && billboard.instance_capacity == 2u);
+    assert(capture::writes.size() == 1u);
+    capture::reset();
+    upload_dawn_billboard_pass(nullptr, nullptr, scene, engine, dawn_billboard, scene_block, .25);
+    assert(dawn_billboard.instances != dawn_before && dawn_billboard.instance_capacity == 2u);
+    assert(capture::writes.size() == 4u);
+    // The one growth rule on both backends: a buffer that cannot grow stays
+    // the pass's own, at its capacity, with its upload stamp.
+    system.capacity = 4;
+    system.count = 4;
+    system.instance_data.assign(4u * system.instance_floats_per_sprite, 1.0f);
+    const auto* sdl_grown = billboard.instances;
+    const auto* dawn_grown = dawn_billboard.instances;
+    capture::fail_allocate = true;
+    capture::reset();
+    for (const auto& grow : std::vector<std::function<void()>>{
+             [&] { upload_billboard_pass(nullptr, scene, engine, billboard, view, .25); },
+             [&] {
+                 upload_dawn_billboard_pass(nullptr, nullptr, scene, engine, dawn_billboard,
+                                            scene_block, .25);
+             }}) {
+        try {
+            grow();
+            assert(false);
+        } catch (const std::runtime_error&) {
+        }
+    }
+    capture::fail_allocate = false;
+    assert(billboard.instances == sdl_grown && billboard.instance_capacity == 2u &&
+           billboard.upload_stamp.uploaded);
+    assert(dawn_billboard.instances == dawn_grown && dawn_billboard.instance_capacity == 2u &&
+           dawn_billboard.upload_stamp.uploaded && capture::released.empty());
+
+    check_billboard_membership();
 }
