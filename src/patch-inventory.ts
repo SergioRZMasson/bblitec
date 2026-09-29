@@ -57,7 +57,13 @@ interface MaintainedPatch {
     library: string;
     file: string;
     purpose: string;
-    upstream: { state: UpstreamState; link?: string; retire?: string };
+    upstream: {
+        state: UpstreamState;
+        link?: string;
+        /** An upstream issue or pull request someone else opened about the same change. */
+        related?: string;
+        retire?: string;
+    };
     variants: readonly string[];
 }
 
@@ -167,6 +173,7 @@ function parsePatchManifest(source: string): PatchManifest {
                 `${where}.upstream.state must be one of ${upstreamStates.join(", ")}.`,
             );
         const link = optionalText(upstream, "link", `${where}.upstream`);
+        const related = optionalText(upstream, "related", `${where}.upstream`);
         const retire = optionalText(upstream, "retire", `${where}.upstream`);
         return {
             library: requiredText(patch, "library", where),
@@ -175,6 +182,7 @@ function parsePatchManifest(source: string): PatchManifest {
             upstream: {
                 state,
                 ...(link === undefined ? {} : { link }),
+                ...(related === undefined ? {} : { related }),
                 ...(retire === undefined ? {} : { retire }),
             },
             variants: strings(
@@ -375,11 +383,11 @@ export function checkPatchInventory(root = moduleRepositoryRoot()): string[] {
         }
     }
 
-    // A patch's position in its library's series (1-based), its application order.
+    // A script patch's position among its library's script-built patches
+    // (1-based): port patches keep their own names, so dropping one never
+    // renumbers the script files after it.
     const positions = new Map<string, number>();
     for (const patch of manifest.patches) {
-        const position = (positions.get(patch.library) ?? 0) + 1;
-        positions.set(patch.library, position);
         const library = manifest.libraries.get(patch.library);
         if (!library) {
             problems.push(`${patch.file}: unknown library '${patch.library}'.`);
@@ -402,13 +410,15 @@ export function checkPatchInventory(root = moduleRepositoryRoot()): string[] {
                 patch.file,
             );
         if (!inPort) {
+            const position = (positions.get(patch.library) ?? 0) + 1;
+            positions.set(patch.library, position);
             if (!scriptFile || scriptFile[1] !== library.name)
                 problems.push(
                     `${patch.file}: script patches live at native/patches/${library.name}/NNNN-slug.patch.`,
                 );
             else if (Number(scriptFile[2]) !== position)
                 problems.push(
-                    `${patch.file}: its number is not its position ${position} in the ${library.name} series.`,
+                    `${patch.file}: its number is not its position ${position} among the ${library.name} script patches.`,
                 );
         }
         if (inherited && !inPort)
@@ -421,6 +431,13 @@ export function checkPatchInventory(root = moduleRepositoryRoot()): string[] {
         )
             problems.push(
                 `${patch.file}: upstream state ${patch.upstream.state} needs its link.`,
+            );
+        if (
+            patch.upstream.related !== undefined &&
+            !/^https:\/\//.test(patch.upstream.related)
+        )
+            problems.push(
+                `${patch.file}: its related upstream thread needs a link.`,
             );
         const path = join(root, patch.file);
         if (!existsSync(path) || !statSync(path).isFile()) {

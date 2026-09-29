@@ -325,12 +325,6 @@ test("the trimmed SDL build has a separate audio-capable variant", () => {
     assert.doesNotMatch(script, /yuv2rgb\/LICENSE|stb_image\.h"/);
     assert.doesNotMatch(script, /SDL_(MISC|LOCALE) =/);
     assert.match(script, /-notin @\("BOOL", "INTERNAL"\)/);
-    assert.ok(existsSync("native/patches/sdl3/0009-static-no-dynapi.patch"));
-    assert.ok(
-        !existsSync(
-            "native/vcpkg-overlay-ports/sdl3/0009-static-no-dynapi.patch",
-        ),
-    );
 
     const cmake = readFileSync("native/CMakeLists.txt", "utf8");
     assert.match(cmake, /include\("\$\{BBLITE_SDL_FEATURES\}"\)/);

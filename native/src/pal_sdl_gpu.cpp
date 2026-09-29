@@ -769,7 +769,7 @@ public:
         // frame's source: per-sample over the multisampled attachment,
         // averaged after `ip()`, or over the single-sample one. Reading the
         // multisampled attachment needs a texture SDL refuses to create with
-        // a read usage until libsdl-org/SDL#15838 lands, so a single-sample
+        // a read usage until SDL 3.4.18 (libsdl-org/SDL#15838), so a single-sample
         // run takes the pin's single-sample arm.
         const bool per_sample_image_processing =
             transmission_enabled && state.sample_count != SDL_GPU_SAMPLECOUNT_1;

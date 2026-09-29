@@ -1,5 +1,5 @@
 {
-  "$comment": "Every upstream patch this repository applies, each library's in application order. Script-built libraries keep their patches here as <library>/NNNN-slug.patch, NNNN being the patch's position among its library's entries; vcpkg overlay ports keep theirs in the port directory, whose bytes key each vcpkg install. `variants` selects the builds that apply a patch: `all`, or one of the library's variant tokens (`vcpkg`: the overlay portfile; a port feature's name: the portfile with that feature; `trimmed`: tools/build-sdl-min.ps1; Dawn `android`, `metal` (macOS and iOS), `ios`, `tint` (tools/build-tint.ps1, whose checkout is its own); LabSound `core-only`). native/patch-identity.cmake is the one reader: portfiles and builders take their series from it, builders record `<prefix>_SOURCE`, `<prefix>_PATCHES` (name=sha256 in order) and `<prefix>_VARIANTS` in the artifact's record file, and configure and doctor refuse an artifact whose record differs. `npm run patches:check` verifies files, headers, numbering and portfile coverage. Each owned patch file opens with its rationale; `upstream.state` is unsubmitted, open, merged, closed or vcpkg (the port's own patch, copied verbatim).",
+  "$comment": "Every upstream patch this repository applies, each library's in application order. Script-built libraries keep their patches here as <library>/NNNN-slug.patch, NNNN being the patch's position among its library's script-built patches; vcpkg overlay ports keep theirs in the port directory, whose bytes key each vcpkg install. `variants` selects the builds that apply a patch: `all`, or one of the library's variant tokens (`vcpkg`: the overlay portfile; a port feature's name: the portfile with that feature; `trimmed`: tools/build-sdl-min.ps1; Dawn `android`, `metal` (macOS and iOS), `ios`, `tint` (tools/build-tint.ps1, whose checkout is its own); LabSound `core-only`). native/patch-identity.cmake is the one reader: portfiles and builders take their series from it, builders record `<prefix>_SOURCE`, `<prefix>_PATCHES` (name=sha256 in order) and `<prefix>_VARIANTS` in the artifact's record file, and configure and doctor refuse an artifact whose record differs. `npm run patches:check` verifies files, headers, numbering and portfile coverage. Each owned patch file opens with its rationale; `upstream.state` is this repository's submission: unsubmitted, open, merged, closed (each of the last three with its `link`) or vcpkg (the port's own patch, copied verbatim); `related` links an upstream issue or pull request someone else opened about the same change.",
   "libraries": {
     "rmlui": {
       "pin": { "file": "upstream/rmlui.json", "field": "commit" },
@@ -47,7 +47,7 @@
       "library": "rmlui",
       "file": "native/patches/rmlui/0001-css-box-model.patch",
       "purpose": "Background painting, shadow bounds, shrink-to-fit and descendant bottom-margin collapse",
-      "upstream": { "state": "unsubmitted" },
+      "upstream": { "state": "closed", "link": "https://github.com/mikke89/RmlUi/issues/1005" },
       "variants": ["all"]
     },
     {
@@ -68,7 +68,7 @@
       "library": "rmlui",
       "file": "native/patches/rmlui/0004-fractional-letter-spacing.patch",
       "purpose": "Fractional advances",
-      "upstream": { "state": "unsubmitted" },
+      "upstream": { "state": "closed", "link": "https://github.com/mikke89/RmlUi/issues/1003" },
       "variants": ["all"]
     },
     {
@@ -201,7 +201,7 @@
       "library": "rmlui",
       "file": "native/patches/rmlui/0023-percentage-radius.patch",
       "purpose": "Border-box percentage radii, elliptical border geometry and shadow/outline radii",
-      "upstream": { "state": "unsubmitted" },
+      "upstream": { "state": "unsubmitted", "related": "https://github.com/mikke89/RmlUi/pull/962" },
       "variants": ["all"]
     },
     {
@@ -295,29 +295,22 @@
       "upstream": {
         "state": "merged",
         "link": "https://github.com/libsdl-org/SDL/pull/15838",
-        "retire": "Drop at the first SDL release carrying it; 3.4.16 does not."
+        "retire": "Drop at SDL 3.4.18: merged after 3.4.16 and cherry-picked to release-3.4.x."
       },
-      "variants": ["vcpkg", "trimmed"]
-    },
-    {
-      "library": "sdl3",
-      "file": "native/vcpkg-overlay-ports/sdl3/d3d12-multisample-lines.patch",
-      "purpose": "D3D12 MultisampleEnable for multisampled line pipelines",
-      "upstream": { "state": "closed", "link": "https://github.com/libsdl-org/SDL/pull/16183" },
       "variants": ["vcpkg", "trimmed"]
     },
     {
       "library": "sdl3",
       "file": "native/vcpkg-overlay-ports/sdl3/d3d12-descriptor-heaps.patch",
       "purpose": "D3D12 descriptor-heap rollover reserves complete bindings and republishes root tables",
-      "upstream": { "state": "unsubmitted" },
+      "upstream": { "state": "unsubmitted", "related": "https://github.com/libsdl-org/SDL/issues/16369" },
       "variants": ["vcpkg", "trimmed"]
     },
     {
       "library": "sdl3",
       "file": "native/vcpkg-overlay-ports/sdl3/d3d12-storage-array.patch",
       "purpose": "Opt-in whole-array D3D12 compute storage views with matching barriers",
-      "upstream": { "state": "unsubmitted" },
+      "upstream": { "state": "unsubmitted", "related": "https://github.com/libsdl-org/SDL/pull/15170" },
       "variants": ["vcpkg", "trimmed"]
     },
     {
@@ -329,28 +322,21 @@
     },
     {
       "library": "sdl3",
-      "file": "native/vcpkg-overlay-ports/sdl3/metal-fence-query.patch",
-      "purpose": "Metal fence queries report completion, not pending work",
-      "upstream": { "state": "unsubmitted" },
-      "variants": ["vcpkg", "trimmed"]
-    },
-    {
-      "library": "sdl3",
       "file": "native/vcpkg-overlay-ports/sdl3/gpu-timestamp-queries.patch",
       "purpose": "Optional GPU timestamp queries, implemented on the D3D12 direct queue",
-      "upstream": { "state": "unsubmitted" },
+      "upstream": { "state": "unsubmitted", "related": "https://github.com/libsdl-org/SDL/pull/15651" },
       "variants": ["vcpkg", "trimmed"]
     },
     {
       "library": "sdl3",
-      "file": "native/patches/sdl3/0009-static-no-dynapi.patch",
+      "file": "native/patches/sdl3/0001-static-no-dynapi.patch",
       "purpose": "Dynamic API off in the trimmed static SDL",
       "upstream": { "state": "unsubmitted" },
       "variants": ["trimmed"]
     },
     {
       "library": "sdl3",
-      "file": "native/patches/sdl3/0010-no-joystick-device-names.patch",
+      "file": "native/patches/sdl3/0002-no-joystick-device-names.patch",
       "purpose": "Unnamed keyboards and mice named without the gamepad table when joysticks are compiled out",
       "upstream": { "state": "unsubmitted" },
       "variants": ["trimmed"]
