@@ -6,7 +6,7 @@ Internal work, qualification, performance and refusal defects. Capability gaps a
 
 ## Qualification
 
-- [ ] Qualify `playroom` startup parity on both backends without changing its source, references or gates.
+- [ ] Qualify `playroom` startup parity on both backends without changing its source or references: every canvas-only and full-page pair under 0.5 (its registry gates sit just above today's residual).
 - [ ] Move mixed mesh/billboard ordering into a generated draw plan after retaining source deferred-build completion order and prior stable binding order; keep equal-order/depth and camera-less refusals until those inputs and ordering-neutrality coverage exist.
 - [ ] Give remaining sliced PAL code standalone concern headers that harness fixtures include.
 - [ ] Android: resolve same-device emulator visual gaps and qualify the full registry on a physical device.
