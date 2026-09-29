@@ -37,14 +37,14 @@ struct WindowScreenshotCheckpoint {
     std::string path;
 };
 
+/** `final_frame` is the frame the final screenshot waits for, in its own count. */
 std::vector<WindowScreenshotCheckpoint> window_screenshot_checkpoints(std::string_view source,
                                                                       const FrameOptions& options,
-                                                                      bool captures_engine_frames) {
+                                                                      long final_frame) {
     if (source.empty())
         return {};
-    if (options.screenshot_path.empty() || captures_engine_frames)
-        throw std::invalid_argument(
-            "BBLITE_SCREENSHOT_FRAMES requires BBLITE_SCREENSHOT and presentation-frame capture.");
+    if (options.screenshot_path.empty())
+        throw std::invalid_argument("BBLITE_SCREENSHOT_FRAMES requires BBLITE_SCREENSHOT.");
     const auto final_path = detail::utf8_file_path(options.screenshot_path);
     std::vector<WindowScreenshotCheckpoint> checkpoints;
     std::size_t begin = 0;
@@ -56,8 +56,7 @@ std::vector<WindowScreenshotCheckpoint> window_screenshot_checkpoints(std::strin
         const auto parsed = std::from_chars(token.data(), token.data() + token.size(), frame);
         if (token.empty() || token.front() < '0' || token.front() > '9' ||
             parsed.ec != std::errc{} || parsed.ptr != token.data() + token.size() ||
-            frame >= options.screenshot_frame ||
-            (!checkpoints.empty() && frame <= checkpoints.back().frame))
+            frame >= final_frame || (!checkpoints.empty() && frame <= checkpoints.back().frame))
             throw std::invalid_argument(
                 "BBLITE_SCREENSHOT_FRAMES requires ordered unique nonnegative integers before BBLITE_SCREENSHOT_FRAME.");
         auto path = final_path;
@@ -82,6 +81,16 @@ struct WindowEvent final : ExternalEvent {
 };
 struct WindowDomEvent final : ExternalEvent {
     std::shared_ptr<DomEventBatch> batch;
+};
+
+/**
+ * Focus the display resolved natively, such as a press on a control. The
+ * realm owns the document it publishes back, so it records this state; its
+ * listeners receive the focus and blur events on their own channel.
+ */
+struct WindowFocusEvent final : ExternalEvent {
+    UiElementHandle element;
+    bool visible = false;
 };
 /** Only pointer event structs are copied; SDL events containing pointers are
  * never admitted to the realm mailbox. */
@@ -835,9 +844,12 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
             }
             capture_frame_count = static_cast<std::uint64_t>(frame) + 1;
         }
-        const auto screenshot_checkpoints =
-            window_screenshot_checkpoints(environment_variable("BBLITE_SCREENSHOT_FRAMES"),
-                                          frame_options, capture_frame_count != 0);
+        // The final screenshot counts engine frames under engine-frame
+        // capture, presented frames otherwise; checkpoints count the same.
+        const long final_frame = capture_frame_count ? static_cast<long>(capture_frame_count - 1)
+                                                     : std::max(0L, frame_options.screenshot_frame);
+        const auto screenshot_checkpoints = window_screenshot_checkpoints(
+            environment_variable("BBLITE_SCREENSHOT_FRAMES"), frame_options, final_frame);
         for (const auto& checkpoint : screenshot_checkpoints) {
             std::filesystem::remove(detail::utf8_file_path(checkpoint.path));
             std::filesystem::remove(detail::utf8_file_path(checkpoint.path + ".build-stamp"));
@@ -919,6 +931,11 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
                             }
                             services->wake.notify_all();
                         });
+                        if (const auto* focus = dynamic_cast<WindowFocusEvent*>(packet.get())) {
+                            ui_record_focus(window_document_engine(), focus->element,
+                                            focus->visible);
+                            return;
+                        }
                         if (const auto* event = dynamic_cast<WindowDomEvent*>(packet.get())) {
                             event->batch->dispatch(window_document_engine(),
                                                    [](auto& callback, const auto& payload) {
@@ -1105,6 +1122,7 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
             };
             long presented = 0;
             bool final_screenshot_saved = false;
+            auto next_checkpoint = screenshot_checkpoints.begin();
             const bool trace_window =
                 runtime_trace_enabled() || environment_variable("BBLITE_WINDOW_TRACE") == "1";
             std::optional<EventLoop::Clock::time_point> next_repaint;
@@ -1155,7 +1173,16 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
                             continue;
                         }
                     }
+                    const auto focused = display.ui_focused_element;
+                    const bool focus_visible = display.ui_focus_visible;
                     const bool reaches_canvas = handle_ui_rml_event(*ui, event);
+                    if (display.ui_focused_element != focused ||
+                        display.ui_focus_visible != focus_visible) {
+                        auto focus = std::make_unique<WindowFocusEvent>();
+                        focus->element = display.ui_focused_element;
+                        focus->visible = display.ui_focus_visible;
+                        services->post_input(std::move(focus));
+                    }
                     // Complete synchronous native-default transactions,
                     // including any click, input or change events they posted.
                     if (!move)
@@ -1301,18 +1328,24 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
                     services->capture_ready->load() &&
                     std::all_of(frames.begin(), frames.end(),
                                 [](const auto& canvas) { return canvas.frame.capture_ready; });
-                const bool capture_ready =
-                    !final_screenshot_saved &&
-                    (capture_frame_count && !frames.empty()
-                         ? std::all_of(frames.begin(), frames.end(),
-                                       [&](const auto& canvas) {
-                                           return canvas.frame.sequence >= capture_frame_count;
-                                       })
-                         : presented >= std::max(0L, frame_options.screenshot_frame));
-                const auto checkpoint = std::find_if(
-                    screenshot_checkpoints.begin(), screenshot_checkpoints.end(),
-                    [presented](const auto& value) { return value.frame == presented; });
-                const bool checkpoint_ready = checkpoint != screenshot_checkpoints.end();
+                // Engine frames every canvas has rendered, or presented
+                // frames without engine-frame capture or canvases.
+                const bool engine_count = capture_frame_count && !frames.empty();
+                const std::uint64_t engine_frames =
+                    engine_count
+                        ? std::min_element(frames.begin(), frames.end(),
+                                           [](const auto& left, const auto& right) {
+                                               return left.frame.sequence < right.frame.sequence;
+                                           })
+                              ->frame.sequence
+                        : 0;
+                const auto frame_reached = [&](long frame) {
+                    return engine_count ? engine_frames > static_cast<std::uint64_t>(frame)
+                                        : presented >= frame;
+                };
+                const bool capture_ready = !final_screenshot_saved && frame_reached(final_frame);
+                const bool checkpoint_ready = next_checkpoint != screenshot_checkpoints.end() &&
+                                              frame_reached(next_checkpoint->frame);
                 const bool capture = canvases_ready && source_ready &&
                                      !frame_options.screenshot_path.empty() &&
                                      (capture_ready || checkpoint_ready);
@@ -1343,8 +1376,8 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
                     }
                     std::string screenshot_path;
                     if (capture)
-                        screenshot_path =
-                            checkpoint_ready ? checkpoint->path : frame_options.screenshot_path;
+                        screenshot_path = checkpoint_ready ? next_checkpoint->path
+                                                           : frame_options.screenshot_path;
                     const double present_started = cpu_profile ? monotonic_milliseconds() : 0;
                     did_present = presenter->present(
                         frames, canvas_capture ? *canvas_capture : recorded, screenshot_path);
@@ -1353,8 +1386,9 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
                     if (did_present && capture && checkpoint_ready) {
                         const std::string_view stamp = bblite_build_stamp();
                         detail::write_file_atomically(
-                            detail::utf8_file_path(checkpoint->path + ".build-stamp"), stamp,
+                            detail::utf8_file_path(next_checkpoint->path + ".build-stamp"), stamp,
                             stamp.size(), "Screenshot checkpoint build stamp");
+                        ++next_checkpoint;
                     }
                     if (did_present && capture && !checkpoint_ready)
                         final_screenshot_saved = true;
@@ -1391,7 +1425,7 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
                         std::cerr << trace.str();
                     }
                     ++presented;
-                    if (capture_frame_count ? capture
+                    if (capture_frame_count ? final_screenshot_saved
                                             : source_ready && frame_options.frame_budget() > 0 &&
                                                   presented >= frame_options.frame_budget())
                         running = false;

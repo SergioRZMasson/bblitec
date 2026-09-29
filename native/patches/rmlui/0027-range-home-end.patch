@@ -1,0 +1,18 @@
+Move a range input to its minimum on Home and its maximum on End, as browsers
+do for a focused slider.
+
+diff --git a/Source/Core/Elements/WidgetSlider.cpp b/Source/Core/Elements/WidgetSlider.cpp
+--- a/Source/Core/Elements/WidgetSlider.cpp
++++ b/Source/Core/Elements/WidgetSlider.cpp
+@@ -477,6 +477,11 @@ void WidgetSlider::ProcessEvent(Event& event)
+ 			SetBarPosition(decrement ? OnLineDecrement() : OnLineIncrement());
+ 			event.StopPropagation();
+ 		}
++		else if (key_identifier == Input::KI_HOME || key_identifier == Input::KI_END)
++		{
++			SetValue(key_identifier == Input::KI_HOME ? min_value : max_value);
++			event.StopPropagation();
++		}
+ 	}
+ 	break;
+ 

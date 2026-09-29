@@ -1,5 +1,10 @@
 {
-    "angles": ["reuse", "simplification", "efficiency", "altitude"],
+    "angles": [
+        "reuse",
+        "simplification",
+        "efficiency",
+        "altitude"
+    ],
     "findings": [
         {
             "summary": "Time compute tasks at the encoder the lowered pin calls: ComputeCommandEncoder's begin_compute_pass/begin_mipmap_pass and the pass encoders' end() push the pass's timestamps through a timed_pass hook, replacing time_compute_task_passes, which rebuilt each command list afterwards, merged adjacent source passes and skipped a pass that records no dispatch.",
@@ -82,6 +87,40 @@
         {
             "summary": "The timing sequence no longer copies the shadow task's label per graph layer: it holds its scene and reads the label when the task is recorded, where the source reads task.name.",
             "applied": true
+        },
+        {
+            "summary": "Ocean check follow-up: RmlUi's range Home/End goes through WidgetSlider::SetValue, which snaps to the step grid and sends no change event when the value does not move.",
+            "applied": true
+        },
+        {
+            "summary": "Ocean check follow-up: the display sends native focus and focus-visible to the realm as one WindowFocusEvent state packet, posted before it awaits the input, instead of the realm inferring focus from forwarded focus/blur events. It works without DOM listeners and leaves no gap between blur and focus.",
+            "applied": true
+        },
+        {
+            "summary": "Ocean check follow-up: one state-only ui_record_focus helper; ui_focus, ui_clear_focus and the realm share its focus bookkeeping instead of a copy.",
+            "applied": true
+        },
+        {
+            "summary": "Ocean check follow-up: one checkpoint rule for presented and engine frames (next_checkpoint iterator, frame_reached), with engine frames computed once per iteration; a presented-frame checkpoint whose frame passes while capture is not ready is taken late instead of lost.",
+            "applied": true
+        },
+        {
+            "summary": "Ocean check follow-up: restore the presented-frame fallback of engine-frame capture for a page without canvases, which otherwise never stopped.",
+            "applied": true
+        },
+        {
+            "summary": "Ocean check follow-up: BBLITE_SCREENSHOT_FRAMES is validated against the frame the final screenshot waits for (the engine capture frame when set), with a fixture case, and docs/debugging.md says an engine-frame checkpoint is taken at the first presentation with at least that many frames.",
+            "applied": true
+        },
+        {
+            "summary": "Ocean check follow-up: playroom's registry comment points at its docs/status.md row instead of repeating the numbers.",
+            "applied": true
+        },
+        {
+            "summary": "A native focus change makes the realm republish a full document snapshot instead of a text-only delta.",
+            "applied": false,
+            "blockedBy": "Declined: it happens once per input-time focus change, never per frame, and skipping it would need the realm's publish bookkeeping inside the input handler; no click-time cost has been measured.",
+            "filedIn": "docs/reviews (declined in this record)"
         }
     ]
 }
