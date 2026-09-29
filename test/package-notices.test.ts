@@ -412,7 +412,7 @@ test(
             );
             writeFileSync(
                 script,
-                `$ErrorActionPreference = 'Stop'\nImport-Module '${resolve("tools/bblite-tools.psm1")}' -Force\n$source = '${source}'\n$output = '${output}'\n$sdlVersion = '3.4.14'\n$EnableGamepad = $${gamepad}\n${composition}`,
+                `$ErrorActionPreference = 'Stop'\nImport-Module '${resolve("tools/bblite-tools.psm1")}' -Force\n$source = '${source}'\n$output = '${output}'\n$sdlVersion = '${(JSON.parse(readFileSync("native/vcpkg-overlay-ports/sdl3/vcpkg.json", "utf8")) as { version: string }).version}'\n$EnableGamepad = $${gamepad}\n${composition}`,
             );
             const result = spawnSync(
                 discoverDevelopmentTools().powershell!,

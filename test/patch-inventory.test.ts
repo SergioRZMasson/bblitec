@@ -70,11 +70,11 @@ test(
         ];
         assert.equal(trimmed.includes("fix-freebsd.patch"), false);
         assert.deepEqual(trimmed.slice(-5), [
-            "0009-static-no-dynapi.patch",
-            "0010-no-joystick-device-names.patch",
+            "0001-static-no-dynapi.patch",
+            "0002-no-joystick-device-names.patch",
             ...gpu,
         ]);
-        assert.equal(trimmed.length, 12);
+        assert.equal(trimmed.length, 10);
         const port = names("sdl3", ["vcpkg"]);
         assert.equal(port[0], "fix-freebsd.patch");
         assert.deepEqual(port.slice(-3), gpu);
@@ -269,7 +269,7 @@ test("patches:check reports orphans, missing files, headers, numbering and port 
                     join(root, "native/patches/demo/0002-first.patch"),
                 );
             },
-            /0002-first\.patch: its number is not its position 1 in the demo series/,
+            /0002-first\.patch: its number is not its position 1 among the demo script patches/,
         ],
         [
             "unknown variant",
