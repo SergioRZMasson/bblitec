@@ -3715,6 +3715,9 @@ struct UiRmlRuntime {
                 const auto& record = this->engine.ui_elements.at(target.element);
                 return !ui_activation_disabled(record);
             };
+            // A textarea resize is the browser's own gesture: a prevented
+            // release still ends it.
+            input.end_withheld_press = [this] { resizing = {}; };
 #endif
         } catch (...) {
             if (initialized) {
@@ -3732,6 +3735,7 @@ struct UiRmlRuntime {
             engine.dom_input->hit_path = {};
             engine.dom_input->focus_path = {};
             engine.dom_input->can_activate = {};
+            engine.dom_input->end_withheld_press = {};
         }
         if (initialized) {
             style_selectors.clear();
@@ -5713,7 +5717,6 @@ bool handle_ui_rml_event(UiRmlRuntime& runtime, SDL_Event& event) {
         }
         if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
             runtime.resizing = {};
-            SDL_CaptureMouse(false);
             return false;
         }
     }

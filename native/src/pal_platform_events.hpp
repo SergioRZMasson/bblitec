@@ -771,6 +771,26 @@ inline void update_tracked_mouse_button(const SDL_MouseButtonEvent& event) {
 }
 
 /**
+ * End the mouse capture a press requested before anything decides where its
+ * release goes. RmlUi's SDL backend and the textarea resize grip request
+ * SDL_CaptureMouse on a press; a prevented default or the pointer-lock filter
+ * can withhold the release from them, and SDL applies a request left standing
+ * whenever relative mode is off, sending every click, the window frame's
+ * included, to the client area.
+ */
+inline void end_press_mouse_capture(const SDL_Event& event) {
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP)
+        SDL_CaptureMouse(false);
+}
+
+/** A release whose default was prevented never reaches retained UI; end its press there. */
+inline void end_withheld_ui_press(Engine& engine, const SDL_Event& event) {
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && engine.dom_input &&
+        engine.dom_input->end_withheld_press)
+        engine.dom_input->end_withheld_press();
+}
+
+/**
  * Translate SDL's wheel distance into the pixel-mode delta a browser reports.
  *
  * SDL exposes wheel motion in scroll increments (one ordinary Windows mouse
@@ -1255,6 +1275,7 @@ inline void poll_platform_events(Engine& engine, bool& running, bool test_pass,
         if (test_pass && is_platform_input_event(event) && !is_replayed_ui_event(event)) {
             continue;
         }
+        end_press_mouse_capture(event);
         const auto batch = prepare_dom_platform_input(engine, event);
         if (batch) {
             dispatch_dom_batch(engine, batch);
@@ -1268,6 +1289,7 @@ inline void poll_platform_events(Engine& engine, bool& running, bool test_pass,
             if (batch->default_prevented) {
                 if (event.type == SDL_EVENT_MOUSE_BUTTON_UP)
                     engine.canvas_click_armed = false;
+                end_withheld_ui_press(engine, event);
                 continue;
             }
         }
