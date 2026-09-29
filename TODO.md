@@ -16,9 +16,9 @@ Internal work, qualification, performance and refusal defects. Capability gaps a
 
 ## Performance
 
-- [ ] `playroom`: bound remaining loading-timer gaps during source initialization and environment preparation; sustain interactive frame pacing after impact.
-- [ ] `minecraft`: worst frame of a chunk-crossing sprint replay at most 16.7 ms (`BBLITE_FPS_PROFILE` maximum interval), with meshing, lighting, water settling and allocation attributed separately (`BBLITE_CPU_PROFILE`).
-- [ ] `scene290`: at least 100 FPS uncapped through impact and settling (`BBLITE_BENCHMARK_FRAMES=0`, `BBLITE_FPS_PROFILE`); Bullet stepping is the bottleneck (`pal_physics_bullet.cpp`).
+- [ ] `playroom`: bound the loading-timer gaps of the synchronous world-build task (Bullet world construction) and of the first rendered frame (first Bullet step; SDL_GPU first-use uniform-buffer and pipeline costs); sustain interactive frame pacing after impact. Its texture decodes run one at a time behind `image_decoder_mutex`, because SDL_image's codec initializers update unsynchronized state on every load; an atomic initialization in the `sdl3-image` overlay port would let the native workers decode them in parallel.
+- [ ] `scene290`: at least 100 FPS uncapped through impact and settling (`BBLITE_BENCHMARK_FRAMES=0`, `BBLITE_FPS_PROFILE`, the `scene290-live` twin); settling holds it on both backends, but one-second windows during impact still fall below it in some runs, with Bullet stepping the bottleneck (`pal_physics_bullet.cpp`).
+- [ ] `minecraft`: worst frame of a chunk-crossing sprint replay (`-,+ShiftLeft,+KeyW,+Space`) at most 16.7 ms (`BBLITE_FPS_PROFILE` maximum interval); the scene's meshing and voxel-light floods dominate it (`BBLITE_SOURCE_PROFILE=meshChunk,WorldLight.compute,WorldLight.warmFor,WaterSim.settleChunk,generateChunk,ChunkRenderer.buildChunk,ChunkRenderer.processQueue`, [debugging](docs/debugging.md)).
 
 ## Dependencies
 

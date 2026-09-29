@@ -26,6 +26,10 @@ import { CompileError } from "./compile-error.js";
 import { nullability, typeCanCarryReference } from "./type-facts.js";
 import { arrayReturnStorage } from "./array-return-storage.js";
 import {
+    functionBodyPrologue,
+    type RecentStringsParameter,
+} from "./recent-strings.js";
+import {
     cppIdentifierPattern,
     sanitizeCppIdentifier,
 } from "../cpp-literals.js";
@@ -66,6 +70,7 @@ import {
     isUpdateExpression,
     mutatingCallTarget,
     rootIdentifier,
+    sourceFunctionName,
     unwrapExpression,
     argumentAt,
 } from "./syntax.js";
@@ -1069,6 +1074,11 @@ interface UserFunctionIr {
     returnNeedsSnapshot?: boolean;
 }
 
+/** The function a refusal names: its source name, else the lowering's hint (`callback`). */
+function refusalName(ir: UserFunctionIr): string {
+    return sourceFunctionName(ir.declaration) ?? ir.name;
+}
+
 /** A value record cannot represent an alias into a retained native object. */
 class SharedCallRequiresInline extends Error {}
 
@@ -1243,6 +1253,7 @@ export interface UserFunctionContext
             | "registerNativeTemporary"
             | "nativeEmission"
             | "captureManagedClosureLines"
+            | "sourceProfileScopeDeclarations"
             | "callbackIdentity"
             | "emit"
             | "increaseIndent"
@@ -3389,7 +3400,7 @@ export class UserFunctionLowerer {
         context.bindings.pushScope(context.allocateUserFunctionPrefix());
         try {
             const parameterDeclarations: string[] = [];
-            const parameterNames: string[] = [];
+            const runtimeParameters: RecentStringsParameter[] = [];
             const parameterBindings: Array<{
                 parameter: UserFunctionParameterIr;
                 value: Value;
@@ -3459,12 +3470,18 @@ export class UserFunctionLowerer {
                     return;
                 }
                 const cppName = `${parameterPrefix}recursive_arg_${runtimeIndex++}`;
-                parameterNames.push(cppName);
                 const borrowedReference = borrowsReferenceParameter(
                     context,
                     parameter.name,
                     type,
                 );
+                runtimeParameters.push({
+                    name: cppName,
+                    type,
+                    byReference:
+                        passesByReference(context.dataTypes, type) ||
+                        borrowedReference,
+                });
                 const parameterType = this.recursiveParameterCpp(
                     context.dataTypes,
                     type,
@@ -3550,103 +3567,141 @@ export class UserFunctionLowerer {
                             (type) => type?.kind === "json",
                         ),
                     () =>
-                        context.captureManagedClosureLines(() => {
-                            if (localGroup?.self) {
-                                const binding = context.registerNativeBinding(
-                                    localGroup.self.name,
-                                    true,
-                                );
-                                for (const [
-                                    index,
-                                    value,
-                                ] of localGroup.self.values.entries()) {
-                                    writable(value).cpp =
-                                        `${localGroup.self.name}.template call<${index}>`;
-                                    writable(value).nativeCaptures = [binding];
-                                }
-                            }
-                            for (const {
-                                parameter,
-                                value,
-                                compileTime,
-                            } of parameterBindings) {
-                                if (
-                                    value.nativeBinding &&
-                                    parameterNames.includes(value.cpp)
-                                ) {
-                                    writable(value).nativeCaptures = [
+                        context.captureManagedClosureLines(
+                            () => {
+                                if (localGroup?.self) {
+                                    const binding =
                                         context.registerNativeBinding(
-                                            value.cpp,
+                                            localGroup.self.name,
                                             true,
-                                        ),
-                                    ];
-                                }
-                                if (
-                                    compileTime &&
-                                    ts.isIdentifier(parameter.name)
-                                ) {
-                                    context.bindings.bindCompileTimeValue(
-                                        parameter.name,
+                                        );
+                                    for (const [
+                                        index,
                                         value,
-                                    );
-                                    continue;
+                                    ] of localGroup.self.values.entries()) {
+                                        writable(value).cpp =
+                                            `${localGroup.self.name}.template call<${index}>`;
+                                        writable(value).nativeCaptures = [
+                                            binding,
+                                        ];
+                                    }
                                 }
-                                this.bindSpecializedParameter(
-                                    context,
-                                    entry.declaration,
+                                for (const {
                                     parameter,
                                     value,
-                                );
-                            }
-                            const body = entry.declaration.body;
-                            if (!body) {
-                                context.fail(
-                                    entry.declaration,
-                                    "Recursive function requires a body.",
-                                );
-                            }
-                            if (ts.isBlock(body)) {
-                                let terminated = false;
-                                for (const statement of body.statements) {
+                                    compileTime,
+                                } of parameterBindings) {
                                     if (
-                                        ts.isReturnStatement(statement) &&
-                                        statement.expression &&
-                                        ts.isIdentifier(statement.expression)
+                                        value.nativeBinding &&
+                                        runtimeParameters.some(
+                                            (parameter) =>
+                                                parameter.name === value.cpp,
+                                        )
                                     ) {
-                                        returnMetadata =
-                                            context.bindings.lookupOptional(
-                                                statement.expression,
-                                            );
+                                        writable(value).nativeCaptures = [
+                                            context.registerNativeBinding(
+                                                value.cpp,
+                                                true,
+                                            ),
+                                        ];
                                     }
-                                    context.emitStatement(statement);
-                                    terminated =
-                                        context.statementTerminatesAfterLowering(
-                                            statement,
+                                    if (
+                                        compileTime &&
+                                        ts.isIdentifier(parameter.name)
+                                    ) {
+                                        context.bindings.bindCompileTimeValue(
+                                            parameter.name,
+                                            value,
                                         );
-                                    if (terminated) break;
+                                        continue;
+                                    }
+                                    this.bindSpecializedParameter(
+                                        context,
+                                        entry.declaration,
+                                        parameter,
+                                        value,
+                                    );
                                 }
-                                // An exhaustive source switch may lower to a
-                                // native if/else chain; keep its impossible
-                                // fallthrough defined.
-                                if (!terminated && entry.returnType)
-                                    context.emit({
-                                        kind: "control",
-                                        code: 'throw std::runtime_error("Native value function fell through without returning.");',
-                                        transfer: "throw",
-                                    });
-                            } else {
-                                if (!entry.returnType) {
-                                    context.emitExpressionAsStatement(body);
+                                const body = entry.declaration.body;
+                                if (!body) {
+                                    context.fail(
+                                        entry.declaration,
+                                        "Recursive function requires a body.",
+                                    );
+                                }
+                                if (ts.isBlock(body)) {
+                                    let terminated = false;
+                                    for (const statement of body.statements) {
+                                        if (
+                                            ts.isReturnStatement(statement) &&
+                                            statement.expression &&
+                                            ts.isIdentifier(
+                                                statement.expression,
+                                            )
+                                        ) {
+                                            returnMetadata =
+                                                context.bindings.lookupOptional(
+                                                    statement.expression,
+                                                );
+                                        }
+                                        context.emitStatement(statement);
+                                        terminated =
+                                            context.statementTerminatesAfterLowering(
+                                                statement,
+                                            );
+                                        if (terminated) break;
+                                    }
+                                    // An exhaustive source switch may lower to a
+                                    // native if/else chain; keep its impossible
+                                    // fallthrough defined.
+                                    if (!terminated && entry.returnType)
+                                        context.emit({
+                                            kind: "control",
+                                            code: 'throw std::runtime_error("Native value function fell through without returning.");',
+                                            transfer: "throw",
+                                        });
                                 } else {
-                                    context.emit({
-                                        kind: "control",
-                                        code: `return ${compileReturn ? compileReturn(body, entry.returnType) : context.compileForDataSink(body, entry.returnType)};`,
-                                        transfer: "return",
-                                    });
+                                    if (!entry.returnType) {
+                                        context.emitExpressionAsStatement(body);
+                                    } else {
+                                        context.emit({
+                                            kind: "control",
+                                            code: `return ${compileReturn ? compileReturn(body, entry.returnType) : context.compileForDataSink(body, entry.returnType)};`,
+                                            transfer: "return",
+                                        });
+                                    }
                                 }
-                            }
-                        }, !escapes),
+                                // A shared body's environment is built at each
+                                // call and released when it returns, unless a
+                                // member escapes as a value: a stored closure
+                                // would outlive the caller's bindings.
+                            },
+                            localGroup?.sharedName !== undefined && !escapes
+                                ? "call"
+                                : !escapes,
+                        ),
                 );
+                // A body closing over nothing, with no generation-time
+                // parameter, answers from its runtime parameters alone.
+                const prologue = functionBodyPrologue(
+                    context,
+                    entry.declaration,
+                    entry.returnType,
+                    captured.nativeCaptures.length === 0 &&
+                        runtimeParameters.length === entry.ir.parameters.length
+                        ? runtimeParameters
+                        : undefined,
+                    captured.lines,
+                );
+                if (prologue.locals.length > 0)
+                    captured = {
+                        ...captured,
+                        lines: prologue.lines,
+                        localBindings: [
+                            ...captured.localBindings,
+                            ...prologue.locals,
+                        ],
+                    };
                 if (
                     returnedValues.length > 0 &&
                     isHandleKind(returnedValues[0]!.kind)
@@ -3728,7 +3783,9 @@ export class UserFunctionLowerer {
                         ],
                         [
                             ...captured.localBindings,
-                            ...parameterNames,
+                            ...runtimeParameters.map(
+                                (parameter) => parameter.name,
+                            ),
                             captured.environment,
                             localGroup.self.name,
                         ],
@@ -3741,7 +3798,7 @@ export class UserFunctionLowerer {
                     returnCpp,
                     entry.declaration,
                     parameterDeclarations.join(", "),
-                    parameterNames,
+                    runtimeParameters.map((parameter) => parameter.name),
                     localGroup.sharedName,
                 );
                 writable(entry.value).nativeCaptures = captured.nativeCaptures;
@@ -3916,7 +3973,7 @@ export class UserFunctionLowerer {
         ) {
             context.fail(
                 declaration,
-                `Callback '${ir.name}' declares more parameters than the operation supplies.`,
+                `Callback '${refusalName(ir)}' declares more parameters than the operation supplies.`,
             );
         }
         const values = arguments_.slice(0, ir.parameters.length);
@@ -4010,7 +4067,7 @@ export class UserFunctionLowerer {
         if (this.loweringStoredDataFunctions.has(declaration)) {
             context.fail(
                 expression,
-                `Stored function '${storedFunctionName(declaration)}' re-enters its own lowering; its storage cannot serve this use's signature.`,
+                `Stored function '${sourceFunctionName(declaration) ?? "(anonymous)"}' re-enters its own lowering; its storage cannot serve this use's signature.`,
             );
         }
         this.loweringStoredDataFunctions.add(declaration);
@@ -4510,7 +4567,7 @@ export class UserFunctionLowerer {
         if (this.active.has(ir.declaration)) {
             context.fail(
                 callNode,
-                `Recursive call to '${ir.name}' is not supported.`,
+                `Recursive call to '${refusalName(ir)}' is not supported.`,
             );
         }
         this.active.add(ir.declaration);
@@ -5260,7 +5317,7 @@ export class UserFunctionLowerer {
         if (!type) {
             context.fail(
                 callNode,
-                `Function '${ir.name}' uses early value returns but its return type is outside the native data model.`,
+                `Function '${refusalName(ir)}' uses early value returns but its return type is outside the native data model.`,
             );
         }
         return context.dataTypes.ownReturnedArray(type);
@@ -5314,7 +5371,7 @@ export class UserFunctionLowerer {
         ) {
             fail(
                 call,
-                `Function '${ir.name}' expects ${minimum}-${ir.parameters.length} arguments, received ${call.arguments.length}.`,
+                `Function '${refusalName(ir)}' expects ${minimum}-${ir.parameters.length} arguments, received ${call.arguments.length}.`,
             );
         }
         // A generic declaration's parameters are typed in its own
@@ -5371,7 +5428,7 @@ export class UserFunctionLowerer {
             ) {
                 fail(
                     argument,
-                    `Argument ${index + 1} of '${ir.name}' is ${this.checker.typeToString(argumentType)}, not ${this.checker.typeToString(parameterType)}.`,
+                    `Argument ${index + 1} of '${refusalName(ir)}' is ${this.checker.typeToString(argumentType)}, not ${this.checker.typeToString(parameterType)}.`,
                 );
             }
         });
@@ -5653,23 +5710,4 @@ ${lines.map((line) => `    ${line}\n`).join("")}    return ${fallback};
         );
         return context.dataTypes.withTypeArguments(substitution, work);
     }
-}
-
-/** The source name a stored function is known by, for diagnostics. */
-function storedFunctionName(declaration: SupportedFunction): string {
-    if (
-        (ts.isFunctionDeclaration(declaration) ||
-            ts.isMethodDeclaration(declaration)) &&
-        declaration.name &&
-        ts.isIdentifier(declaration.name)
-    ) {
-        return declaration.name.text;
-    }
-    if (
-        ts.isVariableDeclaration(declaration.parent) &&
-        ts.isIdentifier(declaration.parent.name)
-    ) {
-        return declaration.parent.name.text;
-    }
-    return "(anonymous)";
 }

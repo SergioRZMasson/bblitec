@@ -4,6 +4,7 @@ import {
     nativeDataMetadata,
     objectTruthinessCpp,
     optionalPresentCpp,
+    optionalValueCpp,
     presenceFlagCpp,
     statedTruthinessCpp,
     staticStringValue,
@@ -118,6 +119,18 @@ const resizedSymbolsByChecker = new EmissionWeakMap<
     ts.TypeChecker,
     WeakMap<ts.SourceFile, ReadonlySet<ts.Symbol>>
 >();
+
+/**
+ * A native owner a binding names -- a local or parameter, a cell's value, or
+ * the present value of an optional local -- rather than a temporary.
+ */
+function namesStableOwner(owner: Value): boolean {
+    return (
+        owner.sharedStorageCpp !== undefined ||
+        owner.stableOwnerCpp !== undefined ||
+        cppIdentifierPattern.test(owner.cpp)
+    );
+}
 
 /**
  * Resizing methods, rebinding, length writes and call arguments invalidate a
@@ -1921,7 +1934,7 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
 
     private presentOptionalValue(value: Value, inner: DataType): Value {
         const present = withNativeMetadata(
-            this.leafValue(`(*${value.cpp})`, inner),
+            this.leafValue(optionalValueCpp(value.cpp), inner),
             value,
         );
         writable(present).nativeLvalue = true;
@@ -2802,6 +2815,25 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
         };
     }
 
+    /**
+     * Whether an element access's index can observe or change what its owner
+     * expression evaluates. JavaScript evaluates the owner first; an index that
+     * runs code emits its statements ahead of an owner that stays an
+     * expression, so the owner is read into a temporary first when the two
+     * touch the same storage and one writes it (`EvaluationOrder`). An index
+     * that runs only code touching nothing the owner touches -- a pure helper
+     * over locals -- reads the same element in either order.
+     */
+    private indexMayChangeOwner(access: ts.ElementAccessExpression): boolean {
+        return (
+            expressionMayRunCode(access.argumentExpression) &&
+            this.context.evaluationOrder.operandsToPin([
+                access.expression,
+                access.argumentExpression,
+            ])[0] === true
+        );
+    }
+
     private elementRead(
         ownerValue: Value,
         access: ts.ElementAccessExpression,
@@ -2821,7 +2853,7 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
         }
         if (
             (dataType.kind === "vector" || dataType.kind === "tuple") &&
-            expressionMayRunCode(access.argumentExpression)
+            this.indexMayChangeOwner(access)
         ) {
             const receiver =
                 this.context.allocateTemporaryCppName("indexed_array");
@@ -3129,11 +3161,10 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
         }
         const ownedRead = owner.freshData && mode === "read";
         // Index calls, getters and mutations can replace the array binding.
-        // Scalar arithmetic over locals cannot, so ordinary counted accesses
-        // need no extra wrapper copy before their index is evaluated.
+        // Scalar arithmetic over locals and pure helpers cannot, so those
+        // accesses need no extra wrapper copy before their index is evaluated.
         const typedIndexRunsCode =
-            isTypedArrayType(dataType) &&
-            expressionMayRunCode(access.argumentExpression);
+            isTypedArrayType(dataType) && this.indexMayChangeOwner(access);
         const retainedIndexOwner = ownedRead || typedIndexRunsCode;
         let index = "";
         const compileIndex = (): void => {
@@ -3245,11 +3276,21 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
             // element lvalue and record the storage so assignment inserts
             // the exact conversion (fround for f32, ToUint32 for u32).
             if (mode === "write") {
+                // A named owner (a local, parameter or cell) outlives the
+                // statement; the assignment decides whether its right-hand
+                // side can replace or release it before the store.
+                const borrowedStoreCpp =
+                    !retainedIndexOwner && namesStableOwner(owner)
+                        ? proven
+                            ? `bbl::js::typed_array_borrowed_slot(${owner.cpp}, ${nativeIndex})`
+                            : `bbl::js::array_store_borrowed(${owner.cpp}, ${index}, ${site()})`
+                        : undefined;
                 return {
                     kind: "number",
                     cpp: indexed,
                     dataType: { kind: "number" },
                     dataStore: dataType.kind,
+                    ...(borrowedStoreCpp ? { borrowedStoreCpp } : {}),
                 };
             }
             return {
@@ -8384,7 +8425,13 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                     kind: "declaration",
                     type: "auto&&",
                     name: targetCpp,
-                    initializer: target.cpp,
+                    initializer:
+                        target.borrowedStoreCpp !== undefined &&
+                        !this.context.evaluationOrder.writesStorage(
+                            expression.right,
+                        )
+                            ? target.borrowedStoreCpp
+                            : target.cpp,
                 });
                 if (operator !== "=") {
                     previous =

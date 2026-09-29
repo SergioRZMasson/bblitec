@@ -3,9 +3,16 @@
 // activation macros, so it compiles once for every scene whose macros agree.
 #include <bblite/features/device_recovery.hpp>
 #include <bblite/features/has_audio.hpp>
+#include <bblite/features/source_profile.hpp>
 #include <bblite/features/workers.hpp>
 
 #include "pal_gpu_frame.hpp"
+
+#include <bblite/pal_texture_texels.hpp>
+
+#if BBLITE_SOURCE_PROFILE
+#include <bblite/source_profile.hpp>
+#endif
 
 namespace bbl::pal {
 
@@ -101,11 +108,21 @@ void run_animation_frame_callbacks(Engine& engine) {
     }
 }
 
+namespace {
+/** Restart the frame's source-profile records (bblite/source_profile.hpp). */
+void begin_profiled_frame() {
+#if BBLITE_SOURCE_PROFILE
+    profile::begin_frame();
+#endif
+}
+} // namespace
+
 double advance_frame(Engine& engine, Scene& scene, FrameClock& frame_clock, double frame_delta_ms) {
     if (engine.stopped) {
         engine.current_delta_ms = 0.0;
         return 0.0;
     }
+    begin_profiled_frame();
     const double delta_ms = frame_clock.advance(frame_delta_ms);
     engine.current_delta_ms = delta_ms;
     run_animation_frame_callbacks(engine);
@@ -147,6 +164,7 @@ double advance_frame(Engine& engine, FrameClock& frame_clock, double frame_delta
         engine.current_delta_ms = 0.0;
         return 0.0;
     }
+    begin_profiled_frame();
     const double delta_ms = frame_clock.advance(frame_delta_ms);
     engine.current_delta_ms = delta_ms;
     run_animation_frame_callbacks(engine);
@@ -159,6 +177,7 @@ double advance_frame(Engine& engine, FrameGraphContext& context, FrameClock& fra
         engine.current_delta_ms = 0.0;
         return 0.0;
     }
+    begin_profiled_frame();
     const double delta_ms = frame_clock.advance(frame_delta_ms);
     engine.current_delta_ms = delta_ms;
     run_animation_frame_callbacks(engine);
@@ -172,10 +191,19 @@ double advance_frame(Engine& engine, FrameGraphContext& context, FrameClock& fra
 void finish_frame(Engine& engine) {
     if (engine.drain_material_jobs)
         engine.drain_material_jobs(engine);
+    // Loads that settled before this boundary had their frame to hand their
+    // texels to a reader; later readers decode their files again.
+    release_loaded_texels(engine);
 #if BBLITE_DEVICE_RECOVERY
     complete_device_recovery(engine);
 #endif
+#if BBLITE_SOURCE_PROFILE
+    const std::uint64_t collection_start = profile::ticks();
+#endif
     js::collect_at_frame_boundary();
+#if BBLITE_SOURCE_PROFILE
+    profile::allocation_totals.collection_ticks += profile::ticks() - collection_start;
+#endif
     if (engine.stopped)
         return;
     engine.animation_frame_after_render = true;
@@ -235,6 +263,9 @@ void print_cpu_frame_profile(long frame, double total_ms, double acquire_ms, dou
     line << " encode_submit_ms=" << encode_submit_ms << " render_items=" << render_items
          << " draw_commands=" << draw_commands << '\n';
     std::fputs(line.str().c_str(), stderr);
+#if BBLITE_SOURCE_PROFILE
+    profile::report_frame(frame);
+#endif
 }
 
 void MemoryProfile::print(long frame, const bbl::Engine& engine, std::size_t scene_meshes,

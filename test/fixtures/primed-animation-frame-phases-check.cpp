@@ -1,6 +1,7 @@
 #define main generated_main
 #include "primed.hpp"
 #undef main
+#include <bblite/pal_texture_texels.hpp>
 #include <cassert>
 
 namespace bbl {

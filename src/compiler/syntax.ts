@@ -413,6 +413,44 @@ export function isDeclaredInside(
     );
 }
 
+/**
+ * The name a source function is known by in refusals, the survey census and
+ * `--source-profile`: its own name, qualified by its class for a class member
+ * (`WorldLight.compute`, `Keys.of`), `constructor` for a constructor, or the
+ * variable or property an unnamed function is bound to. Undefined for a
+ * function with none.
+ */
+export function sourceFunctionName(
+    declaration: ts.SignatureDeclaration,
+): string | undefined {
+    const parent = declaration.parent;
+    const name = ts.isConstructorDeclaration(declaration)
+        ? "constructor"
+        : declarationNameText(
+              ts.getNameOfDeclaration(declaration) ??
+                  (ts.isPropertyDeclaration(parent) ? parent.name : undefined),
+          );
+    if (name === undefined) return undefined;
+    const member = ts.isPropertyDeclaration(parent) ? parent : declaration;
+    const owner = ts.isClassLike(member.parent)
+        ? member.parent.name?.text
+        : undefined;
+    return owner === undefined ? name : `${owner}.${name}`;
+}
+
+/** The text a declaration's name is written as; a computed name keeps its brackets. */
+function declarationNameText(
+    name: ts.DeclarationName | undefined,
+): string | undefined {
+    if (!name) return undefined;
+    return ts.isIdentifier(name) ||
+        ts.isPrivateIdentifier(name) ||
+        ts.isStringLiteralLike(name) ||
+        ts.isNumericLiteral(name)
+        ? name.text
+        : name.getText();
+}
+
 /** The expression of a concise body or a block consisting only of a return. */
 export function soleReturnedExpression(
     body: ts.ConciseBody,

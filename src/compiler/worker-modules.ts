@@ -209,6 +209,9 @@ export function compileWorkerApplication(
         features,
         sourceUnits.map(({ path }) => path),
     );
+    const sourceProfileScopes = new EmissionSet(
+        results.flatMap((result) => result.sourceProfileScopes ?? []),
+    );
     return {
         cpp: results.map((result) => result.cpp).join("\n"),
         cppFiles,
@@ -218,6 +221,9 @@ export function compileWorkerApplication(
         ),
         ...(rendering.nodeParticles
             ? { nodeParticles: rendering.nodeParticles }
+            : {}),
+        ...(sourceProfileScopes.size > 0
+            ? { sourceProfileScopes: [...sourceProfileScopes] }
             : {}),
         manifest: {
             ...rendering.manifest,

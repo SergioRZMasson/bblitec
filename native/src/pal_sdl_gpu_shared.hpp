@@ -38,6 +38,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -902,6 +903,108 @@ private:
     std::unique_ptr<std::uint8_t[]> bytes_;
     std::size_t bytes_size_ = 0;
     std::size_t bytes_capacity_ = 0;
+};
+
+/**
+ * Mesh buffers a scene released, kept for its next upload of the same use.
+ *
+ * SDL_GPU's D3D12 backend commits a driver resource for every buffer, so a
+ * scene that streams meshes -- retiring some and building others every
+ * frame -- paid that allocation for each vertex, index and instance buffer
+ * it built. A buffer made here is instead kept on release, a bounded few at
+ * a time, and handed to the next upload of the same usage whose bytes fill
+ * at least four fifths of it. A buffer a shader may read as storage is
+ * handed only to an upload of exactly its size, since a shader can read a
+ * storage buffer's length; vertex and index reads stop at the draw's own
+ * counts, so the tail an upload leaves unwritten is never read. The rewrite
+ * cycles, so a submit still reading the previous contents keeps them.
+ */
+class SdlKeptBuffers {
+public:
+    // Room for one past the bound, so `release` never allocates.
+    SdlKeptBuffers() { kept_.reserve(kept_limit + 1); }
+
+    /** A buffer holding `size` bytes of `data`: a kept one rewritten, or a new one. */
+    SDL_GPUBuffer* upload(GpuBufferUploadBatch& uploads, SDL_GPUBufferUsageFlags usage,
+                          const void* data, std::size_t size) {
+        if (!closed_ && size > 0) {
+            const bool sized_by_shader =
+                (usage & ~(SDL_GPU_BUFFERUSAGE_VERTEX | SDL_GPU_BUFFERUSAGE_INDEX)) != 0;
+            auto best = kept_.end();
+            std::size_t best_capacity = 0;
+            for (auto candidate = kept_.begin(); candidate != kept_.end(); ++candidate) {
+                const Shape& shape = shapes_.at(*candidate);
+                const bool fits = shape.usage == usage && shape.capacity >= size &&
+                                  (sized_by_shader ? shape.capacity == size
+                                                   : size >= shape.capacity - shape.capacity / 5);
+                if (fits && (best == kept_.end() || shape.capacity < best_capacity)) {
+                    best = candidate;
+                    best_capacity = shape.capacity;
+                }
+            }
+            if (best != kept_.end()) {
+                SDL_GPUBuffer* buffer = *best;
+                kept_.erase(best);
+                kept_bytes_ -= best_capacity;
+                uploads.update(buffer, data, size);
+                return buffer;
+            }
+        }
+        SDL_GPUBuffer* buffer = uploads.upload(usage, data, size);
+        if (!closed_)
+            shapes_.insert_or_assign(buffer, Shape{usage, size});
+        return buffer;
+    }
+
+    /** Release a buffer: one made by `upload` is kept while there is room. */
+    void release(SDL_GPUDevice* device, SDL_GPUBuffer* buffer) noexcept {
+        if (!buffer)
+            return;
+        const auto shape = shapes_.find(buffer);
+        if (shape == shapes_.end()) {
+            SDL_ReleaseGPUBuffer(device, buffer);
+            return;
+        }
+        kept_.push_back(buffer);
+        kept_bytes_ += shape->second.capacity;
+        while (kept_.size() > kept_limit || kept_bytes_ > kept_bytes_limit) {
+            SDL_GPUBuffer* oldest = kept_.front();
+            kept_.erase(kept_.begin());
+            const auto oldest_shape = shapes_.find(oldest);
+            kept_bytes_ -= oldest_shape->second.capacity;
+            shapes_.erase(oldest_shape);
+            SDL_ReleaseGPUBuffer(device, oldest);
+        }
+    }
+
+    /**
+     * Release every kept buffer and keep no more: the device is going
+     * away, and buffers still owned elsewhere are released directly.
+     */
+    void clear(SDL_GPUDevice* device) {
+        for (SDL_GPUBuffer* buffer : kept_)
+            SDL_ReleaseGPUBuffer(device, buffer);
+        kept_.clear();
+        kept_bytes_ = 0;
+        shapes_.clear();
+        closed_ = true;
+    }
+
+private:
+    struct Shape {
+        SDL_GPUBufferUsageFlags usage = 0;
+        std::size_t capacity = 0;
+    };
+    // Enough for the meshes a streaming frame retires, and a bound on the
+    // device memory held for reuse.
+    static constexpr std::size_t kept_limit = 64;
+    static constexpr std::size_t kept_bytes_limit = std::size_t{32} << 20;
+    // Every live or kept buffer `upload` made, with its usage and size.
+    std::unordered_map<SDL_GPUBuffer*, Shape> shapes_;
+    // Released buffers, oldest first.
+    std::vector<SDL_GPUBuffer*> kept_;
+    std::size_t kept_bytes_ = 0;
+    bool closed_ = false;
 };
 
 inline SDL_GPUSampler* create_texture_sampler(SDL_GPUDevice* device,

@@ -10,7 +10,7 @@ std::string asset_path(std::string_view) {
 }
 std::string environment_variable(const char*) { return {}; }
 double performance_milliseconds() { return 0; }
-void update_window_document() {}
+void update_window_document(bool) {}
 Engine& window_document_engine() {
     static Engine document;
     return document;

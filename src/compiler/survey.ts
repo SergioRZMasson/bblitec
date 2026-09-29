@@ -19,7 +19,7 @@ import ts from "typescript";
 import { CompileError } from "./compile-error.js";
 import { declaredSymbol } from "./symbols.js";
 import { sourceLocation, syntaxKindName } from "../source-location.js";
-import { statementDeclaredNames } from "./syntax.js";
+import { sourceFunctionName, statementDeclaredNames } from "./syntax.js";
 
 interface SurveySite {
     file: string;
@@ -96,14 +96,9 @@ function enclosingFunctionName(statement: ts.Statement): string {
         statement.parent,
         (node) => ts.isFunctionLike(node) || ts.isSourceFile(node),
     );
-    if (!owner || ts.isSourceFile(owner)) return "<module>";
-    const name = ts.getNameOfDeclaration(owner);
-    if (name) return name.getText();
-    if (ts.isConstructorDeclaration(owner)) return "constructor";
-    return ts.isVariableDeclaration(owner.parent) &&
-        ts.isIdentifier(owner.parent.name)
-        ? owner.parent.name.text
-        : "<anonymous>";
+    return owner && ts.isFunctionLike(owner)
+        ? (sourceFunctionName(owner) ?? "<anonymous>")
+        : "<module>";
 }
 
 export class SurveyCollector {

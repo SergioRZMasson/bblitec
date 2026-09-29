@@ -18,7 +18,10 @@ import {
 } from "./gltf-mesh-fixture.js";
 import { LoweringContext } from "../src/lowering/context.js";
 import { GltfLowerer } from "../src/lowering/gltf/loader.js";
-import { gltfIblLoadingCpp } from "../src/lowering/gltf/ibl.js";
+import {
+    gltfIblBrdfLutCpp,
+    gltfIblLoadingCpp,
+} from "../src/lowering/gltf/ibl.js";
 import { lowerGltfAssetSceneSetup } from "../src/lowering/gltf/asset-scene-setup.js";
 import {
     cppFunction,
@@ -410,6 +413,10 @@ namespace pal { std::vector<std::uint8_t> read_binary_file(const std::string& pa
     assert(path == "gltf-ibl-brdf-lut.rgba16f"); return {17, 18};
 } }
 std::string asset_path(const std::string& path) { return path; }
+${gltfIblBrdfLutCpp()}
+${cppFunction(loader, "template <typename Prepared, typename Compute> auto take_prepared(Prepared* prepared,")}
+// A synchronous load prepares nothing, so the table is read where it is used.
+struct UnpreparedLut { explicit operator bool() const { return false; } std::vector<std::uint8_t> take() { return {}; } };
 struct Harmonics { std::string type = "VEC4"; std::size_t component_type = 5126, count = 9; std::array<float, 36> values{}; };
 float read_component(int, int, int, const Harmonics& data, std::size_t element, std::size_t component) { return data.values.at(element * 4 + component); }
 TextureData image_data(int, int, int, const ts::JsonValue::Array& faces, std::size_t index) {
@@ -425,6 +432,7 @@ void check(const nlohmann::json& input, std::size_t variant) {
         for (std::size_t i = 0; i < target.size(); ++i) target[i] = std::bit_cast<float>(entry.at("bits")[i].get<std::uint32_t>());
     }
     const int buffer = 0, container = 0, views = 0;
+    struct { UnpreparedLut brdf_lut; } file;
     AssetRecord asset;
     js::Callback<void(Scene&)> ibl_scene_setup;
 ${gltfIblLoadingCpp()}

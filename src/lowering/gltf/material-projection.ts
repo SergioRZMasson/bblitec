@@ -525,6 +525,39 @@ void gltf_pbr_transform(TextureTransform& transform, const GltfPbrValue& texture
     gltf_pbr_number(texture, "vOffset", transform.v_offset);
     gltf_pbr_number(texture, "uAng", transform.rotation);
 }
+/** A material's reference to document image \`index\`, which load_gltf resolves lazily. */
+GltfMaterialImage gltf_document_image(const JsonArray& images, std::size_t index) {
+    if (index >= images.size()) throw std::runtime_error("Invalid glTF material image index.");
+    return std::make_shared<GltfMaterialImageSource>(GltfMaterialImageSource{index});
+}
+/**
+ * The metallic-roughness and occlusion image pairs gltf-ext-orm.ts composites:
+ * a material's two images when they differ. Every document material is a
+ * candidate; one that fails to assemble composes nothing ahead.
+ */
+std::set<std::pair<std::size_t, std::size_t>> gltf_orm_composite_pairs(const JsonObject& document, const JsonArray& images) {
+    std::set<std::pair<std::size_t, std::size_t>> pairs;
+    GltfMaterialImageCache image_cache;
+    const auto resolve_image = [&](std::size_t index) { return gltf_document_image(images, index); };
+    const auto& materials = gltf_array_or_empty(document, "materials");
+    for (std::size_t material = 0; material < materials.size(); ++material) {
+        const auto core = GltfLoadPromise<GltfCoreMaterial>::settle([&] {
+            return assemble_gltf_material(document, material, image_cache, resolve_image);
+        });
+        if (!core.fulfilled()) continue;
+        const auto& mr = core.get()._metallicRoughnessImage;
+        const auto& occ = core.get()._occlusionImage;
+        if (mr && occ && mr != occ) pairs.emplace(mr->index, occ->index);
+    }
+    return pairs;
+}
+/** The material inputs prepare_gltf settled off the realm, for load_material to take. */
+struct GltfPreparedMaterials {
+    /** Each document image's embedded bytes. */
+    std::vector<GltfLoadPromise<TextureData>> images;
+    /** compositeOrm bitmaps by metallic-roughness and occlusion image index. */
+    std::map<std::pair<std::size_t, std::size_t>, GltfLoadPromise<std::shared_ptr<const pal::DecodedImage>>> orm_composites;
+};
 MaterialHandle load_material(
     Engine& engine,
     const JsonObject& material_json,
@@ -546,7 +579,8 @@ MaterialHandle load_material(
     const std::function<pal::DecodedImage(const TextureData&)>& decode_image = {},
     bool variant_material = false,
     GltfPbrValue* source_properties = nullptr,
-    bool base_color_module = false) {
+    bool base_color_module = false,
+    GltfPreparedMaterials* prepared = nullptr) {
     static_cast<void>(material_json);
     MaterialRecord material;
 ${pbrMaterialRecordSeedCpp("material", "    ")}
@@ -580,10 +614,17 @@ ${pbrMaterialRecordSeedCpp("material", "    ")}
     const auto upload_texture = [&](GltfMaterialImage bitmap, bool encoded) {
         return GltfMaterialTexture{std::move(bitmap), encoded, std::nullopt, nullptr, sampler_context->default_sampler};
     };
-    context.decode_image = [&](const GltfMaterialImage& image) {
+    const auto decode = [&](const GltfMaterialImage& image) {
         if (image->decoded) return *image->decoded;
         if (!decode_image) throw std::runtime_error("Missing glTF bitmap decoder.");
         return decode_image(image_data(buffer, container, views, images, image->index));
+    };
+    context.composite_orm = [&](const GltfMaterialImage& mr, const GltfMaterialImage& occ) -> std::shared_ptr<const pal::DecodedImage> {
+        if (prepared && !mr->decoded && !occ->decoded) {
+            const auto found = prepared->orm_composites.find({mr->index, occ->index});
+            if (found != prepared->orm_composites.end() && found->second) return found->second.get();
+        }
+        return gltf_orm_composite(decode, mr, occ);
     };
     context.upload_image = [&](const GltfPbrValue& image, bool srgb) {
         const auto upload = [&](GltfMaterialImage bitmap, bool encoded) {
@@ -626,7 +667,11 @@ ${pbrMaterialRecordSeedCpp("material", "    ")}
                 result.bytes = image.rgba;
                 result.rgba_width = static_cast<std::uint32_t>(image.width);
                 result.rgba_height = static_cast<std::uint32_t>(image.height);
-            } else result = image_data(buffer, container, views, images, texture.image->index);
+            } else {
+                const auto index = texture.image->index;
+                result = take_prepared(prepared ? &prepared->images : nullptr, index,
+                    [&] { return image_data(buffer, container, views, images, index); });
+            }
         }
         result.sampler = texture.sampler ? *texture.sampler : *sampler_context->default_sampler;
         return result;

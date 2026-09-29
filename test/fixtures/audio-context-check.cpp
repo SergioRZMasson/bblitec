@@ -27,5 +27,6 @@ int run_window_application(WorkerEntry initialize, EngineOptions) {
 int main() {
     assert(generated_main() == 0);
     assert(bbl::pal::contexts().empty());
-    assert(!SDL_WasInit(SDL_INIT_AUDIO));
+    // Its closed devices leave SDL's audio up for the run.
+    assert(SDL_WasInit(SDL_INIT_AUDIO));
 }

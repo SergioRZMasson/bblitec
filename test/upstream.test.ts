@@ -770,7 +770,7 @@ test("generates GLB framing validation from upstream constants", () => {
     assert.doesNotMatch(adapter.source, /normalize_baked_direction\(face\)/);
     assert.match(
         adapter.source,
-        /const AccessorInfo& normals = accessors\.at\(unsigned_value\(required\(attributes, "NORMAL"\)\)\);/,
+        /streams\.normals = &accessors\.at\(unsigned_value\(required\(attributes, "NORMAL"\)\)\);/,
     );
     const animatedLights = lowerer.lowerLoaderAdapter({
         animationPointer: true,

@@ -1,10 +1,21 @@
 #include <bblite/pal_event_loop.hpp>
 #include <bblite/pal_animation_frame.hpp>
+#include <bblite/pal_native_job.hpp>
 
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
 #include <future>
 #include <iostream>
+#include <mutex>
+#include <optional>
+#include <semaphore>
+#include <set>
+#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <thread>
 
 namespace {
 using bbl::pal::EventLoop;
@@ -466,9 +477,197 @@ void closing_before_cleanup() {
     }
     require(closing_cleaned, "Closing-only failure skipped cleanup");
 }
+
+/** Records the thread that releases it. */
+struct ReleaseProbe {
+    explicit ReleaseProbe(std::thread::id& target) : released(target) {}
+    ReleaseProbe(const ReleaseProbe&) = delete;
+    ReleaseProbe& operator=(const ReleaseProbe&) = delete;
+    ~ReleaseProbe() { released = std::this_thread::get_id(); }
+    std::thread::id& released;
+};
+
+void native_jobs_settle_in_start_order() {
+    using bbl::pal::run_native_job;
+    const bbl::js::RealmScope realm;
+    EventLoop loop;
+    const auto realm_thread = std::this_thread::get_id();
+    std::binary_semaphore release_slow{0};
+    std::atomic<bool> fast_finished = false;
+    std::thread::id probe_released;
+    std::vector<std::string> order;
+    loop.run([&] {
+        run_native_job<int>(
+            [&] {
+                require(std::this_thread::get_id() != realm_thread,
+                        "A native job ran on its realm");
+                release_slow.acquire();
+                return 1;
+            },
+            [&](int value) {
+                order.push_back("slow" + std::to_string(value));
+                return value;
+            });
+        run_native_job<int>(
+            [&, probe = std::make_shared<ReleaseProbe>(probe_released)] {
+                static_cast<void>(probe);
+                fast_finished = true;
+                return 2;
+            },
+            [&](int value) {
+                order.push_back("fast" + std::to_string(value));
+                return value;
+            });
+        run_native_job<int>([]() -> int { throw std::runtime_error("job failed"); },
+                            [&](int) -> int {
+                                order.push_back("failed job settled");
+                                return 0;
+                            })
+            .observe([](const int&) { require(false, "A failed job fulfilled its promise"); },
+                     [&](std::exception_ptr error) {
+                         try {
+                             std::rethrow_exception(error);
+                         } catch (const std::runtime_error& failure) {
+                             order.push_back(failure.what());
+                         }
+                         loop.close();
+                     });
+        // The later job finishes first; its settlement still waits for the earlier one.
+        EventLoop::TimerId poll = 0;
+        poll = loop.set_timeout(
+            [&] {
+                if (!fast_finished)
+                    return;
+                loop.clear_timer(poll);
+                loop.set_timeout(
+                    [&] {
+                        require(order.empty(), "A later native job settled before an earlier one");
+                        release_slow.release();
+                    },
+                    20);
+            },
+            1, true);
+    });
+    require(order == std::vector<std::string>({"slow1", "fast2", "job failed"}),
+            "Native jobs did not settle in start order");
+    require(probe_released == realm_thread, "A native job's captures were released off its realm");
+}
+
+void native_jobs_at_realm_close() {
+    using bbl::pal::run_native_job;
+    auto& workers = bbl::pal::NativeWorkers::instance();
+    const auto capacity = static_cast<std::ptrdiff_t>(workers.capacity());
+    // Occupy every worker, so the next job stays queued behind them.
+    std::counting_semaphore<> started{0}, proceed{0};
+    std::vector<bbl::pal::NativeWork<int>> blockers;
+    for (std::ptrdiff_t index = 0; index < capacity; ++index)
+        blockers.push_back(bbl::pal::start_native_work([&] {
+            started.release();
+            proceed.acquire();
+            return 0;
+        }));
+    for (std::ptrdiff_t index = 0; index < capacity; ++index)
+        started.acquire();
+    std::atomic<bool> queued_ran = false;
+    {
+        const bbl::js::RealmScope realm;
+        EventLoop loop;
+        loop.run([&] {
+            run_native_job<int>(
+                [&] {
+                    queued_ran = true;
+                    return 0;
+                },
+                [](int value) { return value; });
+            loop.close();
+        });
+    }
+    proceed.release(capacity);
+    std::set<std::thread::id> threads;
+    std::mutex threads_mutex;
+    for (auto& blocker : blockers)
+        require(blocker.get() == 0, "A native worker lost its result");
+    // Work beyond the capacity reuses the same threads.
+    std::vector<bbl::pal::NativeWork<int>> round;
+    for (std::ptrdiff_t index = 0; index < capacity * 4; ++index)
+        round.push_back(bbl::pal::start_native_work([&] {
+            const std::lock_guard lock(threads_mutex);
+            threads.insert(std::this_thread::get_id());
+            return 0;
+        }));
+    for (auto& work : round)
+        require(work.get() == 0, "A native worker lost its result");
+    require(threads.size() <= workers.capacity(), "Native workers exceeded their capacity");
+    require(!queued_ran, "A closed realm's queued native job ran");
+
+    // A running job holds its realm's close until it finishes.
+    std::atomic<bool> running_finished = false;
+    {
+        const bbl::js::RealmScope realm;
+        EventLoop loop;
+        std::binary_semaphore job_started{0};
+        loop.run([&] {
+            run_native_job<int>(
+                [&] {
+                    job_started.release();
+                    std::this_thread::sleep_for(50ms);
+                    running_finished = true;
+                    return 0;
+                },
+                [](int value) { return value; });
+            job_started.acquire();
+            loop.close();
+        });
+        require(running_finished, "A closed realm did not wait for its running native job");
+    }
+}
+
+void native_work_never_waits_on_native_work() {
+    // Once every worker waited on queued work, none would be left to run it.
+    auto inner = bbl::pal::start_native_work([] { return 1; });
+    auto outer = bbl::pal::start_native_work([&inner] { return inner.get(); });
+    bool refused = false;
+    try {
+        static_cast<void>(outer.get());
+    } catch (const std::logic_error& error) {
+        refused = std::string_view(error.what()) == "Native work cannot wait on other native work.";
+    }
+    require(refused, "A native worker waited on other native work");
+    require(inner.get() == 1, "The native work a worker refused to wait on was lost");
+    // A worker idle past its exit time leaves; later work starts another.
+    require(bbl::pal::start_native_work([] { return 2; }).get() == 2, "Native work failed");
+    std::this_thread::sleep_for(1200ms);
+    require(bbl::pal::start_native_work([] { return 3; }).get() == 3,
+            "Native work failed after idle workers exited");
+}
+
+/** A worker destroying native work it would wait for ends the process. */
+int owner_on_worker() {
+    std::binary_semaphore started{0}, proceed{0};
+    std::optional<bbl::pal::NativeWork<int>> running(bbl::pal::start_native_work([&] {
+        started.release();
+        proceed.acquire();
+        return 0;
+    }));
+    started.acquire();
+    auto owner = bbl::pal::start_native_work([&] {
+        // This worker's handler (MSVC keeps one per thread) reports the end.
+        std::set_terminate([] {
+            std::fputs("native work owner refused on a worker\n", stdout);
+            std::fflush(stdout);
+            std::_Exit(0);
+        });
+        const auto moved = std::move(*running);
+        return 0;
+    });
+    static_cast<void>(owner.get());
+    return 1;
+}
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1 && std::string_view(argv[1]) == "owner-on-worker")
+        return owner_on_worker();
     try {
         ordering_and_cancellation();
         display_animation_frames();
@@ -480,8 +679,11 @@ int main() {
         terminate_busy_and_release_on_owner();
         terminate_idle_and_before_initialization();
         closing_before_cleanup();
-        std::cout
-            << "Worker event loop: ordering, computation, timers, errors and termination passed.\n";
+        native_jobs_settle_in_start_order();
+        native_jobs_at_realm_close();
+        native_work_never_waits_on_native_work();
+        std::cout << "Worker event loop: ordering, computation, timers, errors, termination and "
+                     "native jobs passed.\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

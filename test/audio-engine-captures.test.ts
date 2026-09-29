@@ -129,3 +129,37 @@ test(
     `);
     },
 );
+
+test("a realm's audio engine opens its device in a native job and builds the pin's output graph on the realm", () => {
+    const output = resolve("artifacts/audio-engine-realm");
+    mkdirSync(output, { recursive: true });
+    writeFileSync(join(output, "worker.ts"), "self.close();");
+    const result = compileSource(
+        'const worker=new Worker(new URL("./worker.ts",import.meta.url),{type:"module"});worker.terminate();' +
+            `
+        import { createAudioEngineAsync } from "@babylonjs/lite";
+        async function main(): Promise<void> {
+            const audio = await createAudioEngineAsync();
+            audio.audioContext.createGain().connect(audio.audioContext.destination);
+        }
+        void main();
+    `,
+        { fileName: join(output, "entry.ts") },
+    );
+    const opening = result.cpp.indexOf("bbl::pal::audio_create_context_async(");
+    assert.ok(
+        opening >= 0,
+        "The realm engine does not open its context asynchronously.",
+    );
+    const graph = result.cpp.slice(
+        opening,
+        result.cpp.indexOf("return bbl::AudioEngineHandle{", opening),
+    );
+    assert.match(
+        graph,
+        /\.then\(\[\]\(const bbl::pal::AudioContextHandle& \w+_ctx\)/,
+    );
+    assert.equal(graph.match(/bbl::pal::audio_create_gain\(/g)?.length, 2);
+    assert.equal(graph.match(/bbl::pal::audio_connect\(/g)?.length, 2);
+    assert.doesNotMatch(result.cpp, /bbl::pal::audio_create_context\(/);
+});

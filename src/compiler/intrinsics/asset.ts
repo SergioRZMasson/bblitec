@@ -39,6 +39,7 @@ export interface AssetIntrinsicContext
             | "options"
             | "checker"
             | "dataLowerer"
+            | "dataTypes"
             | "expectObjectLiteral"
             | "compileStringLiteral"
             | "compileNumber"
@@ -601,7 +602,12 @@ function compileLoadTexture2D(
         addressModeVCpp: addressModeV,
     });
     context.reachFeature("texture:file", call);
-    return {
+    const loadArguments =
+        `${engine.cpp}, ${texturePathCpp}, ` +
+        `${sampler}, ${invertY ? "true" : "false"}, ` +
+        `${srgb ? "true" : "false"}, ` +
+        `${premultiplyAlpha ? "true" : "false"}`;
+    const texture: Value = {
         kind: "texture",
         textureStorage: "file",
         // The texture-OBJECT `invertY`, which `loadTexture2D` never
@@ -610,12 +616,7 @@ function compileLoadTexture2D(
         // because composition reads it -- the PBR lightmap arm
         // folds it against `uAng`.
         textureObjectInvertY: false,
-        cpp:
-            `bbl::load_file_texture(${engine.cpp}, ` +
-            `${texturePathCpp}, ` +
-            `${sampler}, ${invertY ? "true" : "false"}, ` +
-            `${srgb ? "true" : "false"}, ` +
-            `${premultiplyAlpha ? "true" : "false"})`,
+        cpp: `bbl::load_file_texture(${loadArguments})`,
         textureFile: {
             srgb,
             ...(url === undefined
@@ -626,6 +627,26 @@ function compileLoadTexture2D(
                   }),
         },
         engineCpp: engine.engineCpp ?? engine.cpp,
+    };
+    if (!context.options.workers) return texture;
+    // A realm keeps servicing its tasks while the image decodes, as the
+    // pin's fetch and decode do; the promise settles with the stored
+    // record an awaited load owns.
+    const stored = { kind: "handle", handle: "texture" } as const;
+    return {
+        kind: "promise",
+        cpp: `bbl::pal::load_realm_file_texture(${loadArguments})`,
+        promiseType: context.dataTypes.cppType(stored),
+        promiseResult: {
+            ...texture,
+            cpp: context.dataLowerer.compileKnownValueForSink(
+                texture,
+                stored,
+                call,
+            ),
+            dataType: stored,
+            textureStorage: "stored",
+        },
     };
 }
 

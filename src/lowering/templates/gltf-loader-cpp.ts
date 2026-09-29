@@ -18,6 +18,7 @@ import {
     gltfAnimationLoadingCpp,
     gltfAnimatedLightCpp,
 } from "../gltf/animation-runtime.js";
+import { gltfIblBrdfLutCpp, gltfIblPreparationCpp } from "../gltf/ibl.js";
 import { gltfMaterialProjection } from "../gltf/material-projection.js";
 import { recordAt } from "../../compiler/record-access.js";
 /**
@@ -239,12 +240,12 @@ export function gltfLoaderCpp(
 
     const factorBake = lowered.factorBake;
     const load = outlineLoweredBody("load_gltf", provenance, [
-        `    ts::ArrayBuffer buffer = ts::await(pal::fetch_array_buffer(path));
+        `    ts::ArrayBuffer& buffer = file.buffer;
 ${
     animationPointer
-        ? `    const auto source_container=std::make_shared<const upstream::ParsedGlbContainer>(upstream::parse_glb_container(buffer));
+        ? `    const auto source_container=file.container;
     const auto& container=*source_container;`
-        : "    const upstream::ParsedGlbContainer container = upstream::parse_glb_container(buffer);"
+        : "    const upstream::ParsedGlbContainer& container = *file.container;"
 }
     const JsonObject& document = container.json.as_object();
     const auto material_features = gltf_pbr_material_features(GltfPbrValue{&container.json});
@@ -269,55 +270,9 @@ ${
     const bool animated = !source_animation.is_null() && required(source_animation.as_object(), "accepted").as_boolean();
     const bool retained_pose = animated${boneControl ? ' || !required(mesh_plan, "animationBindings").is_null()' : ""};
 
-    std::vector<BufferViewInfo> views;
-    views.reserve(view_json.size());
-    for (const ts::JsonValue& value : view_json) {
-        const JsonObject& object = value.as_object();
-        const std::size_t offset =
-            unsigned_or(object, "byteOffset", 0);
-        const std::size_t length =
-            unsigned_value(required(object, "byteLength"));
-        if (
-            offset > container.bin_length ||
-            length > container.bin_length - offset) {
-            throw std::runtime_error(
-                "glTF bufferView exceeds the BIN chunk.");
-        }
-        views.push_back(BufferViewInfo{
-            offset,
-            length,
-            unsigned_or(object, "byteStride", 0),
-        });
-    }
-    std::vector<AccessorInfo> accessors;
-    accessors.reserve(accessor_json.size());
-    for (const ts::JsonValue& value : accessor_json) {
-        const JsonObject& object = value.as_object();
-        // Packaging resolves every sparse accessor through the pin's own
-        // preParse hook, so a packaged document carries none. This is the
-        // BBLITE_ASSET_DIR defense: an unpackaged asset would otherwise read
-        // its unpatched base values here, exactly as the pinned
-        // resolveAccessor would without the hook.
-        if (optional(object, "sparse")) {
-            throw std::runtime_error(
-                "glTF accessor is sparse; this asset was not packaged by "
-                "bblitec, which resolves sparse accessors at generation.");
-        }
-        const std::size_t buffer_view =
-            unsigned_or(object, "bufferView", std::numeric_limits<std::size_t>::max());
-        if (buffer_view != std::numeric_limits<std::size_t>::max() && buffer_view >= views.size()) {
-            throw std::runtime_error(
-                "glTF accessor references an invalid bufferView.");
-        }
-        accessors.push_back(AccessorInfo{
-            buffer_view,
-            unsigned_or(object, "byteOffset", 0),
-            unsigned_value(required(object, "count")),
-            static_cast<std::uint32_t>(unsigned_value(required(object, "componentType"))),
-            required(object, "type").as_string(),
-            bool_or(object, "normalized", false),
-        });
-    }
+    GltfTables tables = take_prepared(&file.tables, [&] { return gltf_tables(view_json, accessor_json, container); });
+    std::vector<BufferViewInfo> views = std::move(tables.views);
+    std::vector<AccessorInfo> accessors = std::move(tables.accessors);
     const auto& planned_materials = required(mesh_plan, "materials").as_array();
     const auto& planned_meshes = required(mesh_plan, "meshes").as_array();
     const auto& planned_geometries = required(mesh_plan, "geometries").as_array();
@@ -328,10 +283,7 @@ ${animationPointerMaterials || interactivity ? `    std::vector<MaterialHandle> 
     GltfMaterialImageCache material_image_cache;
     GltfTextureCache material_texture_cache;
     GltfSamplerContext material_sampler_context(texture_json, sampler_json);
-    const auto resolve_material_image = [&](std::size_t index) -> GltfMaterialImage {
-        if (index >= image_json.size()) throw std::runtime_error("Invalid glTF material image index.");
-        return std::make_shared<GltfMaterialImageSource>(GltfMaterialImageSource{index});
-    };
+    const auto resolve_material_image = [&](std::size_t index) { return gltf_document_image(image_json, index); };
     const auto extension_image_fetcher = make_gltf_extension_image_fetcher(document, double(material_features.size()), resolve_material_image);
 ${
     sourceTextureReads
@@ -372,10 +324,6 @@ ${
     for (const auto& index : required(mesh_plan, "baseColorDefinitions").as_array())
         base_color_definitions.at(unsigned_value(index)) = true;
     const bool base_color_module = required(mesh_plan, "baseColorModule").as_boolean();
-    const auto decode_material_image = [](const TextureData& texture) {
-        if (!texture.compressed.mips.empty()) throw std::runtime_error("Canvas2D composition of compressed glTF images is unsupported.");
-        return pal::decode_image(js::ArrayBuffer(texture.bytes));
-    };
     std::vector<GltfCoreMaterial> core_materials;
     for (const auto& source : required(mesh_plan, "cores").as_array()) {
         const auto selected = source.as_number();
@@ -391,7 +339,7 @@ ${animationPointer ? "            source_physical_properties.emplace_back();" : 
                 image_json, texture_json, sampler_json, extension_image_fetcher,
                 source_material_index < base_color_definitions.size() && base_color_definitions[source_material_index],
                 material_features, extended_material, material_texture_wrap, sampled_material, &material_texture_cache, &material_sampler_context,
-                decode_material_image, false, ${animationPointer ? "&source_physical_properties.back()" : "nullptr"}, base_color_module);
+                decode_gltf_bitmap, false, ${animationPointer ? "&source_physical_properties.back()" : "nullptr"}, base_color_module, &file.materials);
 ${sourceTextureReads ? `            retain_source_albedo(handle, source_material_index);` : ""}
             materials.push_back(handle);
     }
@@ -426,7 +374,7 @@ ${
             materials.push_back(load_material(engine, material_json.at(index).as_object(), core, buffer, container, views,
                 image_json, texture_json, sampler_json, variant_fetcher, base_color_definitions.at(index), material_features,
                 true, material_texture_wrap, false, nullptr, &variant_sampler_context,
-                decode_material_image, true, nullptr, base_color_module));
+                decode_gltf_bitmap, true, nullptr, base_color_module, &file.materials));
         }
     }
 
@@ -625,6 +573,7 @@ ${nodeTransforms ? gltfNodeHierarchyCpp() : ""}`,
                     name: "animation_runtime",
                     type: "const std::shared_ptr<AnimationRuntime>",
                 },
+                { name: "file", type: "GltfSource" },
                 { name: "accessors", type: "std::vector<AccessorInfo>" },
                 { name: "buffer", type: "ts::ArrayBuffer" },
                 {
@@ -657,18 +606,8 @@ ${nodeTransforms ? gltfNodeHierarchyCpp() : ""}`,
             const auto& setup = required(planned, "setup").as_object();
             const std::string topology = required(setup, "topology").as_string();
             const bool source_clockwise = required(setup, "clockwise").as_boolean();
-${
-    nonTrianglePrimitives
-        ? `            // Convert the source WebGPU topology to native transport.
-            MeshTopology primitive_topology = MeshTopology::triangles;
-            if (topology == "point-list") primitive_topology = MeshTopology::points;
-            else if (topology == "line-list") primitive_topology = MeshTopology::lines;
-            else if (topology == "line-strip") primitive_topology = MeshTopology::line_strip;
-            else if (topology != "triangle-list" && topology != "triangle-strip")
-                throw std::runtime_error("Unsupported prepared glTF topology.");`
-        : `            if (topology != "triangle-list")
-                throw std::runtime_error("Only triangle-list glTF primitives are supported.");`
-}
+            // Refuses a topology the native transport lacks.
+            gltf_primitive_topology(topology);
             const auto& planned_geometry = planned_geometries.at(unsigned_value(required(planned, "geometry"))).as_object();
             const JsonObject& attributes = required(planned_geometry, "attributes").as_object();
             const auto* planned_skin = optional(planned, "skin");
@@ -677,49 +616,18 @@ ${
             if (planned_skin && unsigned_value(required(planned_skin->as_object(), "boneCount")) !=
                 animation_runtime->skins.at(unsigned_value(required(planned_skin->as_object(), "index"))).joints.size())
                 throw std::runtime_error("glTF skeleton storage disagrees with its joint bindings.");
-            const AccessorInfo& positions = accessors.at(unsigned_value(required(attributes, "POSITION")));
-            // A primitive without NORMAL still packages one: the pin's
-            // computeSmoothNormals output, which it uploads beside the
-            // derivative flat normal its PBR fragment composes.
-            const AccessorInfo& normals = accessors.at(unsigned_value(required(attributes, "NORMAL")));
-            const bool flat_normal = required(planned, "flatNormal").as_boolean();
-            const AccessorInfo* tangents = optional(attributes, "TANGENT")
-                ? &accessors.at(unsigned_value(*optional(attributes, "TANGENT")))
-                : nullptr;
-            const AccessorInfo& texcoords = accessors.at(unsigned_value(required(attributes, "TEXCOORD_0")));
-            const AccessorInfo* texcoords1 = optional(attributes, "TEXCOORD_1")
-                ? &accessors.at(unsigned_value(*optional(attributes, "TEXCOORD_1")))
-                : nullptr;
-            const AccessorInfo* colors = optional(attributes, "COLOR_0")
-                ? &accessors.at(unsigned_value(*optional(attributes, "COLOR_0")))
-                : nullptr;
-            const AccessorInfo* joints = planned_skin
-                ? &accessors.at(unsigned_value(required(planned_skin->as_object(), "joints"))) : nullptr;
-            const AccessorInfo* weights = planned_skin
-                ? &accessors.at(unsigned_value(required(planned_skin->as_object(), "weights"))) : nullptr;
-            std::vector<const AccessorInfo*> morph_positions;
-            std::vector<const AccessorInfo*> morph_normals;
+            const GltfPrimitiveStreams streams = gltf_primitive_streams(accessors, planned, attributes);
             std::vector<float> morph_default_weights;
             if (planned_morph) {
-                const auto& morph = planned_morph->as_object();
-                for (const auto& index : required(morph, "positions").as_array())
-                    morph_positions.push_back(&accessors.at(unsigned_value(index)));
-                for (const auto& index : required(morph, "normals").as_array())
-                    morph_normals.push_back(&accessors.at(unsigned_value(index)));
-                const auto& initial_weights = accessors.at(unsigned_value(required(morph, "weights")));
+                const auto& initial_weights = accessors.at(unsigned_value(required(planned_morph->as_object(), "weights")));
                 morph_default_weights.resize(initial_weights.count);
                 for (std::size_t index = 0; index < initial_weights.count; ++index)
                     morph_default_weights[index] = read_component(buffer, container, views, initial_weights, index, 0);
-                if (morph_positions.size() != morph_normals.size() || morph_positions.size() != morph_default_weights.size())
+                if (streams.morph_positions.size() != streams.morph_normals.size() ||
+                    streams.morph_positions.size() != morph_default_weights.size())
                     throw std::runtime_error("Invalid glTF morph storage counts.");
             }
-            const auto setup_accessor = [&](const char* name, const char* type, std::size_t count) -> const AccessorInfo& {
-                const auto& value = accessors.at(unsigned_value(required(setup, name)));
-                if (value.type != type || value.component_type != 5126 || value.count != count)
-                    throw std::runtime_error("Invalid glTF mesh placement storage.");
-                return value;
-            };
-            const auto& source_world = setup_accessor("world", "VEC4", 4);
+            const auto& source_world = gltf_setup_accessor(accessors, setup, "world", "VEC4", 4);
             // The pin's own \`mesh.worldMatrix\` for this primitive, root
             // mirror included: the vertices below keep the file's lanes as
             // \`buildTightGltfMesh\` uploads them, and the node's world
@@ -740,13 +648,6 @@ ${
                 for (std::size_t instance = 0; instance < count; ++instance)
                     instance_matrices.push_back(read_matrix(matrices, instance));
             }
-            ModelGeometry geometry;${
-                nonTrianglePrimitives
-                    ? `
-            geometry.topology = primitive_topology;`
-                    : ""
-            }
-            geometry.vertices.resize(positions.count);
             const std::size_t material_index =
                 ${
                     materialVariants
@@ -760,154 +661,11 @@ ${
                     engine.materials.size() &&
                 ${recordAt("engine.materials", "materials[material_index]")}
                     .double_sided;
-            for (std::size_t index = 0; index < positions.count; ++index) {
-                ModelVertex vertex;
-                vertex.position = Vec3{
-                    read_component(buffer, container, views, positions, index, 0),
-                    read_component(buffer, container, views, positions, index, 1),
-                    read_component(buffer, container, views, positions, index, 2),
-                };
-                vertex.normal = Vec3{
-                    read_component(buffer, container, views, normals, index, 0),
-                    read_component(buffer, container, views, normals, index, 1),
-                    read_component(buffer, container, views, normals, index, 2),
-                };
-                if (tangents) {
-                    vertex.tangent = Vec4{
-                        read_component(buffer, container, views, *tangents, index, 0),
-                        read_component(buffer, container, views, *tangents, index, 1),
-                        read_component(buffer, container, views, *tangents, index, 2),
-                        read_component(buffer, container, views, *tangents, index, 3),
-                    };
-                }
-                vertex.uv = Vec2{
-                    read_component(buffer, container, views, texcoords, index, 0),
-                    read_component(buffer, container, views, texcoords, index, 1),
-                };
-                if (texcoords1) {
-                    vertex.uv2 = Vec2{
-                        read_component(buffer, container, views, *texcoords1, index, 0),
-                        read_component(buffer, container, views, *texcoords1, index, 1),
-                    };
-                }
-                if (colors) {
-                    vertex.color = Vec4{
-                        read_component(buffer, container, views, *colors, index, 0),
-                        read_component(buffer, container, views, *colors, index, 1),
-                        read_component(buffer, container, views, *colors, index, 2),
-                        read_component(buffer, container, views, *colors, index, 3),
-                    };
-                }
-                if (joints && weights) {
-                    for (std::size_t component = 0; component < 4; ++component) {
-                        vertex.joints[component] =
-                            static_cast<std::uint16_t>(
-                                read_component(
-                                    buffer,
-                                    container,
-                                    views,
-                                    *joints,
-                                    index,
-                                    component));
-                    }
-                    vertex.weights = Vec4{
-                        read_component(buffer, container, views, *weights, index, 0),
-                        read_component(buffer, container, views, *weights, index, 1),
-                        read_component(buffer, container, views, *weights, index, 2),
-                        read_component(buffer, container, views, *weights, index, 3),
-                    };
-                }
-                geometry.vertices[index] = vertex;
-            }
-            for (std::size_t target = 0; target < morph_positions.size(); ++target) {
-                auto& position_deltas = geometry.morph_positions.emplace_back(positions.count);
-                auto& normal_deltas = geometry.morph_normals.emplace_back(positions.count);
-                for (std::size_t index = 0; index < positions.count; ++index) {
-                    position_deltas[index] = Vec3{
-                        read_component(buffer, container, views, *morph_positions[target], index, 0),
-                        read_component(buffer, container, views, *morph_positions[target], index, 1),
-                        read_component(buffer, container, views, *morph_positions[target], index, 2),
-                    };
-                    normal_deltas[index] = Vec3{
-                        read_component(buffer, container, views, *morph_normals[target], index, 0),
-                        read_component(buffer, container, views, *morph_normals[target], index, 1),
-                        read_component(buffer, container, views, *morph_normals[target], index, 2),
-                    };
-                }
-            }
-            {
-                const AccessorInfo& indices = accessors.at(unsigned_value(required(planned_geometry, "indices")));
-                geometry.indices.resize(indices.count);
-                for (std::size_t index = 0; index < indices.count; ++index) {
-                    geometry.indices[index] = read_index(buffer, container, views, indices, index);
-                }
-            }${
-                nonTrianglePrimitives
-                    ? `
-            if (topology == "triangle-strip") {
-                // Walk the strip into the triangle list it stands for:
-                // primitive i is (i, i+1, i+2) with odd i swapped, the
-                // expansion every WebGPU/Vulkan/D3D rasterizer performs, so
-                // the triangles, their winding, and their order all match
-                // what the pinned engine submits as a strip. glTF forbids an
-                // index equal to the component type's maximum precisely so
-                // clients need not handle primitive restart, which makes the
-                // run contiguous. The expansion happens here rather than at
-                // the pipeline because the flat-normal path below bakes one
-                // normal per face, and a face normal needs each triangle to
-                // own its vertices.
-                std::vector<std::uint32_t> expanded;
-                if (geometry.indices.size() >= 3) {
-                    expanded.reserve((geometry.indices.size() - 2) * 3);
-                    for (
-                        std::size_t index = 0;
-                        index + 2 < geometry.indices.size();
-                        ++index) {
-                        const bool even = index % 2 == 0;
-                        expanded.push_back(
-                            geometry.indices[even ? index : index + 1]);
-                        expanded.push_back(
-                            geometry.indices[even ? index + 1 : index]);
-                        expanded.push_back(geometry.indices[index + 2]);
-                    }
-                }
-                geometry.indices = std::move(expanded);
-            }`
-                    : ""
-            }
-            if (
-                geometry.topology == MeshTopology::triangles &&
-                geometry.indices.size() % 3 != 0) {
-                throw std::runtime_error("Triangle-list glTF indices must be divisible by three.");
-            }
-            if (
-                geometry.topology == MeshTopology::lines &&
-                geometry.indices.size() % 2 != 0) {
-                throw std::runtime_error(
-                    "Line-list glTF indices must be divisible by two.");
-            }
-            for (const std::uint32_t index : geometry.indices) {
-                if (index >= geometry.vertices.size()) {
-                    throw std::runtime_error(
-                        "glTF primitive index exceeds its vertex count.");
-                }
-            }
+            ModelGeometry geometry = take_prepared(&file.geometries, gltf_mesh_counter, [&] {
+                return decode_planned_primitive(buffer, container, views, accessors, mesh_plan, gltf_mesh_counter);
+            });
             // The winding swap is a triangle fact: a mirrored transform
-            // reverses a face's winding. The pin's flat normal for a
-            // primitive without NORMAL -- its PBR fragment's
-            // normalize(cross(dpdx(worldPos), dpdy(worldPos))) -- needs a
-            // fragment quad with area to differentiate over, which a
-            // one-pixel line and a point do not give it. So a non-triangle
-            // primitive with no NORMAL is refused rather than shaded from a
-            // derivative both backends would evaluate at zero.
-            if (
-                geometry.topology != MeshTopology::triangles &&
-                flat_normal) {
-                throw std::runtime_error(
-                    "A glTF point or line primitive with no NORMAL "
-                    "accessor reaches the pinned flat-normal path, whose "
-                    "screen-space derivative has no area to read.");
-            }
+            // reverses a face's winding.
             if (
                 geometry.topology == MeshTopology::triangles &&
                 source_clockwise &&
@@ -917,21 +675,6 @@ ${
                 }
                 geometry.source_indices_reversed = true;
             }
-            geometry.has_tangents = tangents != nullptr;
-            geometry.cpu_tangents = ${options.cpuTangents === true} && tangents != nullptr;
-            geometry.has_uvs = true;
-            geometry.has_vertex_colors = colors != nullptr;
-            // The pin's object-local \`boundMin\`/\`boundMax\`.
-            const auto& local_bounds = setup_accessor("bounds", "VEC3", 2);
-            const auto read_bound = [&](const AccessorInfo& value, std::size_t index) {
-                return Vec3{
-                    read_component(buffer, container, views, value, index, 0),
-                    read_component(buffer, container, views, value, index, 1),
-                    read_component(buffer, container, views, value, index, 2),
-                };
-            };
-            geometry.bounds_min = read_bound(local_bounds, 0);
-            geometry.bounds_max = read_bound(local_bounds, 1);
             const std::uint32_t geometry_slot =
                 store_geometry_record(engine, std::move(geometry));
             MeshRecord record;
@@ -1159,7 +902,7 @@ ${sourceMeshWalks ? "    load_source_mesh_walks(asset, document);" : ""}${
             asset.flow_graphs.push_back(FlowGraphHandle{self, static_cast<std::uint32_t>(unsigned_value(required(graph.as_object(), "graphIndex")))});
         }
         asset.materials = source_materials;
-        const std::string asset_name = path.substr(path.find_last_of("/\\\\") + 1);
+        const std::string asset_name = file.path.substr(file.path.find_last_of("/\\\\") + 1);
         interactivity_scene_setup = [self, asset_name](Scene& scene) {
             attach_flow_graphs(scene, self, asset_name);
         };
@@ -1190,6 +933,7 @@ ${compressedImages ? "#include <bblite/upstream/compressed_texture.hpp>\n" : ""}
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -1270,6 +1014,23 @@ std::vector<double> double_array(const ts::JsonValue* value) {
         result.push_back(element.as_number());
     }
     return result;
+}
+
+/**
+ * The product prepare_gltf settled in \`prepared\`, taken once where
+ * load_gltf uses it: a failed preparation raises its error here, in the
+ * loader's order. One never prepared, or already taken, is computed here.
+ */
+template <typename Prepared, typename Compute>
+auto take_prepared(Prepared* prepared, Compute compute) -> decltype(compute()) {
+    if (prepared && *prepared) return prepared->take();
+    return compute();
+}
+
+/** The product settled at \`index\` of \`prepared\`, as take_prepared takes it. */
+template <typename Prepared, typename Compute>
+auto take_prepared(std::vector<Prepared>* prepared, std::size_t index, Compute compute) -> decltype(compute()) {
+    return take_prepared(prepared && index < prepared->size() ? &(*prepared)[index] : nullptr, compute);
 }
 
 ${lowered.animationNodeRest}
@@ -1597,6 +1358,422 @@ struct GltfMatrixReader {
     }
 };
 
+std::vector<BufferViewInfo> gltf_buffer_views(
+    const JsonArray& view_json,
+    const upstream::ParsedGlbContainer& container) {
+    std::vector<BufferViewInfo> views;
+    views.reserve(view_json.size());
+    for (const ts::JsonValue& value : view_json) {
+        const JsonObject& object = value.as_object();
+        const std::size_t offset =
+            unsigned_or(object, "byteOffset", 0);
+        const std::size_t length =
+            unsigned_value(required(object, "byteLength"));
+        if (
+            offset > container.bin_length ||
+            length > container.bin_length - offset) {
+            throw std::runtime_error(
+                "glTF bufferView exceeds the BIN chunk.");
+        }
+        views.push_back(BufferViewInfo{
+            offset,
+            length,
+            unsigned_or(object, "byteStride", 0),
+        });
+    }
+    return views;
+}
+
+std::vector<AccessorInfo> gltf_accessors(
+    const JsonArray& accessor_json,
+    const std::vector<BufferViewInfo>& views) {
+    std::vector<AccessorInfo> accessors;
+    accessors.reserve(accessor_json.size());
+    for (const ts::JsonValue& value : accessor_json) {
+        const JsonObject& object = value.as_object();
+        // Packaging resolves every sparse accessor through the pin's own
+        // preParse hook, so a packaged document carries none. This is the
+        // BBLITE_ASSET_DIR defense: an unpackaged asset would otherwise read
+        // its unpatched base values here, exactly as the pinned
+        // resolveAccessor would without the hook.
+        if (optional(object, "sparse")) {
+            throw std::runtime_error(
+                "glTF accessor is sparse; this asset was not packaged by "
+                "bblitec, which resolves sparse accessors at generation.");
+        }
+        const std::size_t buffer_view =
+            unsigned_or(object, "bufferView", std::numeric_limits<std::size_t>::max());
+        if (buffer_view != std::numeric_limits<std::size_t>::max() && buffer_view >= views.size()) {
+            throw std::runtime_error(
+                "glTF accessor references an invalid bufferView.");
+        }
+        accessors.push_back(AccessorInfo{
+            buffer_view,
+            unsigned_or(object, "byteOffset", 0),
+            unsigned_value(required(object, "count")),
+            static_cast<std::uint32_t>(unsigned_value(required(object, "componentType"))),
+            required(object, "type").as_string(),
+            bool_or(object, "normalized", false),
+        });
+    }
+    return accessors;
+}
+
+/** A file's buffer views and accessors, validated against its BIN chunk. */
+struct GltfTables {
+    std::vector<BufferViewInfo> views;
+    std::vector<AccessorInfo> accessors;
+};
+
+GltfTables gltf_tables(
+    const JsonArray& view_json,
+    const JsonArray& accessor_json,
+    const upstream::ParsedGlbContainer& container) {
+    auto views = gltf_buffer_views(view_json, container);
+    auto accessors = gltf_accessors(accessor_json, views);
+    return GltfTables{std::move(views), std::move(accessors)};
+}
+
+${
+    nonTrianglePrimitives
+        ? `/** The native transport of a prepared primitive's WebGPU topology. */
+MeshTopology gltf_primitive_topology(const std::string& topology) {
+    if (topology == "point-list") return MeshTopology::points;
+    if (topology == "line-list") return MeshTopology::lines;
+    if (topology == "line-strip") return MeshTopology::line_strip;
+    if (topology != "triangle-list" && topology != "triangle-strip")
+        throw std::runtime_error("Unsupported prepared glTF topology.");
+    return MeshTopology::triangles;
+}`
+        : `/** The native transport of a prepared primitive's WebGPU topology. */
+MeshTopology gltf_primitive_topology(const std::string& topology) {
+    if (topology != "triangle-list")
+        throw std::runtime_error("Only triangle-list glTF primitives are supported.");
+    return MeshTopology::triangles;
+}`
+}
+
+/** A planned primitive's vertex streams, resolved in the loader's order. */
+struct GltfPrimitiveStreams {
+    const AccessorInfo* positions = nullptr;
+    const AccessorInfo* normals = nullptr;
+    bool flat_normal = false;
+    const AccessorInfo* tangents = nullptr;
+    const AccessorInfo* texcoords = nullptr;
+    const AccessorInfo* texcoords1 = nullptr;
+    const AccessorInfo* colors = nullptr;
+    const AccessorInfo* joints = nullptr;
+    const AccessorInfo* weights = nullptr;
+    std::vector<const AccessorInfo*> morph_positions;
+    std::vector<const AccessorInfo*> morph_normals;
+};
+
+GltfPrimitiveStreams gltf_primitive_streams(
+    const std::vector<AccessorInfo>& accessors,
+    const JsonObject& planned,
+    const JsonObject& attributes) {
+    const auto* planned_skin = optional(planned, "skin");
+    const auto* planned_morph = optional(planned, "morph");
+    GltfPrimitiveStreams streams;
+    streams.positions = &accessors.at(unsigned_value(required(attributes, "POSITION")));
+    // A primitive without NORMAL still packages one: the pin's
+    // computeSmoothNormals output, which it uploads beside the
+    // derivative flat normal its PBR fragment composes.
+    streams.normals = &accessors.at(unsigned_value(required(attributes, "NORMAL")));
+    streams.flat_normal = required(planned, "flatNormal").as_boolean();
+    if (const auto* tangents = optional(attributes, "TANGENT"))
+        streams.tangents = &accessors.at(unsigned_value(*tangents));
+    streams.texcoords = &accessors.at(unsigned_value(required(attributes, "TEXCOORD_0")));
+    if (const auto* texcoords1 = optional(attributes, "TEXCOORD_1"))
+        streams.texcoords1 = &accessors.at(unsigned_value(*texcoords1));
+    if (const auto* colors = optional(attributes, "COLOR_0"))
+        streams.colors = &accessors.at(unsigned_value(*colors));
+    if (planned_skin) {
+        streams.joints = &accessors.at(unsigned_value(required(planned_skin->as_object(), "joints")));
+        streams.weights = &accessors.at(unsigned_value(required(planned_skin->as_object(), "weights")));
+    }
+    if (planned_morph) {
+        const auto& morph = planned_morph->as_object();
+        for (const auto& index : required(morph, "positions").as_array())
+            streams.morph_positions.push_back(&accessors.at(unsigned_value(index)));
+        for (const auto& index : required(morph, "normals").as_array())
+            streams.morph_normals.push_back(&accessors.at(unsigned_value(index)));
+    }
+    return streams;
+}
+
+/** A packaged placement accessor of a planned primitive: FLOAT storage of the expected shape. */
+const AccessorInfo& gltf_setup_accessor(
+    const std::vector<AccessorInfo>& accessors,
+    const JsonObject& setup,
+    const char* name,
+    const char* type,
+    std::size_t count) {
+    const auto& value = accessors.at(unsigned_value(required(setup, name)));
+    if (value.type != type || value.component_type != 5126 || value.count != count)
+        throw std::runtime_error("Invalid glTF mesh placement storage.");
+    return value;
+}
+
+/**
+ * The CPU geometry of mesh-plan primitive \`index\` in its source winding: the
+ * vertex, morph-target and index streams, validated, and the pin's local
+ * bounds. It reads the file alone, so prepare_gltf decodes it off the realm;
+ * load_gltf decodes any it did not, from the same inputs.
+ */
+ModelGeometry decode_planned_primitive(
+    const ts::ArrayBuffer& buffer,
+    const upstream::ParsedGlbContainer& container,
+    const std::vector<BufferViewInfo>& views,
+    const std::vector<AccessorInfo>& accessors,
+    const JsonObject& mesh_plan,
+    std::size_t index) {
+    const auto& planned = required(mesh_plan, "meshes").as_array().at(index).as_object();
+    const auto& setup = required(planned, "setup").as_object();
+    const std::string& topology = required(setup, "topology").as_string();
+    const auto& planned_geometry =
+        required(mesh_plan, "geometries").as_array().at(unsigned_value(required(planned, "geometry"))).as_object();
+    const GltfPrimitiveStreams streams =
+        gltf_primitive_streams(accessors, planned, required(planned_geometry, "attributes").as_object());
+    const AccessorInfo& positions = *streams.positions;
+    const AccessorInfo& normals = *streams.normals;
+    const AccessorInfo& texcoords = *streams.texcoords;
+    const AccessorInfo* tangents = streams.tangents;
+    const AccessorInfo* texcoords1 = streams.texcoords1;
+    const AccessorInfo* colors = streams.colors;
+    const AccessorInfo* joints = streams.joints;
+    const AccessorInfo* weights = streams.weights;
+    const auto& morph_positions = streams.morph_positions;
+    const auto& morph_normals = streams.morph_normals;
+    const bool flat_normal = streams.flat_normal;
+    ModelGeometry geometry;
+    geometry.topology = gltf_primitive_topology(topology);
+    geometry.vertices.resize(positions.count);
+    for (std::size_t index = 0; index < positions.count; ++index) {
+        ModelVertex vertex;
+        vertex.position = Vec3{
+            read_component(buffer, container, views, positions, index, 0),
+            read_component(buffer, container, views, positions, index, 1),
+            read_component(buffer, container, views, positions, index, 2),
+        };
+        vertex.normal = Vec3{
+            read_component(buffer, container, views, normals, index, 0),
+            read_component(buffer, container, views, normals, index, 1),
+            read_component(buffer, container, views, normals, index, 2),
+        };
+        if (tangents) {
+            vertex.tangent = Vec4{
+                read_component(buffer, container, views, *tangents, index, 0),
+                read_component(buffer, container, views, *tangents, index, 1),
+                read_component(buffer, container, views, *tangents, index, 2),
+                read_component(buffer, container, views, *tangents, index, 3),
+            };
+        }
+        vertex.uv = Vec2{
+            read_component(buffer, container, views, texcoords, index, 0),
+            read_component(buffer, container, views, texcoords, index, 1),
+        };
+        if (texcoords1) {
+            vertex.uv2 = Vec2{
+                read_component(buffer, container, views, *texcoords1, index, 0),
+                read_component(buffer, container, views, *texcoords1, index, 1),
+            };
+        }
+        if (colors) {
+            vertex.color = Vec4{
+                read_component(buffer, container, views, *colors, index, 0),
+                read_component(buffer, container, views, *colors, index, 1),
+                read_component(buffer, container, views, *colors, index, 2),
+                read_component(buffer, container, views, *colors, index, 3),
+            };
+        }
+        if (joints && weights) {
+            for (std::size_t component = 0; component < 4; ++component) {
+                vertex.joints[component] =
+                    static_cast<std::uint16_t>(
+                        read_component(
+                            buffer,
+                            container,
+                            views,
+                            *joints,
+                            index,
+                            component));
+            }
+            vertex.weights = Vec4{
+                read_component(buffer, container, views, *weights, index, 0),
+                read_component(buffer, container, views, *weights, index, 1),
+                read_component(buffer, container, views, *weights, index, 2),
+                read_component(buffer, container, views, *weights, index, 3),
+            };
+        }
+        geometry.vertices[index] = vertex;
+    }
+    for (std::size_t target = 0; target < morph_positions.size(); ++target) {
+        auto& position_deltas = geometry.morph_positions.emplace_back(positions.count);
+        auto& normal_deltas = geometry.morph_normals.emplace_back(positions.count);
+        for (std::size_t index = 0; index < positions.count; ++index) {
+            position_deltas[index] = Vec3{
+                read_component(buffer, container, views, *morph_positions[target], index, 0),
+                read_component(buffer, container, views, *morph_positions[target], index, 1),
+                read_component(buffer, container, views, *morph_positions[target], index, 2),
+            };
+            normal_deltas[index] = Vec3{
+                read_component(buffer, container, views, *morph_normals[target], index, 0),
+                read_component(buffer, container, views, *morph_normals[target], index, 1),
+                read_component(buffer, container, views, *morph_normals[target], index, 2),
+            };
+        }
+    }
+    {
+        const AccessorInfo& indices = accessors.at(unsigned_value(required(planned_geometry, "indices")));
+        geometry.indices.resize(indices.count);
+        for (std::size_t index = 0; index < indices.count; ++index) {
+            geometry.indices[index] = read_index(buffer, container, views, indices, index);
+        }
+    }${
+        nonTrianglePrimitives
+            ? `
+    if (topology == "triangle-strip") {
+        // Walk the strip into the triangle list it stands for:
+        // primitive i is (i, i+1, i+2) with odd i swapped, the
+        // expansion every WebGPU/Vulkan/D3D rasterizer performs, so
+        // the triangles, their winding, and their order all match
+        // what the pinned engine submits as a strip. glTF forbids an
+        // index equal to the component type's maximum precisely so
+        // clients need not handle primitive restart, which makes the
+        // run contiguous. The expansion happens here rather than at
+        // the pipeline because the flat-normal path below bakes one
+        // normal per face, and a face normal needs each triangle to
+        // own its vertices.
+        std::vector<std::uint32_t> expanded;
+        if (geometry.indices.size() >= 3) {
+            expanded.reserve((geometry.indices.size() - 2) * 3);
+            for (
+                std::size_t index = 0;
+                index + 2 < geometry.indices.size();
+                ++index) {
+                const bool even = index % 2 == 0;
+                expanded.push_back(
+                    geometry.indices[even ? index : index + 1]);
+                expanded.push_back(
+                    geometry.indices[even ? index + 1 : index]);
+                expanded.push_back(geometry.indices[index + 2]);
+            }
+        }
+        geometry.indices = std::move(expanded);
+    }`
+            : ""
+    }
+    if (
+        geometry.topology == MeshTopology::triangles &&
+        geometry.indices.size() % 3 != 0) {
+        throw std::runtime_error("Triangle-list glTF indices must be divisible by three.");
+    }
+    if (
+        geometry.topology == MeshTopology::lines &&
+        geometry.indices.size() % 2 != 0) {
+        throw std::runtime_error(
+            "Line-list glTF indices must be divisible by two.");
+    }
+    for (const std::uint32_t index : geometry.indices) {
+        if (index >= geometry.vertices.size()) {
+            throw std::runtime_error(
+                "glTF primitive index exceeds its vertex count.");
+        }
+    }
+    // The pin's flat normal for a primitive without NORMAL -- its PBR fragment's
+    // normalize(cross(dpdx(worldPos), dpdy(worldPos))) -- needs a
+    // fragment quad with area to differentiate over, which a
+    // one-pixel line and a point do not give it. So a non-triangle
+    // primitive with no NORMAL is refused rather than shaded from a
+    // derivative both backends would evaluate at zero.
+    if (
+        geometry.topology != MeshTopology::triangles &&
+        flat_normal) {
+        throw std::runtime_error(
+            "A glTF point or line primitive with no NORMAL "
+            "accessor reaches the pinned flat-normal path, whose "
+            "screen-space derivative has no area to read.");
+    }
+    geometry.has_tangents = tangents != nullptr;
+    geometry.cpu_tangents = ${options.cpuTangents === true} && tangents != nullptr;
+    geometry.has_uvs = true;
+    geometry.has_vertex_colors = colors != nullptr;
+    // The pin's object-local \`boundMin\`/\`boundMax\`.
+    const auto& local_bounds = gltf_setup_accessor(accessors, setup, "bounds", "VEC3", 2);
+    const auto read_bound = [&](const AccessorInfo& value, std::size_t index) {
+        return Vec3{
+            read_component(buffer, container, views, value, index, 0),
+            read_component(buffer, container, views, value, index, 1),
+            read_component(buffer, container, views, value, index, 2),
+        };
+    };
+    geometry.bounds_min = read_bound(local_bounds, 0);
+    geometry.bounds_max = read_bound(local_bounds, 1);
+    return geometry;
+}
+
+${gltfIblBrdfLutCpp()}
+
+/** A document image's bitmap for Canvas2D composition, as createImageBitmap decodes it. */
+pal::DecodedImage decode_gltf_bitmap(const TextureData& texture) {
+    if (!texture.compressed.mips.empty()) throw std::runtime_error("Canvas2D composition of compressed glTF images is unsupported.");
+    return pal::decode_image(js::ArrayBuffer(texture.bytes));
+}
+
+} // namespace
+
+/**
+ * One glTF file as read_gltf reads and parses it, off any realm. A realm
+ * load's job also settles, with prepare_gltf, what load_gltf computes without
+ * writing an engine record; load_gltf takes each settled product where it
+ * uses it, so a failed preparation raises its error in the loader's order.
+ */
+struct GltfSource {
+    std::string path;
+    ts::ArrayBuffer buffer;
+    std::shared_ptr<const upstream::ParsedGlbContainer> container;
+    GltfLoadPromise<GltfTables> tables;
+    /** Each planned primitive's geometry, in its source winding. */
+    std::vector<GltfLoadPromise<ModelGeometry>> geometries;
+    GltfPreparedMaterials materials;
+    GltfLoadPromise<std::vector<std::uint8_t>> brdf_lut;
+};
+
+namespace {
+
+/**
+ * prepare_gltf's products, in load_gltf's order. A product's own failure is
+ * settled in its promise; a document lookup that fails stops preparing, and
+ * load_gltf raises it where it reaches it.
+ */
+void prepare_gltf_products(GltfSource& file) {
+    const upstream::ParsedGlbContainer& container = *file.container;
+    const JsonObject& document = container.json.as_object();
+    file.tables = GltfLoadPromise<GltfTables>::settle([&] {
+        return gltf_tables(array_or_empty(document, "bufferViews"), array_or_empty(document, "accessors"), container);
+    });
+    const GltfTables& tables = file.tables.get();
+    const JsonArray& images = array_or_empty(document, "images");
+    file.materials.images.resize(images.size());
+    for (std::size_t index = 0; index < images.size(); ++index)
+        file.materials.images[index] = GltfLoadPromise<TextureData>::settle([&] {
+            return image_data(file.buffer, container, tables.views, images, index);
+        });
+    const auto decode = [&](std::size_t image) { return decode_gltf_bitmap(file.materials.images.at(image).get()); };
+    for (const auto& pair : gltf_orm_composite_pairs(document, images))
+        file.materials.orm_composites[pair] = GltfLoadPromise<std::shared_ptr<const pal::DecodedImage>>::settle([&] {
+            return gltf_orm_composite(decode, pair.first, pair.second);
+        });
+    const auto& mesh_plan = required(document, "${GLTF_MESH_PLAN}").as_object();
+    file.geometries.resize(required(mesh_plan, "meshes").as_array().size());
+    for (std::size_t index = 0; index < file.geometries.size(); ++index)
+        file.geometries[index] = GltfLoadPromise<ModelGeometry>::settle([&] {
+            return decode_planned_primitive(file.buffer, container, tables.views, tables.accessors, mesh_plan, index);
+        });
+${gltfIblPreparationCpp()}
+}
+
 ${load.definitions}
 
 } // namespace
@@ -1612,15 +1789,39 @@ std::optional<bool> run_pbr_rebuild_transaction(Scene& scene, const std::vector<
     return run_pbr_rebuild_transaction_impl(scene, meshes, builder);
 }
 
+std::shared_ptr<GltfSource> read_gltf(const std::string& path) {
+    auto file = std::make_shared<GltfSource>();
+    file->path = path;
+    file->buffer = ts::await(pal::fetch_array_buffer(path));
+    file->container = std::make_shared<const upstream::ParsedGlbContainer>(upstream::parse_glb_container(file->buffer));
+    return file;
+}
+
+void prepare_gltf(GltfSource& file) {
+    // What stops preparing is load_gltf's to raise, where it reaches it.
+    static_cast<void>(GltfLoadPromise<bool>::settle([&] {
+        prepare_gltf_products(file);
+        return true;
+    }));
+}
+
 ${
     gltfCameras
-        ? `AssetHandle load_gltf(Engine& engine, const std::string& path) {
-    return load_gltf(engine, path, false);
+        ? `AssetHandle load_gltf(Engine& engine, GltfSource& file) {
+    return load_gltf(engine, file, false);
+}
+
+AssetHandle load_gltf(Engine& engine, const std::string& path, bool load_cameras) {
+    return load_gltf(engine, *read_gltf(path), load_cameras);
 }
 
 `
         : ""
-}AssetHandle load_gltf(Engine& engine, const std::string& path${gltfCameras ? ", bool load_cameras" : ""}) {
+}AssetHandle load_gltf(Engine& engine, const std::string& path) {
+    return load_gltf(engine, *read_gltf(path));
+}
+
+AssetHandle load_gltf(Engine& engine, GltfSource& file${gltfCameras ? ", bool load_cameras" : ""}) {
 ${load.body}
 }
 ${lowered.boneControlEntryPoints}${

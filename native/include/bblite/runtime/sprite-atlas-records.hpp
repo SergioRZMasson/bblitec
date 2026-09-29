@@ -11,7 +11,8 @@ struct SpriteFrame {
 struct SpriteAtlasRecord {
     // Decoded at load, because `createGridSpriteAtlas` partitions the
     // texture it was handed and so needs its size before any frame exists.
-    std::vector<std::uint8_t> rgba;
+    // Written once at creation; the texture and native jobs share them.
+    SharedTexels rgba = share_texels({});
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     std::vector<SpriteFrame> frames;

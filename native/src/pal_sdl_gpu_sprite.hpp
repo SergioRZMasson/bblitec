@@ -289,11 +289,12 @@ inline SpriteAtlasGpu& sprite_atlas_gpu(SDL_GPUDevice* device, Engine& engine,
     // `loadTexture2D`, whose trilinear sampler the layer binds -- so a
     // minified sprite samples the same level the browser samples.
     gpu.owns_texture = !atlas.has_render_texture;
-    gpu.texture = atlas.has_render_texture
-                      ? handle_at(render_textures, atlas.render_texture)
-                      : upload_2d_texture(device, atlas.rgba.data(), atlas.rgba.size(), atlas.width,
-                                          atlas.height, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-                                          "sprite atlas", atlas_mip_levels(atlas));
+    gpu.texture =
+        atlas.has_render_texture
+            ? handle_at(render_textures, atlas.render_texture)
+            : upload_2d_texture(device, atlas.rgba->data(), atlas.rgba->size(), atlas.width,
+                                atlas.height, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, "sprite atlas",
+                                atlas_mip_levels(atlas));
     gpu.sampler = create_texture_sampler(device, atlas.sampler);
     cache.push_back(std::move(gpu));
     return cache.back();
@@ -591,22 +592,17 @@ inline void record_sprite_pass(SDL_GPUCommandBuffer* command, SDL_GPURenderPass*
     }
 }
 
-inline SceneSpritePass create_scene_sprite_pass(SDL_GPUDevice* device, Engine& engine,
-                                                const std::vector<Sprite2DLayerHandle>& handles,
-                                                const std::vector<SDL_GPUTexture*>& render_textures,
-                                                SDL_GPUTextureFormat target_format,
-                                                SDL_GPUTextureFormat depth_format,
-                                                SDL_GPUSampleCount sample_count) {
-    SceneSpritePass pass{device};
-    pass.handles = handles;
-    pass.target_format = target_format;
-    pass.depth_format = depth_format;
-    pass.sample_count = sample_count;
-    const std::array<std::uint16_t, 6> quad_indices{0u, 1u, 2u, 0u, 2u, 3u};
-    pass.index_buffer = upload_buffer(device, SDL_GPU_BUFFERUSAGE_INDEX, quad_indices.data(),
-                                      quad_indices.size() * sizeof(std::uint16_t));
+/**
+ * Adds a layer to the scene pass for each of `handles` from `first` on; each
+ * shares the pipeline of the first compatible layer the pass already holds.
+ */
+inline void append_scene_sprite_layers(SDL_GPUDevice* device, Engine& engine, SceneSpritePass& pass,
+                                       const std::vector<Sprite2DLayerHandle>& handles,
+                                       std::size_t first,
+                                       const std::vector<SDL_GPUTexture*>& render_textures) {
     pass.layers.reserve(handles.size());
-    for (const Sprite2DLayerHandle handle : handles) {
+    for (std::size_t index = first; index < handles.size(); ++index) {
+        const Sprite2DLayerHandle handle = handles[index];
         if (handle_at(engine.sprite_layers, handle).depth_mode == Sprite2DDepthMode::none) {
             throw std::runtime_error("A scene-attached Sprite2D layer must have depth enabled.");
         }
@@ -618,11 +614,53 @@ inline SceneSpritePass create_scene_sprite_pass(SDL_GPUDevice* device, Engine& e
                 break;
             }
         }
-        pass.layers.push_back(build_sprite_layer_gpu(device, engine, handle, render_textures,
-                                                     pass.atlases, target_format, depth_format,
-                                                     sample_count, shared_pipeline));
+        pass.layers.push_back(build_sprite_layer_gpu(
+            device, engine, handle, render_textures, pass.atlases, pass.target_format,
+            pass.depth_format, pass.sample_count, shared_pipeline));
+        pass.handles.push_back(handle);
     }
+}
+
+inline SceneSpritePass create_scene_sprite_pass(SDL_GPUDevice* device, Engine& engine,
+                                                const std::vector<Sprite2DLayerHandle>& handles,
+                                                const std::vector<SDL_GPUTexture*>& render_textures,
+                                                SDL_GPUTextureFormat target_format,
+                                                SDL_GPUTextureFormat depth_format,
+                                                SDL_GPUSampleCount sample_count) {
+    SceneSpritePass pass{device};
+    pass.target_format = target_format;
+    pass.depth_format = depth_format;
+    pass.sample_count = sample_count;
+    const std::array<std::uint16_t, 6> quad_indices{0u, 1u, 2u, 0u, 2u, 3u};
+    pass.index_buffer = upload_buffer(device, SDL_GPU_BUFFERUSAGE_INDEX, quad_indices.data(),
+                                      quad_indices.size() * sizeof(std::uint16_t));
+    append_scene_sprite_layers(device, engine, pass, handles, 0, render_textures);
     return pass;
+}
+
+/**
+ * The scene pass follows the depth-hosted layers the scene draws
+ * (`follow_scene_sprite_layers`), and records the `renderable_version` it
+ * followed. Setup calls it, and so does any frame whose scene has built since.
+ */
+inline void sync_scene_sprite_pass(SDL_GPUDevice* device, Engine& engine, const Scene& scene,
+                                   SceneSpritePass& pass, bool& has_pass,
+                                   std::uint64_t& renderable_version,
+                                   const std::vector<SDL_GPUTexture*>& render_textures,
+                                   SDL_GPUTextureFormat target_format,
+                                   SDL_GPUTextureFormat depth_format,
+                                   SDL_GPUSampleCount sample_count) {
+    const std::vector<Sprite2DLayerHandle>& members = scene.depth_hosted_sprite_layers;
+    follow_scene_sprite_layers(
+        pass, has_pass, members,
+        [&] {
+            return create_scene_sprite_pass(device, engine, members, render_textures, target_format,
+                                            depth_format, sample_count);
+        },
+        [&](std::size_t first) {
+            append_scene_sprite_layers(device, engine, pass, members, first, render_textures);
+        });
+    renderable_version = scene.state->renderable_version;
 }
 
 inline void upload_scene_sprite_pass(SDL_GPUDevice* device, Engine& engine, SceneSpritePass& pass,

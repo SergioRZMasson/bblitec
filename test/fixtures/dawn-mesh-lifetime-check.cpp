@@ -33,6 +33,7 @@
 #include <cassert>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <tuple>
 #include <vector>

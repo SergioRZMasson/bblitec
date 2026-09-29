@@ -35,6 +35,7 @@ interface AsyncContext extends Pick<
     | "asyncActivations"
     | "allocateTemporaryCppName"
     | "registerNativeBinding"
+    | "registerNativeBindingType"
     | "nativeEmission"
     | "emit"
     | "emitDiscardedValue"
@@ -1158,14 +1159,20 @@ export class AsyncLowerer {
             };
         }
         const name = context.allocateTemporaryCppName("promise_argument");
-        const parameterType = rejection
+        // A settled value is passed by const reference, an exception by value.
+        const parameterStorage = rejection
             ? "std::exception_ptr"
-            : `const ${promise.promiseType}&`;
+            : `const ${promise.promiseType}`;
+        const parameterType = rejection
+            ? parameterStorage
+            : `${parameterStorage}&`;
         const result: { value: Value } = { value: { kind: "void", cpp: "" } };
         const compiled = context.withOwnedCallbackBody(() =>
             context.captureManagedClosureLines(() => {
                 const inputs: Value[] = [];
                 if (!cleanup) {
+                    // A capture of the parameter takes its declared constness.
+                    context.registerNativeBindingType(name, parameterStorage);
                     const binding = context.registerNativeBinding(name);
                     inputs.push(
                         rejection

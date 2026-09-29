@@ -325,10 +325,11 @@ SDL_GPUVertexElementFormat pinned_vertex_format(upstream::PinnedVertexFormat for
     throw std::runtime_error("Unmapped pinned vertex format.");
 }
 
-void create_background_arms(GpuState& state, const Scene& scene,
+void create_background_arms(GpuState& state, const EnvironmentState& environment,
+                            std::vector<PinnedBackgroundArmBuffers> arms,
                             const SDL_GPUGraphicsPipelineCreateInfo& base,
                             const SDL_GPUColorTargetDescription& base_target) {
-    state.background_draws.for_each([&](upstream::PinnedBackgroundArmKind kind) {
+    for (auto& [kind, data] : arms) {
         const upstream::PinnedBackgroundArm& arm = upstream::pinned_background_arm(kind);
         GpuBackgroundArm resources;
         resources.arm = &arm;
@@ -375,7 +376,6 @@ void create_background_arms(GpuState& state, const Scene& scene,
         }
         resources.vertex_slots = std::move(vertex.slots);
         resources.fragment_slots = std::move(fragment.slots);
-        upstream::PinnedBackgroundBuffers data = upstream::pinned_background_buffers(arm, scene);
         for (const std::vector<std::uint8_t>& bytes : data.vertex) {
             resources.vertex_buffers.push_back(upload_buffer(
                 state.device, SDL_GPU_BUFFERUSAGE_VERTEX, bytes.data(), bytes.size()));
@@ -389,14 +389,14 @@ void create_background_arms(GpuState& state, const Scene& scene,
         switch (kind) {
         case upstream::PinnedBackgroundArmKind::ground:
         case upstream::PinnedBackgroundArmKind::ground_dither:
-            resources.texture = upload_texture(state.device, scene.environment.ground_texture,
-                                               false, {255, 255, 255, 255});
+            resources.texture = upload_texture(state.device, environment.ground_texture, false,
+                                               {255, 255, 255, 255});
             resources.owns_texture = true;
             resources.sampler = state.ground_sampler;
             break;
         case upstream::PinnedBackgroundArmKind::dds_skybox:
         case upstream::PinnedBackgroundArmKind::dds_skybox_no_dither:
-            resources.texture = upload_dds_skybox(state.device, scene.environment);
+            resources.texture = upload_dds_skybox(state.device, environment);
             resources.owns_texture = true;
             resources.sampler = state.background_sampler;
             break;
@@ -405,8 +405,7 @@ void create_background_arms(GpuState& state, const Scene& scene,
             resources.sampler = state.background_sampler;
             break;
         case upstream::PinnedBackgroundArmKind::image_skybox:
-            resources.texture =
-                upload_cube_texture(state.device, &scene.environment.image_skybox_faces);
+            resources.texture = upload_cube_texture(state.device, &environment.image_skybox_faces);
             resources.owns_texture = true;
             resources.sampler = state.background_sampler;
             break;
@@ -414,7 +413,7 @@ void create_background_arms(GpuState& state, const Scene& scene,
             break;
         }
         state.background_arms.push_back(std::move(resources));
-    });
+    }
 }
 
 void draw_background_arm(SDL_GPUCommandBuffer* command, SDL_GPURenderPass* pass,

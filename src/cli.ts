@@ -133,6 +133,7 @@ interface CliOptions {
     environment: Record<string, string>;
     hostUi?: string;
     idDiagnostics: boolean;
+    sourceProfile?: string[];
 }
 
 /**
@@ -156,6 +157,7 @@ const OPTION_FLAGS: ReadonlyArray<{ flag: string; value?: string }> = [
     { flag: "--env", value: "<NAME=value>" },
     { flag: "--host-ui", value: "<json>" },
     { flag: "--id-diagnostics" },
+    { flag: "--source-profile", value: "<function,...>" },
 ];
 
 function usage(): never {
@@ -197,6 +199,7 @@ function parseArguments(arguments_: string[]): CliOptions {
     const environment = new Map<string, string>();
     let hostUi: string | undefined;
     let idDiagnostics = false;
+    let sourceProfile: string[] | undefined;
 
     for (let index = 1; index < arguments_.length; index += 1) {
         const flag = arguments_[index];
@@ -269,6 +272,19 @@ function parseArguments(arguments_: string[]): CliOptions {
             case "--id-diagnostics":
                 idDiagnostics = true;
                 break;
+            case "--source-profile": {
+                const names = value
+                    ?.split(",")
+                    .map((name) => name.trim())
+                    .filter(Boolean);
+                if (!names?.length)
+                    throw new Error(
+                        "--source-profile expects comma-separated source function names.",
+                    );
+                sourceProfile = names;
+                index += 1;
+                break;
+            }
             default:
                 throw new Error(`Unknown argument '${flag}'.`);
         }
@@ -294,6 +310,7 @@ function parseArguments(arguments_: string[]): CliOptions {
         ...(publicUrl ? { publicUrl } : {}),
         ...(siteUrl ? { siteUrl } : {}),
         ...(hostUi ? { hostUi } : {}),
+        ...(sourceProfile ? { sourceProfile } : {}),
     };
 }
 
@@ -825,6 +842,9 @@ async function main(): Promise<void> {
         ...(options.siteUrl ? { siteUrl: options.siteUrl } : {}),
         ...(options.hostUi
             ? { nativeHostUi: readNativeHostUi(options.hostUi) }
+            : {}),
+        ...(options.sourceProfile
+            ? { sourceProfile: options.sourceProfile }
             : {}),
     };
     if (options.target.kind === "survey") {

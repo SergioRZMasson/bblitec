@@ -142,13 +142,31 @@ the latest canvas frames. Completion receipts contain weak native inbox referenc
 consumer fences prevent overwriting sampled images. Normal presentation uses GPU textures; captures
 use readback. SDL submits on the acquiring thread; Dawn synchronizes the shared device.
 
-The first document snapshot follows initialization microtasks. Image decode readiness and source
-callbacks remain on the application realm.
-Window scene preparation runs texture decoding/uploads and ordinary material-pipeline compilation
-as native jobs, yielding to realm timers until they finish. Jobs carry immutable texture snapshots and
-GPU data, not application callbacks. Dawn requires implicit device synchronization; geometry-output
-pipelines and worker-free builds prepare on the renderer thread. Readiness still requires the first
-complete published canvas frame. SDL batches each startup mesh's buffer writes into one copy submission.
+The first document snapshot follows initialization microtasks. Later periodic snapshots publish
+without waiting for the display, one at a time; layout reads still wait for it. Source callbacks
+and UI image `decode()` settlement remain on the application realm; a realm's `loadTexture2D` image
+decoding, `loadGltf` file reading, parsing, primitive decoding, embedded-image extraction, ORM
+composition and IBL BRDF-table reads (the realm writes its engine records as it settles; a
+synchronous load decodes as it goes), packaged `fetch` file reads and the
+[audio contract](fidelity.md#audio-contract)'s jobs run as native jobs (`pal_native_job.hpp`) that
+settle on the realm in start order, each in its own task: the order is the same in every run, and a
+slow job delays the settlements started after it. Native jobs and scene preparation share the
+process's bounded native workers (`pal_native_workers.hpp`), which serve work in submission order;
+native work never waits on other native work.
+Window scene preparation runs texture decoding/uploads, environment, background and Dawn billboard
+preparation and ordinary material-pipeline and copy-blit compilation on the native workers, yielding to
+realm timers until they finish. The environment finishes before mesh uploads, which bind its reflection
+cubes; the background builds beside pipeline compilation. Jobs carry immutable texture, environment
+and record snapshots and GPU data, not application callbacks. Dawn requires implicit device
+synchronization; geometry-output pipelines and worker-free builds prepare on the renderer thread.
+Dawn also creates each drawn material's per-draw blocks during preparation; their groups bind
+resources the first frame creates (bone and VAT textures, shadow maps, frame-graph textures) and
+build there.
+`loadTexture2D` decodes its image at load, applying the upload's `invertY` and `premultiplyAlpha`;
+sprite atlases and the first upload share those texels, which the first frame boundary after the load
+settles drops unless an atlas keeps them.
+Readiness still requires the first complete published canvas frame. SDL batches each startup mesh's
+buffer writes into one copy submission.
 Material families share immutable image uploads while retaining their own samplers; SDL_image codec
 calls are serialized across native jobs and UI.
 

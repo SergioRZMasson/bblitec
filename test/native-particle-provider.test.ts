@@ -12,6 +12,7 @@ import { bakeNodeParticles } from "../src/pinned-node-particle.js";
 import { LoweringContext } from "../src/lowering/context.js";
 import { NodeParticleLowerer } from "../src/lowering/node-particle-lowerer.js";
 import { BillboardLowerer } from "../src/lowering/billboard-lowerer.js";
+import { pinnedSurfaceHeader } from "../src/lowering/pinned-surface.js";
 import { SpriteLowerer } from "../src/lowering/sprite-lowerer.js";
 
 function scene(body: string, helpers = ""): string {
@@ -334,6 +335,10 @@ test("authored moving-emitter modes carry pinned build facts without freezing na
                 billboard.header,
             );
             writeFileSync(join(headers, "sprite_layer.hpp"), sprite.header);
+            writeFileSync(
+                join(headers, "pinned_surface.hpp"),
+                pinnedSurfaceHeader(context),
+            );
             // The one generator capability the billboard header tests.
             writeFileSync(
                 join(headers, "render_capabilities.hpp"),

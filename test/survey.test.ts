@@ -125,6 +125,29 @@ test("a refused value return is the calling statement's refusal", () => {
     assert.deepEqual(report.statements, { attempted: 4, refused: 4 });
 });
 
+test("a survey names a class member's refusal by its qualified name", () => {
+    // The census, refusals and `--source-profile` share one function name.
+    const { report } = surveySource(
+        `
+        let total = 0;
+        class Holder {
+            run(): void {
+                const p = new Proxy({}, {});
+                if (p) total += 1;
+            }
+        }
+        new Holder().run();
+        localStorage.setItem("total", String(total));
+    `,
+        { fileName: resolve("survey-member.ts") },
+    );
+    const proxy = report.refusals.find(
+        (refusal) => refusal.message === "Unsupported constructor expression.",
+    );
+    assert.ok(proxy, listed(report));
+    assert.equal(proxy.statement.function, "Holder.run");
+});
+
 test("refusal classes elide names, numbers and parenthesised detail", () => {
     assert.equal(
         refusalClass("Unknown or unsupported variable 'p'."),

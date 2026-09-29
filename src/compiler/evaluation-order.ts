@@ -70,6 +70,17 @@ type Unit = ts.FunctionLikeDeclaration | ts.PropertyDeclaration;
 /** The generator `Math.random` advances: each call reads and writes it. */
 const randomState = Symbol("Math.random");
 
+/** The global library functions whose answer is a conversion of their arguments. */
+const argumentAnsweringGlobals = new Set([
+    "String",
+    "Number",
+    "Boolean",
+    "parseInt",
+    "parseFloat",
+    "isNaN",
+    "isFinite",
+]);
+
 function emptyStorage(): Storage {
     return { any: false, heap: false, variables: new Set() };
 }
@@ -154,6 +165,8 @@ export class EvaluationOrder {
     private readonly direct = new Map<Unit, DirectAccess>();
     /** @unjournaled A cache of one unit's reachable accesses, from source alone. */
     private readonly summaries = new Map<Unit, Access>();
+    /** @unjournaled A cache of whether one unit answers from its arguments alone. */
+    private readonly deterministic = new Map<Unit, boolean>();
 
     public constructor(
         private readonly checker: ts.TypeChecker,
@@ -184,6 +197,120 @@ export class EvaluationOrder {
     public touchesStorage(node: ts.Node): boolean {
         const access = this.access(node);
         return touchesAnything(access.reads) || touchesAnything(access.writes);
+    }
+
+    /** Whether evaluating `node` can write any variable or object state. */
+    public writesStorage(node: ts.Node): boolean {
+        return touchesAnything(this.access(node).writes);
+    }
+
+    /**
+     * Whether running `unit` touches no storage outside its own frame, with
+     * everything it calls, and asks nothing of the host: its result is a
+     * function of its arguments alone.
+     */
+    public isPure(unit: ts.FunctionLikeDeclaration): boolean {
+        const summary = this.summary(unit);
+        return (
+            !touchesAnything(summary.reads) &&
+            !touchesAnything(summary.writes) &&
+            this.answersFromArguments(unit)
+        );
+    }
+
+    /**
+     * Whether every call `unit` makes, with the functions and accessors it
+     * reaches, answers from its arguments. The storage model above treats a
+     * library call on a global (`Date.now()`, `performance.now()`,
+     * `localStorage.getItem`) as touching no program state, which orders
+     * operands correctly but says nothing of the clock, the page or the
+     * network behind it. So only the library functions known to answer
+     * from their arguments qualify: `Math`'s but `random`, the primitive
+     * conversions, and a primitive receiver's own methods other than the
+     * locale-dependent ones. An engine call, a construction of a library
+     * class, a callback handed to the library, and a call the analysis
+     * cannot follow do not. The units checked are the ones `summary`
+     * reaches, getters and setters included.
+     */
+    private answersFromArguments(unit: Unit): boolean {
+        const known = this.deterministic.get(unit);
+        if (known !== undefined) return known;
+        const reached = new Set<Unit>([unit]);
+        const pending: Unit[] = [unit];
+        let answers = true;
+        for (let next = pending.pop(); next && answers; next = pending.pop()) {
+            answers = this.callsAnswerFromArguments(next);
+            this.directAccess(next).callees.forEach((callee) => {
+                if (reached.has(callee)) return;
+                reached.add(callee);
+                pending.push(callee);
+            });
+        }
+        this.deterministic.set(unit, answers);
+        return answers;
+    }
+
+    /** Whether each call `unit` makes itself is to a reachable unit or answers from its arguments. */
+    private callsAnswerFromArguments(unit: Unit): boolean {
+        const roots: ts.Node[] = ts.isPropertyDeclaration(unit)
+            ? unit.initializer
+                ? [unit.initializer]
+                : []
+            : [
+                  ...unit.parameters.flatMap((parameter) =>
+                      parameter.initializer ? [parameter.initializer] : [],
+                  ),
+                  ...(unit.body ? [unit.body] : []),
+              ];
+        let answers = true;
+        const visit = (current: ts.Node): "skip" | void => {
+            if (!answers) return "skip";
+            if (!ts.isCallExpression(current) && !ts.isNewExpression(current))
+                return;
+            // A unit's own calls are checked where `answersFromArguments`
+            // reaches it; a library call must answer from its arguments.
+            const units = this.callees(current);
+            if (units === "library")
+                answers = this.libraryAnswersFromArguments(current);
+            else if (!units) answers = false;
+        };
+        roots.forEach((root) =>
+            forEachAnalysisNode(root, visit, {
+                functions: "skip",
+                types: "skip",
+                memberNames: "skip",
+            }),
+        );
+        return answers;
+    }
+
+    /** Whether a library call is one `answersFromArguments` trusts. */
+    private libraryAnswersFromArguments(
+        call: ts.CallExpression | ts.NewExpression,
+    ): boolean {
+        if (ts.isNewExpression(call)) return false;
+        if (
+            call.arguments.some(
+                (argument) =>
+                    this.checker.getTypeAtLocation(argument).getCallSignatures()
+                        .length > 0,
+            )
+        )
+            return false;
+        const callee = unwrapExpression(call.expression);
+        if (ts.isIdentifier(callee))
+            return (
+                libraryGlobal(this.checker, callee) !== undefined &&
+                argumentAnsweringGlobals.has(callee.text)
+            );
+        if (!ts.isPropertyAccessExpression(callee)) return false;
+        if (libraryGlobal(this.checker, callee.expression) === "Math")
+            return callee.name.text !== "random";
+        return (
+            this.isPrimitive(callee.expression) &&
+            !callee.name.text.startsWith("toLocale") &&
+            callee.name.text !== "localeCompare"
+        );
     }
 
     /** Everything evaluating `node` touches, the functions it calls included. */

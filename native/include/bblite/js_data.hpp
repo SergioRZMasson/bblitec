@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bblite/byte_hash.hpp>
 #include <bblite/js_callback.hpp>
 #include <bblite/js_error.hpp>
 #include <bblite/dom_event_state.hpp>
@@ -39,7 +40,6 @@
 #include <string_view>
 #include <type_traits>
 #include <tuple>
-#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -85,7 +85,7 @@ template <typename... T> [[nodiscard]] bool union_truthy(const std::variant<T...
 }
 
 template <typename T> class TypedArray;
-template <typename Values> class TypedArraySlot;
+template <typename Values, typename Owner = Values> class TypedArraySlot;
 template <typename T> [[nodiscard]] T numeric_store_value(double value);
 
 /** Integer-indexed typed-array stores ignore absent indices, as JavaScript does. */
@@ -344,10 +344,12 @@ private:
 
 /** A source element reference retains its evaluated view even if the RHS
  * reassigns the array binding. The compiler supplies the JS store conversion. */
-template <typename Values> class TypedArraySlot {
+/** A typed-array element as an lvalue; `Owner` holds the view (`Values`) or borrows it (`Values&`). */
+template <typename Values, typename Owner> class TypedArraySlot {
 public:
     using value_type = typename Values::value_type;
-    TypedArraySlot(Values owner, std::size_t index) : owner_(std::move(owner)), index_(index) {}
+    TypedArraySlot(Owner owner, std::size_t index)
+        : owner_(std::forward<Owner>(owner)), index_(index) {}
     TypedArraySlot(const TypedArraySlot&) = default;
     [[nodiscard]] operator value_type() const { return owner_.load(index_); }
     TypedArraySlot& operator=(value_type value) {
@@ -369,13 +371,21 @@ private:
         owner_.store(index_, numeric_store_value<value_type>(next));
         return prefix ? next : previous;
     }
-    Values owner_;
+    Owner owner_;
     std::size_t index_;
 };
 template <typename T>
 [[nodiscard]] TypedArraySlot<TypedArray<T>> TypedArray<T>::slot(std::size_t index) {
     return {*this, index};
 }
+
+/**
+ * A source element reference that does not own its view. The compiler
+ * selects it for a named owner only when nothing evaluated between the
+ * element and its store writes any storage, so the binding can neither be
+ * replaced nor release the view before the store.
+ */
+template <typename Values> using BorrowedTypedArraySlot = TypedArraySlot<Values, Values&>;
 
 template <typename Values>
 [[nodiscard]] decltype(auto) typed_array_load(const Values& values, std::size_t index) {
@@ -388,6 +398,14 @@ template <typename Values>
 [[nodiscard]] decltype(auto) typed_array_slot(Values& values, std::size_t index) {
     if constexpr (requires { values.slot(index); })
         return values.slot(index);
+    else
+        return values[index];
+}
+/** `typed_array_slot` for a store that cannot replace or release the owner. */
+template <typename Values>
+[[nodiscard]] decltype(auto) typed_array_borrowed_slot(Values& values, std::size_t index) {
+    if constexpr (requires { values.slot(index); })
+        return BorrowedTypedArraySlot<Values>(values, index);
     else
         return values[index];
 }
@@ -692,23 +710,37 @@ public:
     using iterator = value_type*;
     using const_iterator = const value_type*;
 
-    U8Array() = default;
+    U8Array() : U8Array(ArrayBuffer(), 0, 0) {}
     explicit U8Array(std::size_t length)
-        : buffer_(std::vector<std::uint8_t>(length, std::uint8_t{0})), length_(length) {}
-    explicit U8Array(const ArrayBuffer& buffer) : buffer_(buffer), length_(buffer.byte_length()) {}
+        : U8Array(ArrayBuffer(std::vector<std::uint8_t>(length, std::uint8_t{0})), 0, length) {}
+    explicit U8Array(const ArrayBuffer& buffer) : U8Array(buffer, 0, buffer.byte_length()) {}
     U8Array(const ArrayBuffer& buffer, std::size_t byte_offset)
         : U8Array(buffer, byte_offset, buffer.byte_length() - byte_offset) {}
     U8Array(const ArrayBuffer& buffer, std::size_t byte_offset, std::size_t length)
-        : buffer_(buffer), offset_(byte_offset), length_(length) {
-        if (offset_ > buffer.byte_length() || length_ > buffer.byte_length() - offset_) {
+        : view_(std::make_shared<View>(View{buffer, byte_offset})), length_(length) {
+        if (byte_offset > buffer.byte_length() || length > buffer.byte_length() - byte_offset) {
             throw std::runtime_error("Uint8Array exceeds ArrayBuffer.");
         }
+        data_ = view_->buffer.data() + byte_offset;
+    }
+    U8Array(const U8Array&) = default;
+    U8Array& operator=(const U8Array&) = default;
+    // A move takes the view block and leaves an empty, bufferless view, so a
+    // moved-from value never reaches another view's bytes.
+    U8Array(U8Array&& other) noexcept
+        : view_(std::move(other.view_)), length_(std::exchange(other.length_, 0)),
+          data_(std::exchange(other.data_, nullptr)) {}
+    U8Array& operator=(U8Array&& other) noexcept {
+        view_ = std::move(other.view_);
+        length_ = std::exchange(other.length_, 0);
+        data_ = std::exchange(other.data_, nullptr);
+        return *this;
     }
 
     [[nodiscard]] std::size_t size() const { return length_; }
     [[nodiscard]] std::size_t length() const { return length_; }
-    [[nodiscard]] std::uint8_t* data() { return buffer_.data() + offset_; }
-    [[nodiscard]] const std::uint8_t* data() const { return buffer_.data() + offset_; }
+    [[nodiscard]] std::uint8_t* data() { return data_; }
+    [[nodiscard]] const std::uint8_t* data() const { return data_; }
     [[nodiscard]] iterator begin() { return data(); }
     [[nodiscard]] iterator end() { return data() + length_; }
     [[nodiscard]] const_iterator begin() const { return data(); }
@@ -718,13 +750,13 @@ public:
     [[nodiscard]] std::uint8_t load(std::size_t index) const { return data()[index]; }
     void store(std::size_t index, std::uint8_t value) { data()[index] = value; }
     [[nodiscard]] TypedArraySlot<U8Array> slot(std::size_t index);
-    [[nodiscard]] const void* identity() const { return identity_.get(); }
-    [[nodiscard]] std::shared_ptr<void> shared_identity() const { return identity_; }
+    [[nodiscard]] const void* identity() const { return view_.get(); }
+    [[nodiscard]] std::shared_ptr<void> shared_identity() const { return view_; }
     [[nodiscard]] friend bool operator==(const U8Array& left, const U8Array& right) {
         return left.identity() == right.identity();
     }
-    [[nodiscard]] ArrayBuffer buffer() const { return buffer_; }
-    [[nodiscard]] std::size_t byte_offset() const { return offset_; }
+    [[nodiscard]] ArrayBuffer buffer() const { return view_ ? view_->buffer : ArrayBuffer(); }
+    [[nodiscard]] std::size_t byte_offset() const { return view_ ? view_->offset : 0; }
     [[nodiscard]] std::size_t byte_length() const { return length_; }
     [[nodiscard]] std::vector<std::uint8_t> to_vector() const {
         return std::vector<std::uint8_t>(data(), data() + length_);
@@ -732,7 +764,7 @@ public:
     [[nodiscard]] U8Array subarray(std::size_t begin, std::size_t end) const {
         begin = std::min(begin, length_);
         end = std::min(std::max(end, begin), length_);
-        return U8Array(buffer_, offset_ + begin, end - begin);
+        return U8Array(buffer(), byte_offset() + begin, end - begin);
     }
     [[nodiscard]] U8Array slice(std::size_t begin, std::size_t end) const {
         const U8Array view = subarray(begin, end);
@@ -741,10 +773,17 @@ public:
     }
 
 private:
-    ArrayBuffer buffer_;
-    std::size_t offset_ = 0;
+    // One block per JavaScript view object: it retains the buffer and is
+    // the view's identity, so a copy of the view takes a single reference.
+    struct View {
+        ArrayBuffer buffer;
+        std::size_t offset = 0;
+    };
+    std::shared_ptr<View> view_;
     std::size_t length_ = 0;
-    std::shared_ptr<char> identity_ = std::make_shared<char>();
+    // The view's first byte. An ArrayBuffer never resizes its bytes, so the
+    // address holds for the view's life and a read skips the buffer's owner.
+    std::uint8_t* data_ = nullptr;
 };
 inline TypedArraySlot<U8Array> U8Array::slot(std::size_t index) { return {*this, index}; }
 
@@ -898,6 +937,59 @@ private:
     std::shared_ptr<void> identity_;
 };
 
+namespace detail {
+
+template <typename Vector> struct DeleteVector {
+    void operator()(Vector* vector) const noexcept { delete vector; }
+};
+
+/**
+ * One thread's recycled vector storage of one type. Array and tuple storage
+ * whose elements own no traced edge dies young -- a mesher's per-face corner
+ * and light lists -- so a new array takes a cleared vector, capacity and
+ * all, from here (and its control block from `RecycledBlocks`) instead of
+ * allocating both. Only small vectors are kept, and only so many, so a
+ * thread's list stays small.
+ */
+template <typename Vector> using RecycledVectors = RecycledList<Vector, 256, DeleteVector<Vector>>;
+inline constexpr std::size_t recycled_vector_capacity = 64;
+
+/** Returns a vector to its thread's list, cleared, or frees it. */
+template <typename Vector> struct RecycleVector {
+    void operator()(Vector* vector) const noexcept {
+        auto* list = thread_list<RecycledVectors<Vector>>;
+        if (list != nullptr && vector->capacity() <= recycled_vector_capacity) {
+            vector->clear();
+            if (list->keep(vector))
+                return;
+        }
+        delete vector;
+    }
+};
+
+/**
+ * A fresh vector, shared: a recycled one when the thread keeps one, filled
+ * by `fill` as a newly constructed vector would be.
+ */
+template <typename Vector, typename Fill>
+[[nodiscard]] std::shared_ptr<Vector> make_recycled_vector(Fill&& fill) {
+    Vector* vector = nullptr;
+    if (auto* list = recycled_list<RecycledVectors<Vector>>())
+        vector = list->take();
+    if (vector == nullptr)
+        vector = new Vector();
+    try {
+        std::forward<Fill>(fill)(*vector);
+    } catch (...) {
+        RecycleVector<Vector>{}(vector);
+        throw;
+    }
+    return std::shared_ptr<Vector>(vector, RecycleVector<Vector>{},
+                                   RecycledBlockAllocator<Vector, RecycledVectors<Vector>>{});
+}
+
+} // namespace detail
+
 /**
  * JavaScript Array storage. Copying an Array copies the reference, not its
  * elements; explicit array-producing operations construct a fresh wrapper.
@@ -979,7 +1071,25 @@ public:
 
 private:
     template <typename... Args> static std::shared_ptr<Storage> make_storage(Args&&... args) {
-        return make_gc_shared_if<gc_traceable<T>, Storage>(std::forward<Args>(args)...);
+        if constexpr (gc_traceable<T> || std::is_same_v<T, bool>) {
+            return make_gc_shared_if<gc_traceable<T>, Storage>(std::forward<Args>(args)...);
+        } else {
+            return detail::make_recycled_vector<Storage>(
+                [&](Storage& storage) { fill_storage(storage, std::forward<Args>(args)...); });
+        }
+    }
+    // A recycled vector is filled in place, keeping its capacity.
+    static void fill_storage(Storage&) {}
+    static void fill_storage(Storage& storage, std::initializer_list<T> values) {
+        storage.assign(values);
+    }
+    static void fill_storage(Storage& storage, std::size_t count) { storage.resize(count); }
+    static void fill_storage(Storage& storage, std::size_t count, const T& value) {
+        storage.assign(count, value);
+    }
+    template <typename Iterator>
+    static void fill_storage(Storage& storage, Iterator first, Iterator last) {
+        storage.assign(first, last);
     }
     // A JavaScript array literal that then grows a few elements -- the
     // per-face corner and light lists a voxel mesher builds -- would
@@ -1400,13 +1510,19 @@ template <typename T> struct MapGetResult<Nullable<T>> {
  * registry serves -- binds the reference and pays no refcount traffic.
  * The slot is a list node, so the reference outlives every insertion.
  */
+namespace detail {
+/**
+ * The empty reference a missed lookup hands back. Constant-initialized at
+ * namespace scope, so a miss -- an absent registry id read in a hot loop --
+ * reads it without the guard a function-local static checks on every call.
+ */
+template <typename T> inline constinit const Ref<T> empty_ref{};
+} // namespace detail
+
 template <typename T> struct MapGetResult<Ref<T>> {
     using Type = const Ref<T>&;
 
-    [[nodiscard]] static Type missing() {
-        static const Ref<T> empty;
-        return empty;
-    }
+    [[nodiscard]] static Type missing() { return detail::empty_ref<T>; }
     [[nodiscard]] static Type found(Ref<T>& value) { return value; }
 };
 
@@ -1551,16 +1667,101 @@ private:
 template <typename T> inline constexpr bool is_ref_v = false;
 template <typename T> inline constexpr bool is_ref_v<Ref<T>> = true;
 
-/** Insertion-ordered JavaScript Map and Set containers. */
+// Insertion-ordered JavaScript Map and Set containers.
+namespace detail {
+template <typename T> inline constexpr bool is_variant_v = false;
+template <typename... T> inline constexpr bool is_variant_v<std::variant<T...>> = true;
+
+/** A number key's hash under SameValueZero: every NaN is one key and -0 is the +0 key. */
+[[nodiscard]] inline std::size_t number_key_hash(double value) noexcept {
+    if (std::isnan(value))
+        value = std::numeric_limits<double>::quiet_NaN();
+    else if (value == 0.0)
+        value = 0.0;
+    return static_cast<std::size_t>(std::bit_cast<std::uint64_t>(value));
+}
+
+/**
+ * SameValueZero, the key equality of JavaScript Map and Set: NaN is NaN
+ * and -0 is +0. A short string -- a chunk coordinate, an id -- compares
+ * inline; the library's variable-length compare is a call that costs more
+ * than such a key's bytes.
+ */
+template <typename T> [[nodiscard]] bool same_value_zero(const T& left, const T& right) {
+    if constexpr (std::is_floating_point_v<T>) {
+        return left == right || (std::isnan(left) && std::isnan(right));
+    } else if constexpr (std::is_same_v<T, std::string>) {
+        const std::size_t size = left.size();
+        if (size != right.size())
+            return false;
+        constexpr std::size_t short_key = 16;
+        if (size > short_key)
+            return std::memcmp(left.data(), right.data(), size) == 0;
+        for (std::size_t index = 0; index < size; ++index) {
+            if (left[index] != right[index])
+                return false;
+        }
+        return true;
+    } else if constexpr (is_variant_v<T>) {
+        return left.index() == right.index() &&
+               std::visit(
+                   [](const auto& first, const auto& second) {
+                       if constexpr (std::is_same_v<decltype(first), decltype(second)>)
+                           return same_value_zero(first, second);
+                       else
+                           return false;
+                   },
+                   left, right);
+    } else {
+        return std::equal_to<T>{}(left, right);
+    }
+}
+
+/** The key Map.prototype.set and Set.prototype.add store: -0 becomes +0. */
+template <typename T> [[nodiscard]] decltype(auto) stored_key(const T& key) {
+    if constexpr (std::is_floating_point_v<T>) {
+        return key == 0 ? T{} : key;
+    } else if constexpr (is_variant_v<T>) {
+        T stored = key;
+        std::visit(
+            [](auto& member) {
+                if constexpr (std::is_floating_point_v<std::remove_cvref_t<decltype(member)>>) {
+                    if (member == 0)
+                        member = 0;
+                }
+            },
+            stored);
+        return stored;
+    } else {
+        return key;
+    }
+}
+} // namespace detail
+
+/**
+ * The hash a Map or Set index files a key under. It need not spread its
+ * bits -- the index mixes every hash before placing it -- so a number
+ * hashes its canonical bits, an object its identity and a string its bytes.
+ */
 template <typename T> struct ValueHash {
     [[nodiscard]] std::size_t operator()(const T& value) const noexcept {
-        if constexpr (requires { value.value; }) {
-            return std::hash<decltype(value.value)>{}(value.value);
+        if constexpr (std::is_floating_point_v<T>) {
+            return detail::number_key_hash(static_cast<double>(value));
+        } else if constexpr (std::is_integral_v<T> || std::is_enum_v<T>) {
+            return static_cast<std::size_t>(value);
+        } else if constexpr (std::is_pointer_v<T>) {
+            return static_cast<std::size_t>(reinterpret_cast<std::uintptr_t>(value));
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            // A key such as a chunk coordinate ("-3,12") is one step of
+            // overlapping loads, where the library's hash walks it bytewise.
+            return static_cast<std::size_t>(hash_bytes(value.data(), value.size()));
+        } else if constexpr (requires { value.value; }) {
+            return ValueHash<std::remove_cvref_t<decltype(value.value)>>{}(value.value);
         } else if constexpr (is_ref_v<T>) {
             // An object keys a Set or Map by identity.
-            return std::hash<const void*>{}(value.get());
+            return ValueHash<const void*>{}(value.get());
         } else if constexpr (requires { value.identity(); }) {
-            return std::hash<decltype(value.identity())>{}(value.identity());
+            return ValueHash<std::remove_cvref_t<decltype(value.identity())>>{}(value.identity());
         } else {
             return std::hash<T>{}(value);
         }
@@ -1570,7 +1771,7 @@ template <typename T> struct ValueHash {
 /** A stored function hashes by the identity its equality already uses. */
 template <typename Sig> struct ValueHash<Callback<Sig>> {
     [[nodiscard]] std::size_t operator()(const Callback<Sig>& value) const noexcept {
-        return std::hash<std::size_t>{}(value.identity());
+        return value.identity();
     }
 };
 
@@ -1582,14 +1783,132 @@ template <typename... T> struct ValueHash<std::variant<T...>> {
     }
 };
 
+namespace detail {
 /**
- * The container shell Map and Set share: insertion-ordered slots, an
- * unordered index from a key into them, the erase that soft-deletes
- * under a live iterator, and the iterator surface over the slots. The
- * derived containers keep only their own entry shape and lookup API —
- * Map indexes `std::pair<K, V>` by the pair's first, Set indexes the
- * value by itself — and both hand the key to `insert` explicitly, so
- * the shell needs no key projection.
+ * A Map or Set index: open addressing over the positions of the entries,
+ * which live in their insertion-ordered list. A cell holds its key's mixed
+ * hash (never zero; zero marks an empty cell) and the entry's position, and
+ * a lookup compares the key the entry itself holds, so the index copies no
+ * key. Linear probing from the hash's high bits, growth by doubling past
+ * three-quarters full, and an erase that shifts the cells after it back, so
+ * a probe ends at the first empty cell and no deleted cell ever lengthens it.
+ */
+template <typename Position> class HashIndex {
+public:
+    struct Cell {
+        std::uint64_t tag = 0;
+        Position position{};
+    };
+
+    /**
+     * A key's ValueHash mixed into a tag by one odd multiply, whose high bits
+     * -- the home cell -- depend on every bit of the hash. Keys that differ a
+     * little, as ids and chunk coordinates do, land spread apart.
+     */
+    [[nodiscard]] static std::uint64_t tag_of(std::size_t hash) noexcept {
+        return (static_cast<std::uint64_t>(hash) * 0x9E3779B97F4A7C15ull) | 1u;
+    }
+
+    [[nodiscard]] std::size_t size() const noexcept { return count_; }
+
+    /** The cell filed under `tag` whose entry `matches`, or null. */
+    template <typename Matches>
+    [[nodiscard]] Cell* find(std::uint64_t tag, Matches&& matches) const {
+        if (count_ == 0)
+            return nullptr;
+        for (std::size_t index = home(tag);; index = (index + 1) & mask_) {
+            Cell& cell = cells_[index];
+            if (cell.tag == 0)
+                return nullptr;
+            if (cell.tag == tag && matches(cell.position))
+                return &cell;
+        }
+    }
+
+    /** Make room for one more cell, so the `insert` that follows cannot throw. */
+    void reserve_one() {
+        if ((count_ + 1) * 4 > capacity() * 3)
+            rehash(capacity() == 0 ? minimum_capacity : capacity() * 2);
+    }
+
+    /** File a position whose key the index does not hold, after `reserve_one`. */
+    void insert(std::uint64_t tag, Position position) noexcept {
+        place(tag, position);
+        ++count_;
+    }
+
+    void erase(Cell* cell) noexcept {
+        auto hole = static_cast<std::size_t>(cell - cells_.get());
+        for (std::size_t next = (hole + 1) & mask_;; next = (next + 1) & mask_) {
+            Cell& candidate = cells_[next];
+            if (candidate.tag == 0)
+                break;
+            // The candidate fills the hole unless its home lies after the
+            // hole, where a probe for it would never reach the hole.
+            if (((next - home(candidate.tag)) & mask_) >= ((next - hole) & mask_)) {
+                cells_[hole] = candidate;
+                hole = next;
+            }
+        }
+        cells_[hole] = Cell{};
+        --count_;
+    }
+
+    /**
+     * Empty the index. A map cleared and refilled every frame keeps its
+     * cells, as an erased one does, instead of growing them again; only a
+     * table past `kept_capacity` -- a one-off bulk load -- is released.
+     */
+    void clear() noexcept {
+        if (capacity() > kept_capacity) {
+            cells_.reset();
+            mask_ = 0;
+            shift_ = 64;
+        } else if (count_ > 0) {
+            std::fill_n(cells_.get(), capacity(), Cell{});
+        }
+        count_ = 0;
+    }
+
+private:
+    static constexpr std::size_t minimum_capacity = 4;
+    // 64 Ki cells (1 MiB in a release build): room for 49,152 keys.
+    static constexpr std::size_t kept_capacity = std::size_t{1} << 16;
+
+    [[nodiscard]] std::size_t capacity() const noexcept { return cells_ ? mask_ + 1 : 0; }
+    [[nodiscard]] std::size_t home(std::uint64_t tag) const noexcept {
+        return static_cast<std::size_t>(tag >> shift_);
+    }
+    void place(std::uint64_t tag, Position position) noexcept {
+        std::size_t index = home(tag);
+        while (cells_[index].tag != 0)
+            index = (index + 1) & mask_;
+        cells_[index] = Cell{tag, position};
+    }
+    void rehash(std::size_t capacity) {
+        auto previous = std::exchange(cells_, std::make_unique<Cell[]>(capacity));
+        const std::size_t previous_capacity = previous ? mask_ + 1 : 0;
+        mask_ = capacity - 1;
+        shift_ = static_cast<unsigned>(64 - std::countr_zero(capacity));
+        for (std::size_t index = 0; index < previous_capacity; ++index) {
+            if (previous[index].tag != 0)
+                place(previous[index].tag, previous[index].position);
+        }
+    }
+
+    std::unique_ptr<Cell[]> cells_;
+    std::size_t count_ = 0;
+    std::size_t mask_ = 0;
+    unsigned shift_ = 64;
+};
+} // namespace detail
+
+/**
+ * The container shell Map and Set share: insertion-ordered slots, the hash
+ * index from a key to its slot, the erase that soft-deletes under a live
+ * iterator, and the iterator surface over the slots. The derived containers
+ * keep only their own entry shape and lookup API: Map indexes
+ * `std::pair<K, V>` by the pair's first, Set indexes the value by itself.
  */
 template <typename EntryT, typename KeyT> class IndexedInsertionOrdered {
 public:
@@ -1601,7 +1920,7 @@ public:
         return storage_ == other.storage_;
     }
 
-    [[nodiscard]] bool has(const KeyT& key) const { return find(key) != storage_->index.end(); }
+    [[nodiscard]] bool has(const KeyT& key) const { return locate(key) != nullptr; }
     template <typename Query>
         requires std::is_same_v<Query, KeyT>
     [[nodiscard]] bool has(const Nullable<Query>& key) const {
@@ -1613,22 +1932,26 @@ public:
         return key && erase(*key);
     }
     [[nodiscard]] bool erase(const KeyT& key) {
-        const auto entry = find(key);
-        if (entry == storage_->index.end())
+        Storage& storage = *storage_;
+        auto* cell = find_cell(key, tag_of(key));
+        if (cell == nullptr)
             return false;
-        const auto slot = entry->second;
-        storage_->invalidate_lookup();
-        storage_->index.erase(entry);
-        if (storage_->iterator_count > 0) {
+        const auto slot = cell->position;
+        storage.index.erase(cell);
+        forget_dense_key(key);
+        if (storage.iterator_count > 0) {
             slot->active = false;
         } else {
-            storage_->entries.erase(slot);
+            storage.entries.erase(slot);
         }
         return true;
     }
     void clear() {
-        storage_->invalidate_lookup();
         storage_->index.clear();
+        if constexpr (dense_keys) {
+            if (storage_->dense.slots)
+                storage_->dense.slots->clear();
+        }
         if (storage_->iterator_count > 0) {
             for (Slot& entry : storage_->entries) {
                 entry.active = false;
@@ -1657,64 +1980,151 @@ public:
 
 protected:
     using OrderedStorage = InsertionOrderedStorage<EntryT>;
+    using Index = detail::HashIndex<typename OrderedStorage::Slots::iterator>;
+    static constexpr bool dense_keys = std::is_same_v<KeyT, double>;
+    /**
+     * Number keys that are small non-negative integers -- a table keyed by
+     * block, tile or enum id, read like an array -- are also indexed by
+     * their value once the map has served `dense_after` lookups: position k
+     * holds key k's slot, or null, up to the largest such key present. It is
+     * built from the entries when the map turns hot and kept key by key by
+     * insert and erase; until then a map carries only the null pointer.
+     */
+    struct DenseKeys {
+        std::unique_ptr<std::vector<Slot*>> slots;
+        std::uint32_t lookups = 0;
+    };
+    struct NoDenseKeys {};
     struct Storage : OrderedStorage {
-        using Index =
-            std::unordered_map<KeyT, typename OrderedStorage::Slots::iterator, ValueHash<KeyT>>;
         Index index;
-        // The last lookup, kept beside the shared storage: hot JavaScript
-        // Map readers query the same key repeatedly (a voxel mesher reads
-        // one chunk's blocks thousands of times in a row), and a repeated
-        // key then costs a compare instead of a hash and a probe. Every
-        // mutation that can invalidate an unordered-map iterator clears it
-        // through `invalidate_lookup`, the one place that knows both halves.
-        mutable std::optional<KeyT> cached_key;
-        mutable std::optional<typename Index::const_iterator> cached_index;
-        void invalidate_lookup() {
-            cached_key.reset();
-            cached_index.reset();
-        }
-        void gc_trace(const TraceVisitor& visitor) const {
-            visitor(this->entries);
-            // The index and lookup cache own additional key copies.
-            for (const auto& entry : index)
-                visitor(entry.first);
-            visitor(cached_key);
-        }
+        std::conditional_t<dense_keys, DenseKeys, NoDenseKeys> dense;
+        void gc_trace(const TraceVisitor& visitor) const { visitor(this->entries); }
     };
 
-    /**
-     * Find `key`, remembering the answer for the next lookup unless the
-     * caller is about to change it: a writer's own miss is invalidated by
-     * the insert that follows, so recording it would only copy the key.
-     */
-    [[nodiscard]] auto find(const KeyT& key, bool remember = true) const {
-        if (storage_->cached_key.has_value() && std::equal_to<KeyT>{}(*storage_->cached_key, key)) {
-            return *storage_->cached_index;
-        }
-        const auto& index = storage_->index;
-        const auto entry = index.find(key);
-        if (remember) {
-            storage_->cached_key = key;
-            storage_->cached_index = entry;
-        }
-        return entry;
+    /** The key an entry is indexed under, inside the entry (a Set's entry is its key). */
+    [[nodiscard]] static const KeyT* entry_key(const EntryT& entry) {
+        if constexpr (std::is_same_v<EntryT, KeyT>)
+            return &entry;
+        else
+            return &entry.first;
     }
-    /** Append a not-yet-present entry and index it under `key`. */
-    template <typename Entry> void insert(KeyT key, Entry&& entry) {
-        storage_->entries.push_back(Slot{std::forward<Entry>(entry)});
-        storage_->invalidate_lookup();
-        storage_->index.emplace(std::move(key), std::prev(storage_->entries.end()));
+    [[nodiscard]] static std::uint64_t tag_of(const KeyT& key) {
+        return Index::tag_of(ValueHash<KeyT>{}(key));
+    }
+
+    /** The slot holding `key`, or null: a reader's lookup. */
+    [[nodiscard]] Slot* locate(const KeyT& key) const {
+        if constexpr (dense_keys) {
+            DenseKeys& dense = storage_->dense;
+            if (dense.slots) {
+                if (const auto position = dense_position(key)) {
+                    const auto& slots = *dense.slots;
+                    return *position < slots.size() ? slots[*position] : nullptr;
+                }
+            } else if (++dense.lookups == dense_after) {
+                index_dense_keys();
+            }
+        }
+        return locate(key, tag_of(key));
+    }
+    /** The slot holding `key`, whose tag the caller has, or null. */
+    [[nodiscard]] Slot* locate(const KeyT& key, std::uint64_t tag) const {
+        const auto* cell = find_cell(key, tag);
+        return cell == nullptr ? nullptr : &*cell->position;
+    }
+    /** Append a not-yet-present entry and index it under its key's `tag`. */
+    template <typename Entry> void insert(std::uint64_t tag, Entry&& entry) {
+        Storage& storage = *storage_;
+        // Every allocation precedes the append, so a failed one leaves the
+        // entries and both indexes as they were.
+        storage.index.reserve_one();
+        const std::optional<std::size_t> position = reserve_dense_key(*entry_key(entry));
+        storage.entries.push_back(Slot{std::forward<Entry>(entry)});
+        const auto slot = std::prev(storage.entries.end());
+        storage.index.insert(tag, slot);
+        if constexpr (dense_keys) {
+            if (position)
+                (*storage.dense.slots)[*position] = &*slot;
+        }
     }
 
     std::shared_ptr<Storage> storage_ =
         make_gc_shared_if<gc_traceable<EntryT> || gc_traceable<KeyT>, Storage>();
+
+private:
+    // Lookups a number-keyed map serves before it indexes its dense keys.
+    static constexpr std::uint32_t dense_after = 64;
+    // Number keys below this are dense keys.
+    static constexpr double dense_limit = 256.0;
+
+    [[nodiscard]] typename Index::Cell* find_cell(const KeyT& key, std::uint64_t tag) const {
+        return storage_->index.find(tag, [&](const auto& position) {
+            return detail::same_value_zero(*entry_key(position->value), key);
+        });
+    }
+
+    /** The dense position of a small non-negative integer number key. */
+    [[nodiscard]] static std::optional<std::size_t> dense_position(double key) {
+        // SameValueZero: -0 is the +0 key.
+        if (!(key >= 0.0 && key < dense_limit))
+            return std::nullopt;
+        // Signed: one conversion each way, where an unsigned one branches.
+        const auto integer = static_cast<std::int64_t>(key);
+        if (static_cast<double>(integer) != key)
+            return std::nullopt;
+        return static_cast<std::size_t>(integer);
+    }
+
+    /** Index every dense key the entries hold: the map has turned hot. */
+    void index_dense_keys() const {
+        auto slots = std::make_unique<std::vector<Slot*>>();
+        for (Slot& slot : storage_->entries) {
+            if (!slot.active)
+                continue;
+            if (const auto position = dense_position(*entry_key(slot.value))) {
+                if (*position >= slots->size())
+                    slots->resize(*position + 1);
+                (*slots)[*position] = &slot;
+            }
+        }
+        storage_->dense.slots = std::move(slots);
+    }
+
+    /** Room in the dense index for `key` about to be inserted: its position, if it has one. */
+    [[nodiscard]] std::optional<std::size_t> reserve_dense_key(const KeyT& key) {
+        if constexpr (dense_keys) {
+            auto& slots = storage_->dense.slots;
+            if (!slots)
+                return std::nullopt;
+            const auto position = dense_position(key);
+            if (position && *position >= slots->size())
+                slots->resize(*position + 1);
+            return position;
+        } else {
+            static_cast<void>(key);
+            return std::nullopt;
+        }
+    }
+
+    /** Forget `key`'s dense position once it is erased. */
+    void forget_dense_key(const KeyT& key) {
+        if constexpr (dense_keys) {
+            auto& slots = storage_->dense.slots;
+            if (!slots)
+                return;
+            if (const auto position = dense_position(key); position && *position < slots->size())
+                (*slots)[*position] = nullptr;
+        } else {
+            static_cast<void>(key);
+        }
+    }
 };
 
 template <typename K, typename V> class Map : public IndexedInsertionOrdered<std::pair<K, V>, K> {
 private:
     using Base = IndexedInsertionOrdered<std::pair<K, V>, K>;
-    using Base::find;
     using Base::insert;
+    using Base::locate;
     using Base::storage_;
 
 public:
@@ -1727,9 +2137,9 @@ public:
     }
 
     [[nodiscard]] typename MapGetResult<V>::Type get(const K& key) const {
-        const auto entry = find(key);
-        return entry == storage_->index.end() ? MapGetResult<V>::missing()
-                                              : MapGetResult<V>::found(entry->second->value.second);
+        auto* slot = locate(key);
+        return slot == nullptr ? MapGetResult<V>::missing()
+                               : MapGetResult<V>::found(slot->value.second);
     }
     [[nodiscard]] auto get_owned(const K& key) const { return snapshot_value(get(key)); }
     template <typename OptionalKey>
@@ -1743,30 +2153,30 @@ public:
         return snapshot_value(get(key));
     }
     [[nodiscard]] V& at(const K& key) {
-        const auto entry = find(key);
-        if (entry == storage_->index.end()) {
+        auto* slot = locate(key);
+        if (slot == nullptr) {
             throw std::out_of_range("Map key is not present.");
         }
-        return entry->second->value.second;
+        return slot->value.second;
     }
     [[nodiscard]] const V& at(const K& key) const {
-        const auto entry = find(key);
-        if (entry == storage_->index.end()) {
+        const auto* slot = locate(key);
+        if (slot == nullptr) {
             throw std::out_of_range("Map key is not present.");
         }
-        return entry->second->value.second;
+        return slot->value.second;
     }
     template <typename Value = V>
         requires std::is_convertible_v<Value&&, V>
     Map& set(const K& key, Value&& value) {
-        const auto entry = find(key, false);
-        if (entry == storage_->index.end()) {
-            // The value may alias the key; retain the index key before moving it.
-            K index_key = key;
-            insert(std::move(index_key), Entry{key, std::forward<Value>(value)});
+        const auto tag = Base::tag_of(key);
+        auto* slot = locate(key, tag);
+        if (slot == nullptr) {
+            // The value may alias the key: the entry copies the key first.
+            insert(tag, Entry{detail::stored_key(key), std::forward<Value>(value)});
         } else {
             V replacement = std::forward<Value>(value);
-            entry->second->value.second = std::move(replacement);
+            slot->value.second = std::move(replacement);
         }
         return *this;
     }
@@ -1965,8 +2375,8 @@ template <typename K, typename V> [[nodiscard]] inline Array<K> map_keys(const M
 template <typename T> class Set : public IndexedInsertionOrdered<T, T> {
 private:
     using Base = IndexedInsertionOrdered<T, T>;
-    using Base::find;
     using Base::insert;
+    using Base::locate;
     using Base::storage_;
 
 public:
@@ -1983,8 +2393,9 @@ public:
     }
 
     Set& add(const T& value) {
-        if (find(value, false) == storage_->index.end()) {
-            insert(value, value);
+        const auto tag = Base::tag_of(value);
+        if (locate(value, tag) == nullptr) {
+            insert(tag, detail::stored_key(value));
         }
         return *this;
     }
@@ -2088,15 +2499,19 @@ public:
     using iterator = typename RetainedStorage::iterator;
     using const_iterator = typename RetainedStorage::const_iterator;
 
-    Tuple() : values_(std::make_shared<RetainedStorage>(N)) {}
+    Tuple()
+        : values_(detail::make_recycled_vector<RetainedStorage>(
+              [](RetainedStorage& storage) { storage.resize(N); })) {}
     Tuple(std::initializer_list<double> values)
-        : values_(std::make_shared<RetainedStorage>(values)) {
+        : values_(detail::make_recycled_vector<RetainedStorage>(
+              [&](RetainedStorage& storage) { storage.assign(values); })) {
         if (values.size() != N) {
             throw std::runtime_error("Tuple initializer has the wrong length.");
         }
     }
     Tuple(Storage values)
-        : values_(std::make_shared<RetainedStorage>(values.begin(), values.end())) {}
+        : values_(detail::make_recycled_vector<RetainedStorage>(
+              [&](RetainedStorage& storage) { storage.assign(values.begin(), values.end()); })) {}
     [[nodiscard]] const std::shared_ptr<RetainedStorage>& retained_storage() const {
         return values_;
     }
@@ -2281,16 +2696,22 @@ struct NumberPart {
     double value;
 };
 
+/** Whether `part` begins with a lone low surrogate that would join `tail`'s trailing lone high one (WTF-8). */
+[[nodiscard]] inline bool joins_lone_surrogates(std::string_view tail, std::string_view part) {
+    const auto size = tail.size();
+    return size >= 3 && part.size() >= 3 && static_cast<unsigned char>(tail[size - 3]) == 0xedu &&
+           (static_cast<unsigned char>(tail[size - 2]) & 0xf0u) == 0xa0u &&
+           (static_cast<unsigned char>(tail[size - 1]) & 0xc0u) == 0x80u &&
+           static_cast<unsigned char>(part[0]) == 0xedu &&
+           (static_cast<unsigned char>(part[1]) & 0xf0u) == 0xb0u &&
+           (static_cast<unsigned char>(part[2]) & 0xc0u) == 0x80u;
+}
+
 inline void concat_append(std::string& target, std::string_view part) {
     // New neighbors can turn two WTF-8 lone surrogates into one UTF-8
     // scalar. Keep storage canonical so ordinary native equality agrees.
     const auto size = target.size();
-    if (size >= 3 && part.size() >= 3 && static_cast<unsigned char>(target[size - 3]) == 0xedu &&
-        (static_cast<unsigned char>(target[size - 2]) & 0xf0u) == 0xa0u &&
-        (static_cast<unsigned char>(target[size - 1]) & 0xc0u) == 0x80u &&
-        static_cast<unsigned char>(part[0]) == 0xedu &&
-        (static_cast<unsigned char>(part[1]) & 0xf0u) == 0xb0u &&
-        (static_cast<unsigned char>(part[2]) & 0xc0u) == 0x80u) {
+    if (joins_lone_surrogates(target, part)) {
         const auto high = ((static_cast<unsigned char>(target[size - 2]) & 0x0fu) << 6u) |
                           (static_cast<unsigned char>(target[size - 1]) & 0x3fu);
         const auto low = ((static_cast<unsigned char>(part[1]) & 0x0fu) << 6u) |
@@ -2309,23 +2730,86 @@ inline void concat_append(std::string& target, NumberPart part) {
     target.append(format_number(part.value, buffer));
 }
 
-[[nodiscard]] inline std::size_t concat_size(std::string_view part) { return part.size(); }
-[[nodiscard]] inline std::size_t concat_size(NumberPart) {
-    // Counted as nothing on purpose: the reservation below exists so a
-    // long text with a number in it grows once rather than per operand,
-    // while a short key such as "-3,12" must stay inside the small-string
-    // buffer -- reserving for a worst-case integer spelling would push
-    // every such key onto the heap, which measured slower than the chain
-    // this replaces.
-    return 0;
+/**
+ * One operand of a short concatenation copied into its stack buffer at
+ * `out`: false when it does not fit, or would join two lone surrogates
+ * (`concat_append` owns that rewrite).
+ */
+[[nodiscard]] inline bool concat_spell(char*& out, const char* begin, const char* end,
+                                       std::string_view part) {
+    if (part.size() > static_cast<std::size_t>(end - out) ||
+        joins_lone_surrogates(std::string_view(begin, static_cast<std::size_t>(out - begin)), part))
+        return false;
+    out = std::copy(part.begin(), part.end(), out);
+    return true;
+}
+[[nodiscard]] inline bool concat_spell(char*& out, const char*, const char* end, NumberPart part) {
+    NumberTextBuffer buffer;
+    const std::string_view spelled = format_number(part.value, buffer);
+    if (spelled.size() > static_cast<std::size_t>(end - out))
+        return false;
+    out = std::copy(spelled.begin(), spelled.end(), out);
+    return true;
 }
 
+// A long concatenation's reservation: its text operands, and room for the
+// longest number spelling (25 characters) per number.
+[[nodiscard]] inline std::size_t concat_size(std::string_view part) { return part.size(); }
+[[nodiscard]] inline std::size_t concat_size(NumberPart) { return 25; }
+
 template <typename... Parts> [[nodiscard]] inline std::string concat(const Parts&... parts) {
+    // A short result -- a key such as "-3,12" -- is assembled in one stack
+    // buffer and constructed once; a longer one grows into one reservation.
+    std::array<char, 64> text{};
+    char* out = text.data();
+    if ((concat_spell(out, text.data(), text.data() + text.size(), parts) && ...))
+        return std::string(text.data(), static_cast<std::size_t>(out - text.data()));
     std::string result;
     result.reserve((std::size_t{0} + ... + concat_size(parts)));
     (concat_append(result, parts), ...);
     return result;
 }
+
+/**
+ * The recent results of a pure function of numbers that returns a string --
+ * a Map key such as "3,-2" -- so repeated arguments reuse the spelling
+ * instead of recomputing it. Arguments compare by bit pattern; only a result
+ * held in the string's inline buffer is kept, so a reuse never allocates.
+ */
+template <std::size_t Arguments, std::size_t Entries = 4> class RecentStrings {
+public:
+    template <typename Compute>
+    [[nodiscard]] std::string remember(const std::array<double, Arguments>& arguments,
+                                       Compute&& compute) {
+        std::array<std::uint64_t, Arguments> bits{};
+        for (std::size_t index = 0; index < Arguments; ++index)
+            bits[index] = std::bit_cast<std::uint64_t>(arguments[index]);
+        for (const Entry& entry : entries_) {
+            if (!entry.valid)
+                continue;
+            bool same = true;
+            for (std::size_t index = 0; index < Arguments; ++index)
+                same = same && entry.bits[index] == bits[index];
+            if (same)
+                return entry.result;
+        }
+        std::string result = std::forward<Compute>(compute)();
+        if (result.size() <= std::string().capacity()) {
+            entries_[next_] = Entry{bits, result, true};
+            next_ = (next_ + 1) % Entries;
+        }
+        return result;
+    }
+
+private:
+    struct Entry {
+        std::array<std::uint64_t, Arguments> bits{};
+        std::string result;
+        bool valid = false;
+    };
+    std::array<Entry, Entries> entries_{};
+    std::size_t next_ = 0;
+};
 
 // Runtime Number.prototype.toFixed for retained UI values. JavaScript falls
 // back to its ordinary number spelling at 1e21, preserves the exceptional
@@ -3496,18 +3980,31 @@ template <typename T> inline void array_truncate(Array<T>& values, double count)
 }
 
 template <typename T> [[nodiscard]] inline bool array_has_index(const T& values, double index) {
-    // Range-check before conversion so NaN, infinities, negatives and values
-    // too large for this container never reach the cast. Comparing the cast
-    // back to the source is the integer test, avoiding std::floor in every
-    // dynamic typed-array read while retaining JavaScript index semantics.
-    if (!(index >= 0.0 && index < static_cast<double>(values.size()))) {
+    // Range-check against a constant before conversion so NaN, infinities,
+    // negatives and values past any container never reach the cast; the
+    // container's own bound is then an integer compare, where a size turned
+    // into a double costs an unsigned conversion on every read. Comparing
+    // the cast back to the source is the integer test, avoiding std::floor
+    // in every dynamic read while retaining JavaScript index semantics.
+    constexpr double signed_limit = 9223372036854775808.0; // 2^63
+    if (!(index >= 0.0 && index < signed_limit)) {
         return false;
     }
-    // Signed on purpose: the range check above already bounds the value
-    // below 2^63, and a double-to-signed conversion is one instruction
-    // where the unsigned form needs a branch around the high half.
+    // Signed on purpose: the range check above bounds the value below
+    // 2^63, and a double-to-signed conversion is one instruction where the
+    // unsigned form needs a branch around the high half.
     const auto native = static_cast<std::int64_t>(index);
-    return static_cast<double>(native) == index;
+    return static_cast<double>(native) == index && static_cast<std::size_t>(native) < values.size();
+}
+
+/**
+ * The position of an index `array_has_index` accepted. Such an index is
+ * an integer below 2^63, so the signed conversion is exact and one
+ * instruction -- the same one the check made -- where a direct unsigned
+ * conversion guards the high half on every access.
+ */
+[[nodiscard]] inline std::size_t accepted_index(double index) {
+    return static_cast<std::size_t>(static_cast<std::int64_t>(index));
 }
 
 template <typename T> [[nodiscard]] inline T& missing_array_value() {
@@ -3526,18 +4023,19 @@ template <typename T> [[nodiscard]] inline const T& missing_array_value_readonly
 }
 
 template <typename T> [[nodiscard]] inline T& array_at_or_default(Array<T>& values, double index) {
-    return array_has_index(values, index) ? values[array_index(index)] : missing_array_value<T>();
+    return array_has_index(values, index) ? values[accepted_index(index)]
+                                          : missing_array_value<T>();
 }
 
 template <typename T>
 [[nodiscard]] inline const T& array_at_or_default(const Array<T>& values, double index) {
-    return array_has_index(values, index) ? values[array_index(index)]
+    return array_has_index(values, index) ? values[accepted_index(index)]
                                           : missing_array_value_readonly<T>();
 }
 
 template <typename T, std::size_t Extent>
 [[nodiscard]] inline const T& array_at_or_default(std::span<T, Extent> values, double index) {
-    return array_has_index(values, index) ? values[array_index(index)]
+    return array_has_index(values, index) ? values[accepted_index(index)]
                                           : missing_array_value_readonly<std::remove_const_t<T>>();
 }
 
@@ -3565,20 +4063,20 @@ template <typename Values>
     if (!array_has_index(values, index)) [[unlikely]] {
         throw_index_error(site, "read", index, values.size());
     }
-    return values[static_cast<std::size_t>(index)];
+    return values[accepted_index(index)];
 }
 template <typename T>
 [[nodiscard]] inline T array_index_checked(const TypedArray<T>& values, double index,
                                            const char* site) {
     if (!array_has_index(values, index))
         throw_index_error(site, "read", index, values.size());
-    return values.load(static_cast<std::size_t>(index));
+    return values.load(accepted_index(index));
 }
 template <typename T>
 [[nodiscard]] inline T array_index_checked(Array<T>&& values, double index, const char* site) {
     if (!array_has_index(values, index))
         throw_index_error(site, "read", index, values.size());
-    return values[static_cast<std::size_t>(index)];
+    return values[accepted_index(index)];
 }
 template <typename T>
 [[nodiscard]] inline T array_index_checked(TypedArray<T>& values, double index, const char* site) {
@@ -3596,20 +4094,28 @@ template <typename Values>
     if (!array_has_index(values, index)) [[unlikely]] {
         throw_index_error(site, "write", index, values.size());
     }
-    return values[static_cast<std::size_t>(index)];
+    return values[accepted_index(index)];
 }
 template <typename T>
 [[nodiscard]] inline TypedArraySlot<TypedArray<T>>
 array_store_checked(TypedArray<T>& values, double index, const char* site) {
     if (!array_has_index(values, index))
         throw_index_error(site, "write", index, values.size());
-    return values.slot(static_cast<std::size_t>(index));
+    return values.slot(accepted_index(index));
 }
 [[nodiscard]] inline TypedArraySlot<U8Array> array_store_checked(U8Array& values, double index,
                                                                  const char* site) {
     if (!array_has_index(values, index))
         throw_index_error(site, "write", index, values.size());
-    return values.slot(static_cast<std::size_t>(index));
+    return values.slot(accepted_index(index));
+}
+/** `array_store_checked` for a store that cannot replace or release the owner. */
+template <typename Values>
+[[nodiscard]] inline BorrowedTypedArraySlot<Values>
+array_store_borrowed(Values& values, double index, const char* site) {
+    if (!array_has_index(values, index))
+        throw_index_error(site, "write", index, values.size());
+    return {values, accepted_index(index)};
 }
 
 /**
@@ -3681,7 +4187,7 @@ public:
     [[nodiscard]] double read(double index, const char* site) const {
         if (!array_has_index(*this, index))
             throw_index_error(site, "read", index, size());
-        return load(static_cast<std::size_t>(index));
+        return load(accepted_index(index));
     }
     [[nodiscard]] TypedArraySlot<NumericArrayView> slot(double index, const char* site) const {
         if (!(index >= 0.0 && std::floor(index) == index && index < 4294967295.0)) {

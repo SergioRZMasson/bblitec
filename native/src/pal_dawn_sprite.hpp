@@ -168,7 +168,7 @@ create_dawn_sprite_atlas_binding(WGPUDevice device, WGPUQueue queue, DawnMipGene
         // `loadTexture2D` fills the chain at upload, with the pinned blit.
         const std::uint32_t mip_levels = atlas_mip_levels(atlas);
         binding.texture =
-            upload_dawn_rgba_texture(device, queue, atlas.rgba.data(), atlas.rgba.size(),
+            upload_dawn_rgba_texture(device, queue, atlas.rgba->data(), atlas.rgba->size(),
                                      atlas.width, atlas.height, mip_levels);
         generate_mipmaps(device, queue, mips, binding.texture, WGPUTextureFormat_RGBA8Unorm,
                          mip_levels);
@@ -685,6 +685,44 @@ inline void record_dawn_sprite_pass(WGPURenderPassEncoder encoder, Engine& engin
     }
 }
 
+/**
+ * Adds a layer to the scene pass for each of `handles` from `first` on; each
+ * shares the pipeline and group layouts of the first compatible layer the
+ * pass already holds.
+ */
+inline void
+append_dawn_scene_sprite_layers(WGPUDevice device, WGPUQueue queue, DawnMipGenerator& mips,
+                                Engine& engine, DawnSceneSpritePass& pass,
+                                const std::vector<Sprite2DLayerHandle>& handles, std::size_t first,
+                                const std::vector<WGPUTexture>& render_textures,
+                                const std::vector<WGPUTextureView>& render_texture_views) {
+    pass.layers.reserve(handles.size());
+    for (std::size_t index = first; index < handles.size(); ++index) {
+        const Sprite2DLayerHandle handle = handles[index];
+        const Sprite2DLayerRecord& layer = handle_at(engine.sprite_layers, handle);
+        if (layer.depth_mode == Sprite2DDepthMode::none) {
+            throw std::runtime_error("A scene-attached Sprite2D layer must have depth enabled.");
+        }
+        WGPURenderPipeline shared_pipeline = nullptr;
+        std::vector<WGPUBindGroupLayout> shared_group_layouts;
+        for (std::size_t previous = 0; previous < pass.layers.size(); ++previous) {
+            if (sprite_scene_pipeline_compatible(engine.sprite_layers[pass.handles[previous].value],
+                                                 layer)) {
+                shared_pipeline = pass.layers[previous].pipeline;
+                shared_group_layouts = pass.layers[previous].group_layouts;
+                break;
+            }
+        }
+        const DawnSpriteAtlasBinding& atlas_binding =
+            ensure_dawn_sprite_atlas_binding(device, queue, mips, engine, layer.atlas,
+                                             render_textures, render_texture_views, pass.atlases);
+        pass.layers.push_back(build_dawn_sprite_layer(
+            device, queue, engine, handle, atlas_binding, pass.target_format, pass.depth_format,
+            pass.sample_count, shared_pipeline, shared_group_layouts));
+        pass.handles.push_back(handle);
+    }
+}
+
 inline DawnSceneSpritePass
 create_dawn_scene_sprite_pass(WGPUDevice device, WGPUQueue queue, DawnMipGenerator& mips,
                               Engine& engine, const std::vector<Sprite2DLayerHandle>& handles,
@@ -693,7 +731,6 @@ create_dawn_scene_sprite_pass(WGPUDevice device, WGPUQueue queue, DawnMipGenerat
                               WGPUTextureFormat target_format, WGPUTextureFormat depth_format,
                               std::uint32_t sample_count) {
     DawnSceneSpritePass pass{device};
-    pass.handles = handles;
     pass.target_format = target_format;
     pass.depth_format = depth_format;
     pass.sample_count = sample_count;
@@ -707,30 +744,35 @@ create_dawn_scene_sprite_pass(WGPUDevice device, WGPUQueue queue, DawnMipGenerat
     }
     DawnGpuDevice{queue}.write_buffer(pass.index_buffer, 0, quad_indices.data(),
                                       sizeof(quad_indices));
-    pass.layers.reserve(handles.size());
-    for (const Sprite2DLayerHandle handle : handles) {
-        const Sprite2DLayerRecord& layer = handle_at(engine.sprite_layers, handle);
-        if (layer.depth_mode == Sprite2DDepthMode::none) {
-            throw std::runtime_error("A scene-attached Sprite2D layer must have depth enabled.");
-        }
-        WGPURenderPipeline shared_pipeline = nullptr;
-        std::vector<WGPUBindGroupLayout> shared_group_layouts;
-        for (std::size_t previous = 0; previous < pass.layers.size(); ++previous) {
-            if (sprite_scene_pipeline_compatible(engine.sprite_layers[pass.handles[previous].value],
-                                                 handle_at(engine.sprite_layers, handle))) {
-                shared_pipeline = pass.layers[previous].pipeline;
-                shared_group_layouts = pass.layers[previous].group_layouts;
-                break;
-            }
-        }
-        const DawnSpriteAtlasBinding& atlas_binding =
-            ensure_dawn_sprite_atlas_binding(device, queue, mips, engine, layer.atlas,
-                                             render_textures, render_texture_views, pass.atlases);
-        pass.layers.push_back(build_dawn_sprite_layer(device, queue, engine, handle, atlas_binding,
-                                                      target_format, depth_format, sample_count,
-                                                      shared_pipeline, shared_group_layouts));
-    }
+    append_dawn_scene_sprite_layers(device, queue, mips, engine, pass, handles, 0, render_textures,
+                                    render_texture_views);
     return pass;
+}
+
+/**
+ * The scene pass follows the depth-hosted layers the scene draws
+ * (`follow_scene_sprite_layers`), and records the `renderable_version` it
+ * followed. Setup calls it, and so does any frame whose scene has built since.
+ */
+inline void sync_dawn_scene_sprite_pass(
+    WGPUDevice device, WGPUQueue queue, DawnMipGenerator& mips, Engine& engine, const Scene& scene,
+    DawnSceneSpritePass& pass, bool& has_pass, std::uint64_t& renderable_version,
+    const std::vector<WGPUTexture>& render_textures,
+    const std::vector<WGPUTextureView>& render_texture_views, WGPUTextureFormat target_format,
+    WGPUTextureFormat depth_format, std::uint32_t sample_count) {
+    const std::vector<Sprite2DLayerHandle>& members = scene.depth_hosted_sprite_layers;
+    follow_scene_sprite_layers(
+        pass, has_pass, members,
+        [&] {
+            return create_dawn_scene_sprite_pass(device, queue, mips, engine, members,
+                                                 render_textures, render_texture_views,
+                                                 target_format, depth_format, sample_count);
+        },
+        [&](std::size_t first) {
+            append_dawn_scene_sprite_layers(device, queue, mips, engine, pass, members, first,
+                                            render_textures, render_texture_views);
+        });
+    renderable_version = scene.state->renderable_version;
 }
 
 inline void sync_dawn_scene_sprite_pass_pipelines(WGPUDevice device, WGPUQueue queue,

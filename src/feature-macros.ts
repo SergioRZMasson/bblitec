@@ -35,6 +35,7 @@ interface FeatureMacro {
 export const featureMacros: readonly FeatureMacro[] = [
     { macro: "BBLITE_DEVICE_RECOVERY", anyOf: ["engine:device-recovery"] },
     { macro: "BBLITE_GPU_TASK_TIMING", anyOf: ["engine:gpu-task-timing"] },
+    { macro: "BBLITE_SOURCE_PROFILE", anyOf: ["profile:source"] },
     { macro: "BBLITE_COMPUTE_TEXTURES", anyOf: ["compute:storage-texture"] },
     { macro: "BBLITE_COMPUTE_MIPMAPS", anyOf: ["compute:texture-mipmaps"] },
     {

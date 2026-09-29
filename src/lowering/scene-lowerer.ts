@@ -2609,6 +2609,21 @@ void off_visibility_change(Engine& engine, std::size_t identity) {
             bindings: new Map(),
             calls: new Map(),
         }).expression(built[0]!.right);
+        // The build publishes the deferred renderables with one
+        // `_renderableVersion` bump, which the renderers follow.
+        if (
+            this.context.findNodes(
+                buildScene,
+                (node): node is ts.PostfixUnaryExpression =>
+                    ts.isPostfixUnaryExpression(node) &&
+                    node.operator === ts.SyntaxKind.PlusPlusToken &&
+                    node.operand.getText(file) === "ctx._renderableVersion",
+            ).length !== 1
+        )
+            this.context.contractError(
+                buildScene,
+                "Expected one renderable-version bump when the scene builds.",
+            );
         return `void drain_scene_deferred_builders(Scene& scene) {
     while (!scene.deferred_builders.empty()) {
         auto builders = std::move(scene.deferred_builders);
@@ -2641,6 +2656,7 @@ ${options.pbrSceneHooks ? "    prepare_pbr_scene_build(scene);\n" : ""}\
     drain_scene_deferred_builders(scene);
 ${options.pbrSceneHooks ? "    finish_pbr_scene_build(scene);\n" : ""}\
     scene.state->source_built = ${builtValue};
+    ++scene.state->renderable_version;
     // The source builders read public material arrays when registration
     // creates their UBOs; direct later array writes do not bump _uboVersion.
     for (const auto mesh : scene.meshes) {
@@ -2750,8 +2766,11 @@ void dispose_scene(Scene& scene) {
     scene.animation_groups.clear();
 #if BBLITE_HAS_SPRITES
     scene.billboard_systems.clear();
+    scene.state->billboard_renderables.clear();
     scene.depth_hosted_sprite_layers.clear();
 #endif
+    // The published lists the renderers follow are empty now.
+    ++scene.state->renderable_version;
     scene.splat_meshes.clear();
 ${options.text ? "    scene.state->text_renderables.clear();\n" : ""}\
     scene.before_render.clear();

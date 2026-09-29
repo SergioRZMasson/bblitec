@@ -19,6 +19,7 @@ import { pinnedLabPublicUrl } from "../src/pinned-lab-public.js";
 import { stringLiteral } from "../src/cpp-literals.js";
 import {
     cppFunction,
+    cppRecord,
     optionalNativeFixtureTools,
     runNativeFixtureCompiler,
 } from "./native-fixture.js";
@@ -694,6 +695,135 @@ int main(){
     { Scene abandoned;weak=abandoned.state;add_text_renderable(abandoned,r); }
     js::collect_cycles();
     if(!weak.expired()) return 10;
+    return 0;
+}`;
+    const path = resolve(directory, "check.cpp"),
+        exe = resolve(directory, "check.exe");
+    writeFileSync(path, cpp);
+    runNativeFixtureCompiler(native, [
+        "/nologo",
+        "/std:c++20",
+        "/EHsc",
+        "/W4",
+        "/WX",
+        "/DBBLITE_HAS_TEXT=1",
+        `/I${resolve("native/include")}`,
+        `/I${directory}`,
+        path,
+        `/Fo${resolve(directory, "check.obj")}`,
+        `/Fe${exe}`,
+    ]);
+    execFileSync(exe, [], { cwd: directory, stdio: "pipe" });
+});
+
+test("the text scene pass rebinds when a registration publishes text and does no binding work otherwise", (t) => {
+    // render-task-base.ts: a task rebinds the scene's renderables, in the
+    // scene's order, only when `_renderableVersion` moved; `register_scene`
+    // mirrors that bump in `SceneState::renderable_version`.
+    const native = optionalNativeFixtureTools(false);
+    if (!native) {
+        t.skip("Native fixture compiler unavailable.");
+        return;
+    }
+    const context = new LoweringContext(),
+        directory = resolve("artifacts/test-text-scene-rebind");
+    mkdirSync(resolve(directory, "bblite"), { recursive: true });
+    writeFileSync(
+        resolve(directory, "bblite/upstream_text_records.hpp"),
+        textRecordsHeader(context),
+    );
+    for (const [name, header] of [
+        ["upstream_text_gpu", new TextGpuLowerer(context).header()],
+        [
+            "upstream_text_renderable",
+            new TextLowerer(context).renderableHeader(),
+        ],
+    ] as const)
+        writeFileSync(resolve(directory, "bblite", `${name}.hpp`), header);
+    const source = new SceneLowerer(context).lowerCore({ text: true }).source;
+    const bodies = [
+        "void require_scene_engine(",
+        "std::uint32_t material_family_bit(",
+        "std::uint32_t scene_material_families(",
+        "void drain_scene_deferred_builders(",
+        "void register_scene(",
+        "void unregister_scene(",
+        "void retire_scene_shadow_states(",
+        "void dispose_scene(",
+    ]
+        .map((name) => cppFunction(source, name))
+        .join("\n");
+    const textScene = readFileSync("native/src/pal_text_scene.hpp", "utf8");
+    const cpp = `#define BBLITE_FLOATING_ORIGIN 0
+#include <bblite/upstream_text_renderable.hpp>
+#include <bblite/text_gpu.hpp>
+namespace bbl {
+${lowerMeshMaterialSetter(context)}
+${bodies}
+}
+namespace bbl::upstream {
+double scene_camera_change_key(const CameraRecord&) { return 0; }
+}
+namespace bbl::pal {
+${cppFunction(textScene, "inline void validate_text_scene(")}
+${cppRecord(textScene, "struct TextScenePass {")}
+}
+struct Encoder final : bbl::GpuEncoder {
+    void set_pipeline(const bbl::GpuHandle&) override {}
+    void set_vertex_buffer(double, const bbl::GpuHandle&) override {}
+    void set_bind_group(double, const bbl::GpuHandle&) override {}
+    void draw(double, double, double, double) override {}
+};
+int main(){
+    using namespace bbl;
+    Engine engine; Scene scene; scene.engine=&engine;
+    engine.cameras.emplace_back(); scene.camera={0};
+    auto data=std::make_shared<TextDataState>();
+    // Each renderable's bind is counted, and its binding draws the renderable.
+    int binds=0;
+    std::vector<TextRenderable> drawn;
+    const auto text=[&](double order){
+        TextRenderableOptions options; options.order=order;
+        auto r=create_text_renderable(data,options);
+        const std::weak_ptr<TextRenderableState> weak=r;
+        r->bind=[&binds,&drawn,weak](TextSurfaceHandle,TextTargetSignature){
+            ++binds;
+            auto binding=std::make_shared<TextDrawBinding>();
+            binding->renderable=weak.lock();
+            binding->draw=[&drawn,weak](GpuEncoderHandle,TextSurfaceHandle){
+                drawn.push_back(weak.lock());
+                return 1.0;
+            };
+            return binding;
+        };
+        return r;
+    };
+    const auto first=text(0), later=text(-5);
+    add_text_renderable(scene,first);
+    register_scene(scene);
+    pal::TextScenePass pass;
+    pass.bind(scene,std::make_shared<TextSurface>(),TextTargetSignature{});
+    if(binds!=1 || pass.bindings.size()!=1) return 1;
+    const auto bound=pass.bindings;
+    // Frames with no build since do no binding work.
+    for(int frame=0;frame<3;++frame) pass.follow(scene);
+    if(binds!=1 || pass.bindings!=bound) return 2;
+    // Text added to the registered scene waits for its next registration.
+    add_text_renderable(scene,later);
+    register_scene(scene); pass.follow(scene);
+    if(binds!=1 || pass.bindings!=bound) return 3;
+    unregister_scene(scene); register_scene(scene);
+    pass.follow(scene);
+    // Every renderable rebinds, in the scene's order: the later text sorts first.
+    if(binds!=3 || pass.bindings.size()!=2 || pass.bindings[0]->renderable!=later ||
+       pass.bindings[1]->renderable!=first) return 4;
+    const GpuEncoderHandle encoder=std::make_shared<Encoder>();
+    if(pass.draw(encoder,nullptr)!=2 || drawn!=std::vector<TextRenderable>{later,first}) return 5;
+    pass.follow(scene);
+    if(binds!=3) return 6;
+    // Disposal empties the list: the next frame binds nothing.
+    dispose_scene(scene); pass.follow(scene);
+    if(!pass.bindings.empty() || binds!=3) return 7;
     return 0;
 }`;
     const path = resolve(directory, "check.cpp"),

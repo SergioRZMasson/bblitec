@@ -54,7 +54,7 @@ int main() {
             std::vector<std::shared_ptr<PhysicsBodyState>>{first.ownership, second.ownership}));
     physics_world_remove_body(b, first); // Removing from another world is inert.
     physics_world_release(a);
-    assert(body_at(first).world == 0 && body_at(second).world == 0);
+    assert(body_at(first).owner_world == nullptr && body_at(second).owner_world == nullptr);
     physics_world_add_body(b, first, false);
     physics_world_step(b, 1.0 / 60);
     assert(world_at(b).world->getNumCollisionObjects() == 1);
@@ -117,7 +117,7 @@ int main() {
            std::vector<PhysicsBodyState*>{held_body.ownership.get()});
     physics_world_release(held_world);
     physics_world_release(held_world); // Release is idempotent for owned handles.
-    assert(held_body.ownership->owner_world.expired());
+    assert(held_body.ownership->owner_world == nullptr);
     assert(physics_body_get_transform(held_body).position[0] == 0);
     held_body = {};
     assert(replacement.ownership->users.empty());
@@ -159,7 +159,7 @@ int main() {
                 if (global) {
                     for (auto& owned : all_bodies) {
                         auto& body = *owned;
-                        if (body.world == world.value && body.body) {
+                        if (body.owner_world == world.ownership.get() && body.body) {
                             body.step_start.linear = body.body->getLinearVelocity();
                             body.step_start.angular = body.body->getAngularVelocity();
                         }

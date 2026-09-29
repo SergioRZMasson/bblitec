@@ -27,6 +27,7 @@ import {
 } from "./user-functions.js";
 import { firstReturn } from "./loop-control.js";
 import { someAnalysisNode } from "./analysis-walk.js";
+import { sourceFunctionName } from "./syntax.js";
 import { pinOperand } from "./evaluation-order.js";
 import type { NativeCaptureBinding } from "./closure-captures.js";
 import {
@@ -61,6 +62,11 @@ interface StoredClassField extends DataStructField {
 }
 
 /** The `super(...)` call a constructor statement consists of. */
+/** A method as refusals name it (`Class.method`), or its source text when it has no plain name. */
+function methodLabel(method: ts.MethodDeclaration): string {
+    return sourceFunctionName(method) ?? method.name.getText();
+}
+
 function superCallOf(statement: ts.Statement): ts.CallExpression | undefined {
     if (!ts.isExpressionStatement(statement)) return undefined;
     const expression = statement.expression;
@@ -1786,7 +1792,7 @@ export class ClassLowerer {
         if (this.storedReceiverMethods.has(method)) {
             this.context.fail(
                 node,
-                `Method '${method.name.getText()}' calls itself on another ` +
+                `Method '${methodLabel(method)}' calls itself on another ` +
                     "stored instance; recursion through run-time objects " +
                     "cannot be inlined.",
             );
@@ -1816,7 +1822,7 @@ export class ClassLowerer {
         if (!method.body) {
             this.context.fail(
                 method,
-                `Reached method '${methodName}' requires a body.`,
+                `Reached method '${methodLabel(method)}' requires a body.`,
             );
         }
         if (
@@ -1849,7 +1855,7 @@ export class ClassLowerer {
             if (!overReceiver && activeRecursive.instance !== instance) {
                 this.context.fail(
                     call,
-                    `Recursive method '${methodName}' cannot switch class instances.`,
+                    `Recursive method '${methodLabel(method)}' cannot switch class instances.`,
                 );
             }
             return this.compileRecursiveInvocation(
@@ -1923,7 +1929,7 @@ export class ClassLowerer {
             ) {
                 this.context.fail(
                     method,
-                    `Method '${methodName}' returns a value outside the native data model and requires a final value return.`,
+                    `Method '${methodLabel(method)}' returns a value outside the native data model and requires a final value return.`,
                 );
             }
             const leading = method.body.statements.slice(0, -1);
@@ -1939,7 +1945,7 @@ export class ClassLowerer {
                 if (nullableRecord) return nullableRecord;
                 this.context.fail(
                     earlierValueReturn,
-                    `Method '${methodName}' cannot select a compile-time record through an early value return.`,
+                    `Method '${methodLabel(method)}' cannot select a compile-time record through an early value return.`,
                 );
             }
             const argumentValues = this.compileClassArguments(
@@ -1987,7 +1993,6 @@ export class ClassLowerer {
         ) {
             return this.compileRecursiveMethod(
                 instance,
-                methodName,
                 call,
                 method,
                 returnType,
@@ -2000,7 +2005,6 @@ export class ClassLowerer {
         ) {
             return this.compileRecursiveMethod(
                 instance,
-                methodName,
                 call,
                 method,
                 returnType,
@@ -2171,7 +2175,6 @@ export class ClassLowerer {
      */
     private compileRecursiveMethod(
         instance: Value,
-        methodName: string,
         call: ts.CallExpression,
         method: ts.MethodDeclaration,
         returnType: DataType | undefined,
@@ -2181,7 +2184,7 @@ export class ClassLowerer {
             if (!ts.isIdentifier(parameter.name) || parameter.dotDotDotToken) {
                 this.context.fail(
                     parameter,
-                    `Recursive method '${methodName}' requires non-rest identifier parameters.`,
+                    `Recursive method '${methodLabel(method)}' requires non-rest identifier parameters.`,
                 );
             }
             let type = this.context.dataTypes.fromTsType(
@@ -2194,7 +2197,7 @@ export class ClassLowerer {
             if (!type || this.context.dataTypes.carriesHandle(type)) {
                 this.context.fail(
                     parameter,
-                    `Recursive method '${methodName}' parameters must contain only plain data.`,
+                    `Recursive method '${methodLabel(method)}' parameters must contain only plain data.`,
                 );
             }
             return {
@@ -2211,7 +2214,7 @@ export class ClassLowerer {
         if (returnType && this.context.dataTypes.carriesHandle(returnType)) {
             this.context.fail(
                 method,
-                `Recursive method '${methodName}' must return plain data or void.`,
+                `Recursive method '${methodLabel(method)}' must return plain data or void.`,
             );
         }
 

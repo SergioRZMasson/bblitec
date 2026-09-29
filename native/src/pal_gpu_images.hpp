@@ -55,9 +55,10 @@ inline std::uint16_t float_to_half(float value) {
 }
 
 /**
- * Decode a texture's bytes to RGBA, substituting a 1x1 fallback texel
- * when the scene carries none, and apply the pinned `invertY` flip. The
- * result is what both backends upload, so it is produced once.
+ * The RGBA texels a texture uploads, with the pinned upload transforms
+ * (`orient_image`): its encoded image's (`texture_image_texels`), its
+ * caller-supplied texels, or a 1x1 fallback texel when the scene carries
+ * none. The result is what both backends upload, so it is produced once.
  */
 DecodedImage decode_uploadable_image(const TextureData& texture_data,
                                      const std::array<std::uint8_t, 4>& fallback);

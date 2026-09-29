@@ -1403,19 +1403,11 @@ function compileArraySort(state: ArrayMethodState): Value {
                     transfer: "return",
                 });
             } else {
-                // The comparator's operands are const references. A class
-                // instance operand is the receiver a method's shared body
-                // captures by reference, which must name it as such.
-                if (
-                    dataType.element.kind === "struct" &&
-                    lowerer.context.dataTypes.isClassStruct(
-                        dataType.element.name,
-                    )
-                ) {
-                    const element = `const ${lowerer.context.dataTypes.cppType(dataType.element)}`;
-                    lowerer.context.registerNativeBindingType(left, element);
-                    lowerer.context.registerNativeBindingType(right, element);
-                }
+                // The comparator's operands are const references, which an
+                // environment borrowing them must name as such.
+                const element = `const ${lowerer.context.dataTypes.cppType(dataType.element)}`;
+                lowerer.context.registerNativeBindingType(left, element);
+                lowerer.context.registerNativeBindingType(right, element);
                 const compared = lowerer.context.compileCallbackWithValues(
                     callback,
                     [

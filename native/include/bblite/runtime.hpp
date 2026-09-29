@@ -59,6 +59,7 @@ struct ComputeTextureAllocation;
 struct ComputeCommandEncoder;
 struct GpuRetirementState;
 struct GpuTaskTimingState;
+class LoadedTexels;
 } // namespace pal
 
 namespace js {
@@ -1764,6 +1765,16 @@ struct GpuTextureLease {
     GpuTextureLease& operator=(const GpuTextureLease&) = delete;
 };
 
+/**
+ * Immutable RGBA texels, shared by the records that keep them and the native
+ * jobs that read them without copying.
+ */
+using SharedTexels = std::shared_ptr<const std::vector<std::uint8_t>>;
+
+inline SharedTexels share_texels(std::vector<std::uint8_t> texels) {
+    return std::make_shared<const std::vector<std::uint8_t>>(std::move(texels));
+}
+
 struct TextureData {
     SharedTextureBytes bytes;
     // When both are non-zero, `bytes` are RGBA texels at this size rather
@@ -1776,13 +1787,16 @@ struct TextureData {
     TextureUvTransform uv_transform{};
     TextureSamplerState sampler{};
     // The pin's *upload* flip: `loadTexture2D`'s `invertY` option, passed as
-    // `flipY` to `copyExternalImageToTexture` (texture-2d.ts). The PALs'
-    // shared `decode_uploadable_image` applies it as a row swap.
+    // `flipY` to `copyExternalImageToTexture` (texture-2d.ts).
+    // `pal::orient_image` applies it as a row swap wherever `bytes` decode.
     bool invert_y = false;
     // `createImageBitmap({ premultiplyAlpha: "premultiply" })` followed by
     // `copyExternalImageToTexture({ premultipliedAlpha: true })` in the pin.
-    // The shared decode path applies the same byte transform before upload.
+    // `pal::orient_image` applies the same byte transform with the flip.
     bool premultiply_alpha = false;
+    // The texels `loadTexture2D` decoded from `bytes`, oriented, for its
+    // first readers (pal_texture_texels.hpp).
+    std::shared_ptr<pal::LoadedTexels> loaded_texels;
     // The pin's texture-OBJECT `invertY` property, a different thing from
     // the upload flip above: `loadTexture2D` results never carry the
     // property (its option only drives the flipped copy), so every image
@@ -1825,6 +1839,8 @@ struct FileTexture {
     /** JavaScript Texture2D object identity for array search and aliases. */
     std::uint64_t identity = 0;
 };
+
+struct FileTextureLoad;
 
 /** Texture2D's per-device URL/options cache, projected onto native samplers. */
 inline std::string file_texture_cache_key(const std::string& path,
@@ -4158,6 +4174,10 @@ struct Engine {
     Sprite2DYSortHook sprite_y_sort_hook;
     std::uint64_t next_file_texture_identity = 1;
     std::unordered_map<std::string, FileTexture> file_texture_cache;
+    /** Realm `loadTexture2D` calls still decoding, in call order (pal_async_engine.hpp). */
+    std::vector<std::shared_ptr<FileTextureLoad>> file_texture_loads;
+    /** Settled loads' texels, released at the next frame boundary (pal_texture_texels.hpp). */
+    std::vector<std::shared_ptr<pal::LoadedTexels>> unread_loaded_texels;
     std::vector<FileTexture> render_texture_facades;
 };
 
@@ -4187,6 +4207,18 @@ inline FileTexture retained_render_texture(Engine& engine, RenderTextureRef refe
         RenderTextureData{&engine, engine.lifetime.token(), reference, target.lifecycle});
     engine.render_texture_facades.push_back(facade);
     return facade;
+}
+
+/** A `loadTexture2D` record before its image is read: sampler, upload flags and identity. */
+inline FileTexture file_texture_record(Engine& engine, TextureSamplerState sampler, bool invert_y,
+                                       bool srgb, bool premultiply_alpha) {
+    FileTexture texture;
+    texture.data.sampler = sampler;
+    texture.data.invert_y = invert_y;
+    texture.data.premultiply_alpha = premultiply_alpha;
+    texture.srgb = srgb;
+    texture.identity = engine.next_file_texture_identity++;
+    return texture;
 }
 
 inline bool has_sprite_renderers(const Engine& engine) {
@@ -5018,7 +5050,15 @@ struct SceneState {
     /** Shadow generators retired only after a replacement rebuild succeeds. */
     std::vector<ShadowGeneratorHandle> pending_shadow_retirements;
     std::vector<AnimationGroupHandle> animation_groups;
+    /** billboard-scene.ts `addBillboardSystem`: the pick sources it registers at once. */
     std::vector<BillboardSystemHandle> billboard_systems;
+    /**
+     * The systems the scene draws: `addBillboardSystem` publishes a system's
+     * renderable through `addDeferredSceneRenderables`, so it joins this list
+     * only when the scene builds (`registerScene`), and a system added to a
+     * registered scene waits for its next registration.
+     */
+    std::vector<BillboardSystemHandle> billboard_renderables;
     // sprite-scene.ts: depth-enabled 2D layers are scene renderables and
     // therefore share this scene's colour, multisample and depth targets.
     std::vector<Sprite2DLayerHandle> depth_hosted_sprite_layers;
@@ -5059,6 +5099,13 @@ struct SceneState {
     /** The same, for the baked meshes this scene's registration reaches. */
     bool seeks_vat = false;
     std::vector<SceneDeferredBuilder> deferred_builders;
+    /**
+     * buildScene's `_renderableVersion++`: advances each time the scene builds
+     * and publishes what its deferred builders made (`add_deferred_scene_renderables`),
+     * and when disposal empties those lists. Renderers follow the published
+     * lists when it moves rather than comparing them every frame.
+     */
+    std::uint64_t renderable_version = 0;
     std::vector<std::shared_ptr<NodeMaterialGroupState>> node_material_groups;
     std::shared_ptr<SourceMaterialGroupState> pbr_material_group;
     std::shared_ptr<SourceMaterialGroups> source_material_groups;
@@ -5214,6 +5261,28 @@ private:
 // copy cannot throw between the destruction and the placement.
 static_assert(std::is_nothrow_copy_constructible_v<Scene>);
 static_assert(std::is_nothrow_move_constructible_v<Scene>);
+
+/**
+ * scene-core.ts `addDeferredSceneRenderables` over the native scene: the
+ * builder runs when the scene builds (`register_scene` drains the queue and
+ * advances `renderable_version`), and `publish` adds what it made to the
+ * scene's own lists. The queue holds the scene weakly, so an abandoned scene
+ * publishes nothing, and a failure rejects the registration, as the pin's
+ * async builder does. After `disposeScene` the pin builds and disposes such
+ * work only through its async late cleanup, which this runtime refuses.
+ */
+template <class Publish> void add_deferred_scene_renderables(Scene& scene, Publish publish) {
+    if (scene.disposed)
+        throw std::runtime_error("addDeferredSceneRenderables after disposeScene requires the "
+                                 "pinned async late-cleanup lifecycle.");
+    const std::weak_ptr<SceneState> owner = scene.state;
+    scene.deferred_builders.emplace_back(
+        [owner, publish = std::move(publish)] {
+            if (const auto state = owner.lock())
+                publish(*state);
+        },
+        SceneDeferredFailure::promise_rejection);
+}
 
 [[nodiscard]] inline bool material_color_has_bound_group(const Engine& engine,
                                                          MaterialHandle material) {
@@ -5642,6 +5711,17 @@ MeshHandle create_line_system(Engine& engine, const std::string& name,
 void update_line_system(Engine& engine, MeshHandle mesh,
                         const std::vector<std::vector<Vec3>>& lines,
                         const std::vector<std::vector<Vec4>>& colors);
+/**
+ * One glTF file, defined by the generated loader: `read_gltf` reads and parses
+ * it and `prepare_gltf` decodes ahead what writes no engine record, neither
+ * needing a realm; `load_gltf` applies it to the engine's records, decoding
+ * whatever was not prepared as it goes. The path overloads read and apply.
+ */
+struct GltfSource;
+std::shared_ptr<GltfSource> read_gltf(const std::string& path);
+void prepare_gltf(GltfSource& file);
+AssetHandle load_gltf(Engine& engine, GltfSource& file);
+AssetHandle load_gltf(Engine& engine, GltfSource& file, bool load_cameras);
 AssetHandle load_gltf(Engine& engine, const std::string& path);
 AssetHandle load_gltf(Engine& engine, const std::string& path, bool load_cameras);
 // The opt-in bone-control surface (`src/skeleton/bone-control.ts`), defined

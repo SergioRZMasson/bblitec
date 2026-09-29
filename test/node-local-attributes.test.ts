@@ -107,9 +107,13 @@ test(
         );
         const expected = [...new Uint32Array(mesh._gpu.normalBuffer.bytes)];
         const source = lowerer.lowerLoaderAdapter().source;
-        const begin = source.indexOf("                vertex.normal = Vec3{");
-        const end = source.indexOf("                if (tangents) {", begin);
-        assert.ok(begin >= 0 && end > begin);
+        // Whole lines, from the normal store up to the tangent branch,
+        // wherever the loader nests the primitive decode.
+        const normal = source.indexOf("vertex.normal = Vec3{");
+        const tangents = source.indexOf("if (tangents) {", normal);
+        assert.ok(normal >= 0 && tangents > normal);
+        const begin = source.lastIndexOf("\n", normal) + 1;
+        const end = source.lastIndexOf("\n", tangents) + 1;
         // Execute the production accessor/store block over the pin's bytes.
         const block = source.slice(begin, end);
         const output = resolve("artifacts/node-local-normal-check");

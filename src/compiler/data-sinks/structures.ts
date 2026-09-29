@@ -1,7 +1,12 @@
 import ts from "typescript";
 import { EmissionMap } from "../emission-transaction.js";
 import { dataTypesEqual, type DataType } from "../data-types.js";
-import { isStringValue, optionalPresentCpp, type Value } from "../types.js";
+import {
+    isStringValue,
+    optionalPresentCpp,
+    optionalValueCpp,
+    type Value,
+} from "../types.js";
 import { isJsonValue } from "../json-bridge.js";
 import { isNullishLiteral } from "../symbols.js";
 
@@ -219,7 +224,10 @@ function valueStruct(
             "optional_record_source",
         );
         const target = lowerer.context.dataTypes.cppType(dataType);
-        const present = lowerer.leafValue(`(*${source})`, value.dataType.inner);
+        const present = lowerer.leafValue(
+            optionalValueCpp(source),
+            value.dataType.inner,
+        );
         let converted = "";
         const lines = lowerer.context.captureEmittedLines(() => {
             converted = lowerer.compileKnownValueForSink(

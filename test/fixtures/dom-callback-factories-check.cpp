@@ -14,7 +14,7 @@ Engine& window_document_engine() {
     static Engine document;
     return document;
 }
-void update_window_document() {}
+void update_window_document(bool) {}
 int run_window_application(WorkerEntry initialize, EngineOptions) {
     const js::RealmScope scope;
     EventLoop loop;

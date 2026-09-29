@@ -115,6 +115,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <tuple>
 #include <string>
@@ -683,6 +684,9 @@ struct DawnLayoutKey {
  * Every bind-group and pipeline layout the material families build, created
  * on first use under one key and released together. Pipeline layouts are
  * declared after the group layouts they name, so they are destroyed first.
+ * Setup's native preparation jobs build layouts beside the renderer thread,
+ * so the maps are read and written under a lock; a layout two threads create
+ * at once keeps the one stored first.
  */
 class DawnLayoutCache {
 public:
@@ -690,8 +694,8 @@ public:
     template <typename Entries>
     WGPUBindGroupLayout group(WGPUDevice device, const DawnLayoutKey& key, Entries&& entries,
                               const char* label = nullptr) {
-        if (const auto found = groups_.find(key); found != groups_.end())
-            return found->second;
+        if (const WGPUBindGroupLayout found = find(groups_, key))
+            return found;
         const std::vector<WGPUBindGroupLayoutEntry> built = entries();
         WGPUBindGroupLayoutDescriptor descriptor = WGPU_BIND_GROUP_LAYOUT_DESCRIPTOR_INIT;
         if (label)
@@ -701,14 +705,14 @@ public:
         DawnBindGroupLayout layout{wgpuDeviceCreateBindGroupLayout(device, &descriptor)};
         if (!layout)
             dawn_error(failure("bind group layout", key));
-        return groups_.emplace(key, std::move(layout)).first->second;
+        return store(groups_, key, std::move(layout));
     }
 
     /** The pipeline layout for `key` over the group layouts `groups()` names. */
     template <typename Groups>
     WGPUPipelineLayout pipeline(WGPUDevice device, const DawnLayoutKey& key, Groups&& groups) {
-        if (const auto found = pipelines_.find(key); found != pipelines_.end())
-            return found->second;
+        if (const WGPUPipelineLayout found = find(pipelines_, key))
+            return found;
         const std::vector<WGPUBindGroupLayout> built = groups();
         WGPUPipelineLayoutDescriptor descriptor = WGPU_PIPELINE_LAYOUT_DESCRIPTOR_INIT;
         descriptor.bindGroupLayoutCount = built.size();
@@ -716,16 +720,33 @@ public:
         DawnPipelineLayout layout{wgpuDeviceCreatePipelineLayout(device, &descriptor)};
         if (!layout)
             dawn_error(failure("pipeline layout", key));
-        return pipelines_.emplace(key, std::move(layout)).first->second;
+        return store(pipelines_, key, std::move(layout));
     }
 
 private:
+    /** The stored layout for `key`, or null. Built outside the lock: a builder may nest. */
+    template <typename Layouts>
+    auto find(const Layouts& layouts, const DawnLayoutKey& key)
+        -> decltype(layouts.begin()->second.get()) {
+        const std::scoped_lock lock(mutex_);
+        const auto found = layouts.find(key);
+        return found == layouts.end() ? nullptr : found->second.get();
+    }
+
+    template <typename Layouts, typename Layout>
+    auto store(Layouts& layouts, const DawnLayoutKey& key, Layout layout)
+        -> decltype(layouts.begin()->second.get()) {
+        const std::scoped_lock lock(mutex_);
+        return layouts.try_emplace(key, std::move(layout)).first->second.get();
+    }
+
     static std::string failure(const char* what, const DawnLayoutKey& key) {
         return std::string(what) + " creation failed (family " +
                std::to_string(static_cast<int>(key.family)) + ", variant " +
                std::to_string(key.variant) + ", flags " + std::to_string(key.flags) + ").";
     }
 
+    std::mutex mutex_;
     std::map<DawnLayoutKey, DawnBindGroupLayout> groups_;
     std::map<DawnLayoutKey, DawnPipelineLayout> pipelines_;
 };
@@ -788,7 +809,10 @@ struct DawnState : DawnDevice {
     SpriteUiDawnResources ui;
 #endif
 #if BBLITE_HAS_BILLBOARDS
+    /** One pass per system the scene draws, in its order (`sync_dawn_billboard_passes`). */
     std::vector<DawnBillboardPass> billboard_passes;
+    /** The scene's `renderable_version` the passes follow. */
+    std::uint64_t billboard_renderable_version = 0;
 #endif
 #if BBLITE_HAS_SPRITE_RENDERER
     std::vector<DawnSpritePass> sprite_passes;
@@ -796,6 +820,8 @@ struct DawnState : DawnDevice {
     std::vector<WGPUTextureView> sprite_render_texture_views;
     DawnSceneSpritePass scene_sprite_pass;
     bool has_scene_sprite_pass = false;
+    /** The scene's `renderable_version` the scene sprite pass follows. */
+    std::uint64_t scene_sprite_renderable_version = 0;
 #endif
 #if BBLITE_HAS_SPLATS
     std::vector<DawnSplatPass> splat_passes;
@@ -2025,6 +2051,11 @@ inline std::uint32_t task_sample_count(const DawnState& state, std::uint32_t req
     return requested == 4 ? state.sample_count : 1u;
 }
 
+/** The sample count a render target's passes draw at (`render_target_requested_samples`). */
+inline std::uint32_t target_sample_count(const DawnState& state, const RenderTargetRecord& record) {
+    return task_sample_count(state, render_target_requested_samples(record));
+}
+
 inline WGPUTextureFormat geometry_texture_format(const GeometryTextureDescription& description) {
     return texture_format(geometry_format_class(description));
 }
@@ -2307,9 +2338,14 @@ build_pinned_draw_group(DawnState& state, DawnMesh& mesh, std::size_t variant,
                         // generator its `shadowParams` block belongs to.
                         [[maybe_unused]] const MaterialRecord* material = nullptr);
 
-/** The per-draw buffers and group-1 bind group for one material's variant. */
+/**
+ * The per-draw buffers and, with `build_group`, the group-1 bind group for one
+ * material's variant. The group binds resources the first frame creates, so
+ * setup preparation makes the buffers only.
+ */
 DawnDrawState& ensure_pinned_draw_bindings(DawnState& state, DawnMesh& mesh, std::uint32_t material,
-                                           std::size_t variant, const MaterialRecord* record);
+                                           std::size_t variant, const MaterialRecord* record,
+                                           bool build_group);
 
 /**
  * The per-draw buffers and group-1 bind group for one geometry-output MRT
@@ -3125,8 +3161,7 @@ prepare_dawn_post_process_pass(DawnState& state, Engine& engine, TaskHandle hand
     if (gpu.program == npos) {
         gpu.program = post_process_program(
             state, info, handle_at(state.render_targets, pass.output_target).color_format,
-            output_record.swapchain ? 1u : task_sample_count(state, output_record.samples),
-            pass.alpha_mode, pass.extra_textures.size());
+            target_sample_count(state, output_record), pass.alpha_mode, pass.extra_textures.size());
         const DawnPostProcessProgram& created = state.post_process_programs[gpu.program];
         if (created.uniform_size > 0) {
             WGPUBufferDescriptor uniform_descriptor = WGPU_BUFFER_DESCRIPTOR_INIT;
@@ -3360,9 +3395,11 @@ WGPUVertexFormat dawn_vertex_format(upstream::PinnedVertexFormat format);
  * one entry point it declares for its stage. The texture an arm samples is
  * the one its factory binds: the ground's own image, the DDS skybox's cube,
  * the environment's specular cube for the .env arm, the image skybox's six
- * faces.
+ * faces. `arms` are the drawn arms with their own buffers
+ * (`pinned_background_arm_buffers`).
  */
-void initialize_dawn_backgrounds(DawnState& state, const Scene& scene);
+void initialize_dawn_backgrounds(DawnState& state, const EnvironmentState& environment,
+                                 std::vector<PinnedBackgroundArmBuffers> arms);
 
 /** Draw one arm the way the pin's renderable does, over `frame_group`. */
 void draw_dawn_background_arm(WGPURenderPassEncoder pass, const DawnBackgroundArm& arm,

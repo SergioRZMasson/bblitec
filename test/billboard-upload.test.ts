@@ -4,6 +4,9 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { BillboardLowerer } from "../src/lowering/billboard-lowerer.js";
 import { LoweringContext } from "../src/lowering/context.js";
+import { lowerMeshMaterialSetter } from "../src/lowering/mesh-material-setter.js";
+import { pinnedSurfaceHeader } from "../src/lowering/pinned-surface.js";
+import { SceneLowerer } from "../src/lowering/scene-lowerer.js";
 import { SpriteLowerer } from "../src/lowering/sprite-lowerer.js";
 import {
     cppFunction,
@@ -185,5 +188,189 @@ test(
             ]);
             execFileSync(executable, { stdio: "pipe" });
         }
+    },
+);
+
+test(
+    "billboard systems draw from their scene's next build, refuse after disposal, and only observable alpha-to-coverage changes refuse",
+    { skip: !tools },
+    () => {
+        // addBillboardSystem registers the pick source at once and the
+        // renderable through the scene's deferred builders, which run when
+        // the scene builds (registerScene). The pin reads alpha-to-coverage
+        // when a scene binds the renderable, for a cutout system on a
+        // multisampled target only, and rebinds a registered scene's
+        // renderables only on a later scene mutation the native passes do
+        // not track: that one observable change refuses.
+        const output = resolve("artifacts/billboard-alpha-to-coverage");
+        mkdirSync(join(output, "bblite/upstream"), { recursive: true });
+        const context = new LoweringContext();
+        const core = new BillboardLowerer(context).lowerCore();
+        writeFileSync(
+            join(output, "bblite/upstream/pinned_surface.hpp"),
+            pinnedSurfaceHeader(context),
+        );
+        const file = join(output, "check.cpp"),
+            executable = join(output, "check.exe");
+        const anchorFloats = core.header.match(
+            /inline constexpr std::uint32_t billboard_anchor_floats_per_sprite = \d+u;/,
+        )?.[0];
+        if (!anchorFloats)
+            throw new Error(
+                "The billboard header no longer states its anchor lanes.",
+            );
+        const definitions = [
+            "BillboardSystemHandle create_billboard_system(",
+            "void set_billboard_alpha_to_coverage(",
+            "void add_billboard_system(",
+        ]
+            .map((signature) => cppFunction(core.source, signature))
+            .join("\n");
+        // The scene's own lifecycle: registration drains the deferred
+        // builders and advances the renderable version; disposal empties.
+        const scene = new SceneLowerer(context).lowerCore().source;
+        const lifecycle = [
+            "void require_scene_engine(",
+            "std::uint32_t material_family_bit(",
+            "std::uint32_t scene_material_families(",
+            "void drain_scene_deferred_builders(",
+            "void register_scene(",
+            "void unregister_scene(",
+            "void retire_scene_shadow_states(",
+            "void dispose_scene(",
+        ]
+            .map((signature) => cppFunction(scene, signature))
+            .join("\n");
+        writeFileSync(
+            file,
+            `
+        #include <bblite/runtime.hpp>
+        #include <bblite/upstream/pinned_surface.hpp>
+        #include <algorithm>
+        #include <cassert>
+        #include <memory>
+        #include <stdexcept>
+        #include <string_view>
+        #include <vector>
+        namespace bbl::upstream {
+            ${anchorFloats}
+            ${cppFunction(core.header, "inline double billboard_system_order(")}
+        }
+        namespace bbl {
+            ${lowerMeshMaterialSetter(context)}
+            ${lifecycle}
+            ${definitions}
+        }
+        int main() {
+            bbl::Engine engine;
+            engine.sprite_atlases.emplace_back();
+            bbl::BillboardSystemOptions transparent;
+            transparent.capacity = 1;
+            bbl::BillboardSystemOptions cutout = transparent;
+            cutout.blend.depth_mode = bbl::BillboardDepthMode::cutout;
+            const auto create = [&](const bbl::BillboardSystemOptions& options) {
+                return bbl::create_billboard_system(engine, {0}, bbl::BillboardOrientation::facing, {}, options);
+            };
+            const auto drawn = create(cutout), late = create(cutout), blended = create(transparent);
+            bbl::Scene scene;
+            scene.engine = &engine;
+            const auto& pick_sources = scene.billboard_systems;
+            const auto& renderables = scene.state->billboard_renderables;
+            const auto& version = scene.state->renderable_version;
+            const auto same = [](const std::vector<bbl::BillboardSystemHandle>& handles,
+                                 std::vector<std::uint32_t> values) {
+                return std::equal(handles.begin(), handles.end(), values.begin(), values.end(),
+                                  [](bbl::BillboardSystemHandle handle, std::uint32_t value) { return handle.value == value; });
+            };
+            // registerScene on a registered scene returns at once; the pin
+            // builds it again only through unregisterScene then registerScene.
+            const auto build = [&] {
+                bbl::unregister_scene(scene);
+                bbl::register_scene(scene);
+            };
+            const auto set = [&](bbl::BillboardSystemHandle system, bool enabled) {
+                try {
+                    bbl::set_billboard_alpha_to_coverage(engine, system, enabled);
+                } catch (const std::runtime_error& error) {
+                    assert(std::string_view(error.what()).find("before registerScene") != std::string_view::npos);
+                    return false;
+                }
+                assert(engine.billboard_systems[system.value].alpha_to_coverage == enabled);
+                return true;
+            };
+            bbl::add_billboard_system(scene, drawn);
+            // The pick source registers at once; the renderable waits for the build.
+            assert(same(pick_sources, {drawn.value}) && renderables.empty() && version == 0);
+            // Before registration the write is the one every binding reads.
+            assert(set(drawn, true));
+            bbl::register_scene(scene);
+            assert(same(renderables, {drawn.value}) && version == 1);
+            // A system added to the registered scene is pickable at once and
+            // draws from its next registration, which moves the version the
+            // renderers follow; until then its setting is still the one that
+            // binding reads.
+            bbl::add_billboard_system(scene, late);
+            bbl::add_billboard_system(scene, blended);
+            bbl::register_scene(scene);
+            assert(same(pick_sources, {drawn.value, late.value, blended.value}));
+            assert(same(renderables, {drawn.value}) && version == 1);
+            assert(set(late, true));
+            // The drawn cutout system at four samples is the observable change.
+            assert(set(drawn, true));
+            assert(!set(drawn, false) && engine.billboard_systems[drawn.value].alpha_to_coverage);
+            build();
+            assert(same(renderables, {drawn.value, late.value, blended.value}) && version == 2);
+            assert(!set(late, false));
+            // A transparent system never resolves coverage, and neither does a
+            // single-sample surface.
+            assert(set(blended, true) && set(blended, false));
+            engine.options.msaa_samples = 1;
+            assert(set(drawn, false) && set(late, false));
+            // Disposal empties both lists and moves the version; a system
+            // added afterwards refuses (the pin builds and disposes it only
+            // through its async late cleanup), leaving the scene untouched.
+            bbl::dispose_scene(scene);
+            assert(pick_sources.empty() && renderables.empty() && version == 3);
+            bool refused = false;
+            try {
+                bbl::add_billboard_system(scene, late);
+            } catch (const std::runtime_error& error) {
+                refused = std::string_view(error.what()).find("after disposeScene") != std::string_view::npos;
+            }
+            assert(refused && pick_sources.empty() && scene.deferred_builders.empty());
+            // The queue holds its scene weakly: an abandoned scene publishes nothing.
+            std::weak_ptr<bbl::SceneState> abandoned;
+            {
+                bbl::Scene transient;
+                transient.engine = &engine;
+                abandoned = transient.state;
+                bbl::add_billboard_system(transient, late);
+            }
+            bbl::js::collect_cycles();
+            assert(abandoned.expired());
+        }
+    `,
+        );
+        runNativeFixtureCompiler(tools!, [
+            "/nologo",
+            "/std:c++20",
+            "/W4",
+            "/WX",
+            "/permissive-",
+            "/EHsc",
+            "/MD",
+            // Disposal empties the billboard lists only where sprites are reached.
+            "/DBBLITE_HAS_SPRITES=1",
+            `/Fo:${output}\\`,
+            `/Fe:${executable}`,
+            "/I",
+            "native/include",
+            "/I",
+            "native/src",
+            "/I",
+            output,
+            file,
+        ]);
+        execFileSync(executable, { stdio: "pipe" });
     },
 );

@@ -289,7 +289,7 @@ test("Babylon texture slots preserve pinned defaults, guards, assignments and fa
     writeFileSync(
         source,
         `#include <bblite/runtime.hpp>
-#include <bblite/pal_image.hpp>
+#include <bblite/pal_texture_texels.hpp>
 #include <nlohmann/json.hpp>
 #include <cassert>
 #include <fstream>

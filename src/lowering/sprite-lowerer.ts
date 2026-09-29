@@ -254,6 +254,18 @@ export class SpriteLowerer {
 
     /** Scene-hosted bucket, growth, and hidden-update contracts. */
     private assertDepthHostedRenderable(): void {
+        // `add_depth_hosted_sprite_layer` publishes the layer when the scene
+        // builds, as the pin's own registration does.
+        const { declaration: add } = this.context.functionDeclaration(
+            sceneModule,
+            "addDepthHostedSpriteLayer",
+        );
+        if (!this.context.hasCall(add, "addDeferredSceneRenderables")) {
+            this.context.contractError(
+                add,
+                "Expected a depth-hosted sprite layer to register as a deferred scene renderable.",
+            );
+        }
         const { declaration: build } = this.context.functionDeclaration(
             renderableModule,
             "buildSpriteRenderable",
@@ -1393,6 +1405,7 @@ ${this.pickSprite2DCpp()}
 #include <bblite/js_data.hpp>
 #include <bblite/pal.hpp>
 #include <bblite/pal_image.hpp>
+#include <bblite/pal_texture_texels.hpp>
 #include <bblite/runtime.hpp>
 #include <bblite/upstream/sprite_layer.hpp>
 
@@ -1400,6 +1413,7 @@ ${this.pickSprite2DCpp()}
 #include <cmath>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace bbl {
 namespace {
@@ -1555,16 +1569,12 @@ SpriteAtlasHandle load_sprite_atlas(
         throw std::runtime_error(
             "loadSpriteAtlas: gridSize required.");
     }
-${decodeAtlasImageCpp()}
-    if (options.premultiply_on_load) {
+${decodeAtlasImageCpp(
+    `    if (options.premultiply_on_load) {
         // createImageBitmap({ premultiplyAlpha: "premultiply" }).
-        pal::DecodedImage premultiplied{
-            static_cast<int>(atlas.width),
-            static_cast<int>(atlas.height),
-            std::move(atlas.rgba)};
-        pal::premultiply_image_alpha(premultiplied);
-        atlas.rgba = std::move(premultiplied.rgba);
-    }
+        pal::premultiply_image_alpha(image);
+    }`,
+)}
     // The pinned sampler: clamp both axes, no mip chain, and a filter
     // chosen by \`sampling\`. mipmapFilter is "nearest" without mips, which
     // also takes maxAnisotropy back to 1.
@@ -1589,26 +1599,11 @@ SpriteAtlasHandle create_grid_sprite_atlas(
     Engine& engine,
     const FileTexture& texture,
     GridSpriteAtlasOptions options) {
+    // The pin's atlas shares the texture its loader decoded, so this one
+    // shares the texels that load decoded, or another atlas over it keeps,
+    // with the texture's upload transforms applied; a new decode otherwise.
+    pal::SharedImage image = pal::shared_texture_texels(texture.data);
     SpriteAtlasRecord atlas;
-    pal::DecodedImage image =
-        pal::decode_image(js::ArrayBuffer(texture.data.bytes));
-    if (texture.data.premultiply_alpha) {
-        pal::premultiply_image_alpha(image);
-    }
-    if (texture.data.invert_y && image.height > 1) {
-        const std::size_t row_bytes =
-            static_cast<std::size_t>(image.width) * 4u;
-        std::vector<std::uint8_t> row(row_bytes);
-        for (int y = 0; y < image.height / 2; ++y) {
-            std::uint8_t* top = image.rgba.data() +
-                static_cast<std::size_t>(y) * row_bytes;
-            std::uint8_t* bottom = image.rgba.data() +
-                static_cast<std::size_t>(image.height - 1 - y) * row_bytes;
-            std::memcpy(row.data(), top, row_bytes);
-            std::memcpy(top, bottom, row_bytes);
-            std::memcpy(bottom, row.data(), row_bytes);
-        }
-    }
     atlas.rgba = std::move(image.rgba);
     atlas.width = static_cast<std::uint32_t>(image.width);
     atlas.height = static_cast<std::uint32_t>(image.height);
@@ -1623,7 +1618,7 @@ SpriteAtlasHandle create_grid_sprite_atlas(
     const PixelsTexture& texture,
     GridSpriteAtlasOptions options) {
     SpriteAtlasRecord atlas;
-    atlas.rgba.assign(texture.rgba.begin(), texture.rgba.end());
+    atlas.rgba = share_texels(texture.rgba);
     atlas.width = texture.width;
     atlas.height = texture.height;
     atlas.mip_maps = texture.sampler.max_lod > 0.0f;
@@ -1759,7 +1754,7 @@ SpriteAtlasHandle create_sprite_atlas_from_frames(
     SpriteAtlasRecord atlas;
     atlas.width = atlas_width;
     atlas.height = atlas_height;
-    atlas.rgba.assign(
+    std::vector<std::uint8_t> texels(
         static_cast<std::size_t>(atlas_width) * atlas_height * 4u, 0u);
     atlas.premultiplied_alpha = options.premultiplied_alpha;
     atlas.mip_maps = false;
@@ -1787,7 +1782,7 @@ SpriteAtlasHandle create_sprite_atlas_from_frames(
             std::copy_n(
                 source.pixels + source_offset,
                 row_bytes,
-                atlas.rgba.begin() +
+                texels.begin() +
                     static_cast<std::ptrdiff_t>(destination_offset));
         }
         atlas.frames.push_back(SpriteFrame{
@@ -1802,6 +1797,7 @@ SpriteAtlasHandle create_sprite_atlas_from_frames(
                 static_cast<float>(source.height)},
             source.pivot});
     }
+    atlas.rgba = share_texels(std::move(texels));
 ${pushAtlasHandleCpp()}
 }
 
@@ -1845,7 +1841,9 @@ Sprite2DLayerHandle create_sprite_2d_layer(
 }
 
 // sprite-scene.ts#addDepthHostedSpriteLayer: a depth-enabled layer is a
-// scene renderable, not a separately registered SpriteRenderer context.
+// scene renderable, not a separately registered SpriteRenderer context,
+// published through addDeferredSceneRenderables: it draws from the scene's
+// next build (\`register_scene\`).
 void add_depth_hosted_sprite_layer(
     Scene& scene,
     Sprite2DLayerHandle layer_handle) {
@@ -1855,7 +1853,9 @@ void add_depth_hosted_sprite_layer(
         throw std::runtime_error(
             "Depth-hosted sprites require depth != none.");
     }
-    scene.depth_hosted_sprite_layers.push_back(layer_handle);
+    add_deferred_scene_renderables(scene, [layer_handle](SceneState& state) {
+        state.depth_hosted_sprite_layers.push_back(layer_handle);
+    });
 }
 
 // render/alpha-to-coverage.ts: immutable pipeline state, read when the

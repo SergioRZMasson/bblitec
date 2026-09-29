@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+    existsSync,
     mkdirSync,
     mkdtempSync,
     readdirSync,
@@ -9,7 +10,7 @@ import {
     utimesSync,
     writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import test from "node:test";
 import { listFiles } from "../src/tooling/records.js";
 import {
@@ -362,4 +363,103 @@ bblite_shared_pch(NAME check_pch TARGETS check HEADERS <bblite/shared.hpp> <vect
     );
     assert.ok(bytes.includes("checkout-b"));
     assert.ok(!bytes.includes("checkout-a"));
+});
+
+test("content-addressed compile inputs stay under the cache root without ccache", (t) => {
+    const tools = discoverDevelopmentTools();
+    const ninja =
+        tools.ninja ??
+        (process.platform === "win32"
+            ? discoverWindowsBuildTools("msvc").ninja
+            : undefined);
+    if (!tools.cmake || !ninja) {
+        t.skip("CMake and Ninja are required.");
+        return;
+    }
+    const artifacts = resolve("artifacts/test-native-cache");
+    mkdirSync(artifacts, { recursive: true });
+    const root = mkdtempSync(join(artifacts, "no-ccache-"));
+    const repository = resolve("native").replaceAll("\\", "/");
+    const generated = join(root, "generated");
+    mkdirSync(join(generated, "upstream/include/bblite"), { recursive: true });
+    mkdirSync(join(generated, "upstream/src"), { recursive: true });
+    writeFileSync(
+        join(generated, "upstream/include/bblite/value.hpp"),
+        "#define FIXTURE_VALUE 2\n",
+    );
+    writeFileSync(
+        join(generated, "upstream/src/module.cpp"),
+        "int module_value() { return 1; }\n",
+    );
+    const checkout = (name: string, includeCompilerCache: boolean): string => {
+        const native = join(root, name, "native");
+        mkdirSync(native, { recursive: true });
+        writeFileSync(
+            join(native, "CMakeLists.txt"),
+            `cmake_minimum_required(VERSION 3.24)
+project(cache_root_fixture LANGUAGES NONE)
+set(BBLITE_NATIVE_ROOT "${native.replaceAll("\\", "/")}")
+${includeCompilerCache ? `include("${repository}/compiler-cache.cmake")` : ""}
+include("${repository}/native-header-cache.cmake")
+bblite_cached_headers(headers bblite/value.hpp)
+bblite_content_addressed_sources(sources "\${BBLITE_GENERATED_DIR}/upstream/src/module.cpp")
+message(STATUS "fixture input=\${headers}")
+message(STATUS "fixture input=\${sources}")
+`,
+        );
+        return native;
+    };
+    const configure = (native: string, extra: string[] = []): string[] => {
+        const output = execFileSync(
+            tools.cmake!,
+            [
+                "-S",
+                native,
+                "-B",
+                join(native, "build"),
+                "-G",
+                "Ninja",
+                `-DCMAKE_MAKE_PROGRAM=${ninja}`,
+                `-DBBLITE_GENERATED_DIR=${generated}`,
+                "-DBBLITE_NATIVE_CACHE=OFF",
+                ...extra,
+            ],
+            { encoding: "utf8", stdio: "pipe" },
+        );
+        return [...output.matchAll(/fixture input=(.+)/g)].map((match) =>
+            resolve(match[1]!.trim()),
+        );
+    };
+    const within = (path: string, parent: string): boolean => {
+        const offset = relative(parent, path);
+        return offset !== "" && !offset.startsWith("..") && !isAbsolute(offset);
+    };
+    // The default root is the checkout's own artifacts/native-cache.
+    const defaultRoot = join(root, "default", "artifacts", "native-cache");
+    const inputs = configure(checkout("default", true));
+    assert.equal(inputs.length, 2);
+    for (const input of inputs) {
+        assert.ok(
+            within(input, defaultRoot),
+            `${input} is outside ${defaultRoot}`,
+        );
+        assert.ok(existsSync(input), input);
+    }
+    // An explicit root takes their place.
+    const explicitRoot = join(root, "explicit-cache");
+    const explicit = configure(checkout("explicit", true), [
+        `-DBBLITE_NATIVE_CACHE_DIR=${explicitRoot}`,
+    ]);
+    assert.equal(explicit.length, 2);
+    for (const input of explicit)
+        assert.ok(
+            within(input, explicitRoot),
+            `${input} is outside ${explicitRoot}`,
+        );
+    assert.ok(!existsSync(join(root, "explicit", "artifacts")));
+    // Without the root the module refuses rather than writing beside the drive root.
+    assert.throws(
+        () => configure(checkout("unrooted", false)),
+        /requires\s+the\s+cache\s+root/,
+    );
 });

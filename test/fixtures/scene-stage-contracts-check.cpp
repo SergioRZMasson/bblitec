@@ -267,8 +267,8 @@ struct SdlGraph : Graph {
         SDL_GPUSampleCount samples = SDL_GPU_SAMPLECOUNT_1;
     } target_record;
     bool task_depth_pointer = false;
-    static SDL_GPUSampleCount task_sample_count(const auto&, SDL_GPUSampleCount samples) {
-        return samples;
+    static SDL_GPUSampleCount target_sample_count(const auto&, const auto& record) {
+        return record.samples;
     }
     std::vector<int> task_draw_lists{1};
     MeshHandle handle{0};

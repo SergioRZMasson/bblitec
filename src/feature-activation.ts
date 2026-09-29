@@ -296,6 +296,13 @@ const runtimeFeatureTable: Record<Feature, RuntimeFeatureEntry> = {
             "src/engine/gpu-task-timing.ts + src/engine/gpu-task-timer.ts",
         consumers: CMAKE,
     },
+    "profile:source": {
+        provenance:
+            "native-architecture: the --source-profile diagnostic's function scopes " +
+            "and allocation counters (pal_source_profile.cpp); upstream code runs " +
+            "under the browser's own profiler",
+        consumers: CMAKE,
+    },
     "engine:dispose": {
         provenance: "src/engine/engine-dispose.ts",
         consumers: CMAKE,

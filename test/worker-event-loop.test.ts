@@ -1,4 +1,5 @@
-import { execFileSync } from "node:child_process";
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -29,4 +30,15 @@ test("realm event loops run computation and ordered messages without rendering",
         `/Fe${executable}`,
     ]);
     execFileSync(executable, { stdio: "pipe", timeout: 15000 });
+    // A worker that would wait on native work it owns ends the process.
+    const refused = spawnSync(executable, ["owner-on-worker"], {
+        encoding: "utf8",
+        timeout: 15000,
+    });
+    assert.equal(refused.status, 0, refused.stderr);
+    assert.match(refused.stdout, /native work owner refused on a worker/);
+    assert.match(
+        refused.stderr,
+        /NativeWork owner: Native work cannot wait on other native work\./,
+    );
 });

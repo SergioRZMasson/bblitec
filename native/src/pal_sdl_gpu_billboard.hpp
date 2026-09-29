@@ -53,6 +53,8 @@ struct BillboardResources {
     PinnedStageSlots add_fragment_slots;
     SDL_GPUBuffer* index_buffer = nullptr;
     SDL_GPUBuffer* instances = nullptr;
+    // The system capacity `instances` holds; a grown system reallocates it.
+    std::uint32_t instance_capacity = 0;
     // Owners stay atlas-then-extras; the bound list follows the compacted
     // fragment sidecar and can omit resources the shader did not keep.
     std::vector<SDL_GPUTextureSamplerBinding> textures;
@@ -94,24 +96,35 @@ inline SDL_GPUVertexElementFormat billboard_attribute_format(std::uint32_t float
     }
 }
 
-inline BillboardPass create_billboard_pass(SDL_GPUDevice* device, Engine& engine,
-                                           BillboardSystemHandle system_handle,
+/** The instance buffer for `capacity` sprites (billboard-pipeline.ts createBillboardInstanceBuffer). */
+inline SDL_GPUBuffer* create_billboard_instances(SDL_GPUDevice* device, std::uint32_t capacity) {
+    SDL_GPUBufferCreateInfo instances{};
+    instances.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+    instances.size = static_cast<Uint32>(static_cast<std::size_t>(capacity) *
+                                         upstream::billboard_instance_stride_bytes);
+    SDL_GPUBuffer* buffer = SDL_CreateGPUBuffer(device, &instances);
+    if (!buffer)
+        gpu_error("SDL_CreateGPUBuffer");
+    return buffer;
+}
+
+/** A system's pass from its snapshot (`billboard_pass_source`) and its atlas's texels. */
+inline BillboardPass create_billboard_pass(SDL_GPUDevice* device, const BillboardPassSource& system,
+                                           const std::vector<std::uint8_t>& texels,
                                            SDL_GPUTextureFormat target_format,
                                            SDL_GPUTextureFormat depth_format,
                                            SDL_GPUSampleCount sample_count) {
-    const BillboardSystemRecord& system = handle_at(engine.billboard_systems, system_handle);
-    const SpriteAtlasRecord& atlas = handle_at(engine.sprite_atlases, system.atlas);
     BillboardPass pass{device};
-    pass.system = system_handle;
+    pass.system = system.system;
 
     pass.index_buffer =
         upload_buffer(device, SDL_GPU_BUFFERUSAGE_INDEX, upstream::billboard_index_data.data(),
                       upstream::billboard_index_data.size() * sizeof(std::uint16_t));
 
     // The program ladder and the pass rules, decided once for both
-    // backends (`billboard_draw_plan`, pal_gpu_shared.hpp); this side
+    // backends (`billboard_draw_plan`, pal_gpu_shared.cpp); this side
     // keeps only its API mechanics.
-    const BillboardDrawPlan plan = billboard_draw_plan(system);
+    const BillboardDrawPlan& plan = system.plan;
     // The program's one module, both stages compiled from it and each
     // created from its own sidecar. Which blocks a stage kept is the
     // module's to say: the axis-locked basis reads the system block in the
@@ -173,11 +186,10 @@ inline BillboardPass create_billboard_pass(SDL_GPUDevice* device, Engine& engine
     info.depth_stencil_state.compare_op = gpu_depth_compare(upstream::pinned_depth_compare);
     info.depth_stencil_state.enable_depth_test = true;
     info.depth_stencil_state.enable_depth_write = plan.cutout_writes_depth;
-    // The one a2c rule (shared GPU helpers): at one sample the Dawn twin's
-    // pipeline validation would reject it, and this API would quantize
-    // coverage to a ~0.5 cutoff — different pixels per backend.
-    info.multisample_state.enable_alpha_to_coverage =
-        alpha_to_coverage_enabled(system.alpha_to_coverage, gpu_sample_count_value(sample_count));
+    // The plan resolves a2c as the pin does, never at one sample: there the
+    // Dawn twin's pipeline validation would reject it, and this API would
+    // quantize coverage to a ~0.5 cutoff — different pixels per backend.
+    info.multisample_state.enable_alpha_to_coverage = plan.alpha_to_coverage;
     info.multisample_state.sample_count = sample_count;
     info.target_info.color_target_descriptions = &target;
     info.target_info.num_color_targets = 1;
@@ -219,26 +231,44 @@ inline BillboardPass create_billboard_pass(SDL_GPUDevice* device, Engine& engine
         }
     }
 
-    SDL_GPUBufferCreateInfo instances{};
-    instances.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
-    instances.size = static_cast<Uint32>(static_cast<std::size_t>(system.capacity) *
-                                         upstream::billboard_instance_stride_bytes);
-    pass.instances = SDL_CreateGPUBuffer(device, &instances);
-    if (!pass.instances)
-        gpu_error("SDL_CreateGPUBuffer");
+    pass.instances = create_billboard_instances(device, system.capacity);
+    pass.instance_capacity = system.capacity;
 
     // rgba8unorm: `loadTexture2D` leaves srgb off, so the atlas texels
     // reach the blend stage as the bytes on disk.
     pass.textures.resize(1);
     pass.textures[0].texture = upload_2d_texture(
-        device, atlas.rgba.data(), atlas.rgba.size(), atlas.width, atlas.height,
-        SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, "billboard atlas", atlas_mip_levels(atlas));
-    pass.textures[0].sampler = create_texture_sampler(device, atlas.sampler);
+        device, texels.data(), texels.size(), system.atlas_width, system.atlas_height,
+        SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, "billboard atlas", system.atlas_mip_levels);
+    pass.textures[0].sampler = create_texture_sampler(device, system.atlas_sampler);
     append_sprite_fragment_textures(device, pass.textures, system.custom_textures,
                                     "billboard custom texture");
     pass.bound_textures = select_sprite_fragment_textures(
         slots, pass.textures, system.custom_texture_names, "billboard fragment shader");
     return pass;
+}
+
+/**
+ * The one build path: a pass for every system the scene draws
+ * (`follow_billboard_renderables`), built on the realm from the records, in
+ * the scene's order, and the `renderable_version` they follow. Setup calls it,
+ * and so does any frame whose scene has built since.
+ */
+inline void sync_billboard_passes(SDL_GPUDevice* device, const Engine& engine, const Scene& scene,
+                                  std::vector<BillboardPass>& passes,
+                                  std::uint64_t& renderable_version,
+                                  SDL_GPUTextureFormat target_format,
+                                  SDL_GPUTextureFormat depth_format,
+                                  SDL_GPUSampleCount sample_count) {
+    follow_billboard_renderables(
+        passes, scene.state->billboard_renderables, [&](BillboardSystemHandle handle) {
+            const BillboardPassSource source =
+                billboard_pass_source(engine, handle, gpu_sample_count_value(sample_count));
+            return create_billboard_pass(device, source,
+                                         *handle_at(engine.sprite_atlases, source.atlas).rgba,
+                                         target_format, depth_format, sample_count);
+        });
+    renderable_version = scene.state->renderable_version;
 }
 
 /**
@@ -256,6 +286,11 @@ inline void upload_billboard_pass(SDL_GPUDevice* device, const Scene& scene, Eng
     if (system.custom_shader) {
         pass.elapsed_ms += delta_ms;
     }
+    ensure_billboard_instance_capacity(system, pass, [&](std::uint32_t capacity) {
+        SDL_GPUBuffer* grown = create_billboard_instances(device, capacity);
+        SDL_ReleaseGPUBuffer(device, pass.instances);
+        pass.instances = grown;
+    });
     // One gating rule for both backends (`billboard_needs_upload`):
     // `update_buffer` creates a transfer buffer and submits a command
     // buffer of its own, so re-uploading an identical buffer every frame

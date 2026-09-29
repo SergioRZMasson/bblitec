@@ -7,7 +7,9 @@
 #include <bblite/upstream/camera_change_key.hpp>
 
 #include <array>
+#include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "pal_text_pipeline.hpp"
 
@@ -49,12 +51,39 @@ inline void validate_text_scene(const Scene& scene) {
  */
 struct TextScenePass {
     std::vector<TextDrawBindingHandle> bindings;
+    /** The target the pass binds for, and the scene `renderable_version` it bound. */
+    TextSurfaceHandle target_surface;
+    TextTargetSignature target_signature;
+    std::uint64_t renderable_version = 0;
 
+    /** Setup: bind the scene's text for the pass's target. */
     void bind(const Scene& scene, const TextSurfaceHandle& surface,
               const TextTargetSignature& target) {
+        target_surface = surface;
+        target_signature = target;
+        rebind(scene);
+    }
+
+    /**
+     * render-task-base.ts `prepareRenderTaskPass`: a task rebinds the scene's
+     * renderables only when its `_renderableVersion` moved -- a registration
+     * that published more text -- and otherwise does no binding work. Each
+     * rebind is the pin's own `bind`, which keeps an already bound renderable's
+     * GPU state for the same target (`ensureGpu`).
+     */
+    void follow(const Scene& scene) {
+        if (renderable_version != scene.state->renderable_version)
+            rebind(scene);
+    }
+
+    void rebind(const Scene& scene) {
         validate_text_scene(scene);
+        std::vector<TextDrawBindingHandle> rebound;
+        rebound.reserve(scene.state->text_renderables.size());
         for (const auto& renderable : scene.state->text_renderables)
-            bindings.push_back(renderable->bind(surface, target));
+            rebound.push_back(renderable->bind(target_surface, target_signature));
+        bindings = std::move(rebound);
+        renderable_version = scene.state->renderable_version;
     }
 
     void update(TextCameraInputPointer camera, double width, double height) const {

@@ -256,6 +256,16 @@ public:
         completions_.emplace(id, NativeCompletion{std::move(handler), std::move(cancel)});
         return id;
     }
+    /** A completion handled only after every earlier ordered completion: native work started in
+     * one order settles in it, each handler in its own task. That order does not depend on how
+     * long each job takes, so it is the same in every run; a slow job therefore delays the
+     * settlements started after it, whose order relative to it is observable. */
+    std::uint64_t register_ordered_completion(EventHandler handler, Task cancel = {}) {
+        const auto id = register_completion(std::move(handler), std::move(cancel));
+        completions_.at(id).ordered = true;
+        ordered_completions_.push_back(id);
+        return id;
+    }
     void cancel_completion(std::uint64_t id) {
         require_owner();
         const auto found = completions_.find(id);
@@ -309,6 +319,11 @@ public:
         const TimerId id = next_timer_++;
         if (id == 0)
             throw std::overflow_error("Timer identifiers exhausted.");
+        if (timer_profile())
+            std::fprintf(
+                stderr, "[cpu][timer-set] realm=%p id=%llu repeat=%u delay_ms=%.3f now_ms=%.3f\n",
+                static_cast<void*>(this), static_cast<unsigned long long>(id), repeat ? 1u : 0u,
+                std::chrono::duration<double, std::milli>(delay).count(), profile_milliseconds());
         if (fixed_frame_delta_) {
             timers_.emplace(id,
                             Timer{std::move(task), delay, repeat, nesting,
@@ -340,6 +355,10 @@ public:
         require_owner();
         if (!timers_.erase(id))
             return;
+        if (timer_profile())
+            std::fprintf(stderr, "[cpu][timer-clear] realm=%p id=%llu now_ms=%.3f\n",
+                         static_cast<void*>(this), static_cast<unsigned long long>(id),
+                         profile_milliseconds());
         // Canceled far-future entries must not accumulate behind an earlier
         // live deadline. Amortized compaction keeps the heap bounded without
         // adding an indexed queue to the ordinary timer dispatch path.
@@ -477,6 +496,27 @@ private:
         if (owner_ != std::this_thread::get_id())
             throw std::logic_error("Realm accessed from another thread.");
     }
+    /** BBLITE_TIMER_PROFILE=1: timer scheduling, callback and clearing times. */
+    static bool timer_profile() {
+        static const bool profile = [] {
+#if defined(_MSC_VER)
+            char* text = nullptr;
+            std::size_t size = 0;
+            if (_dupenv_s(&text, &size, "BBLITE_TIMER_PROFILE") != 0)
+                throw std::runtime_error("Cannot read BBLITE_TIMER_PROFILE.");
+            const std::unique_ptr<char, decltype(&std::free)> owned(text, &std::free);
+            const char* value = owned.get();
+#else
+            const char* value = std::getenv("BBLITE_TIMER_PROFILE");
+#endif
+            return value && std::string_view(value) == "1";
+        }();
+        return profile;
+    }
+    /** Wall time since the realm origin, independent of a fixed capture clock. */
+    double profile_milliseconds() const {
+        return std::chrono::duration<double, std::milli>(Clock::now() - origin_).count();
+    }
     bool closed() const {
         std::lock_guard lock(inbox_->mutex_);
         return inbox_->closed_ || inbox_->terminated();
@@ -491,6 +531,7 @@ private:
                 completion.cancel();
         }
         completions_.clear();
+        ordered_completions_.clear();
         // A promise's frame unregisters itself in its destructor. Every
         // suspended activation is released by this realm's owning thread.
         while (!continuations_.empty()) {
@@ -547,26 +588,13 @@ private:
         if (found == timers_.end())
             return;
         const Timer timer = found->second;
-        static const bool profile = [] {
-#if defined(_MSC_VER)
-            char* text = nullptr;
-            std::size_t size = 0;
-            if (_dupenv_s(&text, &size, "BBLITE_TIMER_PROFILE") != 0)
-                throw std::runtime_error("Cannot read BBLITE_TIMER_PROFILE.");
-            const std::unique_ptr<char, decltype(&std::free)> owned(text, &std::free);
-            const char* value = owned.get();
-#else
-            const char* value = std::getenv("BBLITE_TIMER_PROFILE");
-#endif
-            return value && std::string_view(value) == "1";
-        }();
-        if (profile)
+        if (timer_profile())
             std::fprintf(stderr,
                          "[cpu][timer] realm=%p id=%llu repeat=%u delay_ms=%.3f now_ms=%.3f\n",
                          static_cast<void*>(this), static_cast<unsigned long long>(id),
                          timer.repeat ? 1u : 0u,
                          std::chrono::duration<double, std::milli>(timer.delay).count(),
-                         std::chrono::duration<double, std::milli>(Clock::now() - origin_).count());
+                         profile_milliseconds());
         if (!timer.repeat)
             timers_.erase(found);
         const unsigned previous_nesting = std::exchange(timer_nesting_, timer.nesting);
@@ -586,6 +614,29 @@ private:
             else
                 deadlines_.push(Deadline{Clock::now() + next.delay, id});
         }
+    }
+    /** The oldest pending ordered completion, once its event has arrived; the next one that has
+     * also arrived gets its own task. */
+    void deliver_ordered_completion() {
+        const auto front = [this]() -> NativeCompletion* {
+            while (!ordered_completions_.empty()) {
+                const auto found = completions_.find(ordered_completions_.front());
+                if (found != completions_.end())
+                    return &found->second;
+                ordered_completions_.pop_front(); // Cancelled.
+            }
+            return nullptr;
+        };
+        NativeCompletion* next = front();
+        if (!next || !next->arrived)
+            return;
+        auto handler = std::move(next->handler);
+        auto event = std::move(next->arrived);
+        completions_.erase(ordered_completions_.front());
+        ordered_completions_.pop_front();
+        if (const NativeCompletion* following = front(); following && following->arrived)
+            post([this] { deliver_ordered_completion(); });
+        handler(std::move(event));
     }
     void queue_due_timers() {
         const auto now = Clock::now();
@@ -702,6 +753,11 @@ private:
                     const auto found = completions_.find(completion->completion);
                     if (found == completions_.end())
                         return;
+                    if (found->second.ordered) {
+                        found->second.arrived = std::move(event);
+                        deliver_ordered_completion();
+                        return;
+                    }
                     auto handler = std::move(found->second.handler);
                     completions_.erase(found);
                     handler(std::move(event));
@@ -745,8 +801,12 @@ private:
     struct NativeCompletion {
         EventHandler handler;
         Task cancel;
+        bool ordered = false;
+        /** An ordered completion's event, held until the earlier ones are handled. */
+        std::unique_ptr<ExternalEvent> arrived{};
     };
     std::map<std::uint64_t, NativeCompletion> completions_;
+    std::deque<std::uint64_t> ordered_completions_;
 };
 
 /** Dispatch a listener snapshot through the realm's callback/error checkpoint. */

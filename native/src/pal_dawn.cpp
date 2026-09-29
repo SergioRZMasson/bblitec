@@ -527,6 +527,54 @@ WGPURenderPipeline create_diagnostic_pipeline(DawnState& state, WGPUShaderModule
 
 #if BBLITE_HAS_DAWN && BBLITE_HAS_PBR_RENDERER
 namespace bbl::pal {
+#if BBLITE_HAS_BILLBOARDS
+/**
+ * The one billboard build path, run by setup and by any frame whose scene has
+ * built since (its `renderable_version`): a pass for every system the scene
+ * draws, in its order (the rule `follow_billboard_renderables` states for
+ * SDL_GPU, whose builds run in place). The realm snapshots what each build
+ * reads -- the members and their version, the pass sources and their atlases'
+ * shared texels -- so the builds read no realm record when they run as a
+ * native job beside the realm (`native`). The atlas reports the chain it
+ * allocated, and this state fills it.
+ */
+static Iteration<bool> sync_dawn_billboard_passes(DawnState& state, const Engine& engine,
+                                                  const Scene& scene, bool native) {
+    const std::uint64_t version = scene.state->renderable_version;
+    const std::vector<BillboardSystemHandle> members = scene.state->billboard_renderables;
+    const std::vector<std::size_t> matches =
+        billboard_pass_matches(state.billboard_passes, members);
+    std::vector<BillboardPassSource> sources;
+    std::vector<SharedTexels> texels;
+    for (const BillboardSystemHandle handle :
+         billboard_members_without_pass(matches, state.billboard_passes.size(), members)) {
+        const BillboardPassSource& source =
+            sources.emplace_back(billboard_pass_source(engine, handle, state.sample_count));
+        texels.push_back(handle_at(engine.sprite_atlases, source.atlas).rgba);
+    }
+    std::vector<DawnBillboardPass> built;
+    built.reserve(sources.size());
+    std::vector<std::function<void()>> jobs;
+    if (!sources.empty())
+        jobs.emplace_back([&] {
+            for (std::size_t index = 0; index < sources.size(); ++index) {
+                built.push_back(create_dawn_billboard_pass(
+                    state.device, state.queue, sources[index], *texels[index],
+                    state.frame_color_format, WGPUTextureFormat_Depth24PlusStencil8,
+                    state.sample_count));
+                generate_mipmaps(state, built.back().atlas, WGPUTextureFormat_RGBA8Unorm,
+                                 built.back().atlas_mip_levels);
+            }
+        });
+    auto preparation = run_native_preparation(std::move(jobs), native);
+    while (preparation.advance())
+        co_yield false;
+    adopt_billboard_passes(state.billboard_passes, matches, std::move(built));
+    state.billboard_renderable_version = version;
+    co_return true;
+}
+#endif
+
 class DawnSceneRun {
 
     struct State : FrameSession {
@@ -678,162 +726,199 @@ class DawnSceneRun {
         }
     }
 
-    void write_material_uniforms(const upstream::RenderDrawList& list,
-                                 const ShaderPassMatrices& pass_matrices,
-                                 bool pass_dependent_only = false) {
+    /** One draw's resolved variant and the per-material state its blocks fill. */
+    struct DrawBlocks {
+        std::size_t variant = npos;
+        DawnDrawState* state = nullptr;
+    };
+
+    /**
+     * The draw-state half of the frame's material dispatch, which setup
+     * shares: the variant the draw's material kind resolves and the
+     * per-material buffers and group its blocks are written into. Every
+     * kind's group binds resources the first frame creates (bone and VAT
+     * textures, shadow maps and ESM caster params, frame-graph textures), so
+     * setup (`frame` false) makes the buffers only and leaves a draw whose
+     * variant or material does not resolve to the frame, which refuses it by
+     * name.
+     */
+    DrawBlocks ensure_draw_state([[maybe_unused]] const Scene& scene,
+                                 const upstream::RenderDrawCommand& draw,
+                                 [[maybe_unused]] DawnMesh& mesh, [[maybe_unused]] bool frame) {
+        [[maybe_unused]] auto& state = data_.state;
+        [[maybe_unused]] const auto& engine = data_.engine;
+        const upstream::RenderMaterialKind kind = draw.item.material_kind;
+        if (kind == upstream::RenderMaterialKind::shader)
+            return {};
+        if (kind == upstream::RenderMaterialKind::standard) {
+#if BBLITE_STANDARD_VARIANTS > 0
+            // The pin's own per-draw blocks; the transcribed block is retired,
+            // so an unresolved draw errors naming the mesh, matching the
+            // SDL_GPU backend.
+            const std::size_t variant = standard_variant_for_draw(scene, engine, draw);
+            if (variant == npos) {
+                if (!frame)
+                    return {};
+                dawn_error("Standard draw for mesh " + std::to_string(draw.item.mesh.value) +
+                           ", material " + std::to_string(draw.item.material.value) +
+                           " resolves no composed variant: " +
+                           standard_variant_request(scene, engine, draw));
+            }
+            const MaterialRecord* material = handle_find(engine.materials, draw.item.material);
+            DawnDrawState& standard_state =
+                ensure_standard_draw_buffers(state, mesh, draw.item.material.value);
+            // The bind group builds at encode: a depth-sampled emissive render
+            // texture's view resolves only after the frame-graph textures exist.
+            standard_state.group_key =
+                variant * 2 + ((material && material->has_emissive_render_texture) ? 1 : 0);
+            return {variant, &standard_state};
+#else
+            if (frame)
+                dawn_error("Standard draw in a build with no composed variant table; the "
+                           "transcribed fragment is retired.");
+            return {};
+#endif
+        }
+#if BBLITE_NODE_VARIANTS > 0
+        if (kind == upstream::RenderMaterialKind::node) {
+            if (!frame && !handle_find(engine.materials, draw.item.material))
+                return {};
+            // The group itself is built at encode: a receiving graph binds the
+            // generators' maps, which the frame graph has not created yet here.
+            return {draw.item.shader_variant,
+                    &ensure_node_draw_buffers(state, mesh, draw.item.material.value,
+                                              upstream::node_variants.at(draw.item.shader_variant),
+                                              handle_at(engine.materials, draw.item.material))};
+        }
+#endif
+#if BBLITE_PBR_VARIANTS > 0
+        // The pin's own per-draw blocks. The transcribed block is retired: a
+        // PBR draw that resolves no variant is an error naming the mesh,
+        // matching the SDL_GPU backend.
+        pal::PinnedVariantKey pinned_key;
+        const std::size_t variant = pinned_variant_for_draw(scene, engine, draw, npos, &pinned_key);
+        if (variant == npos) {
+            if (!frame)
+                return {};
+            dawn_error("PBR draw for mesh " + std::to_string(draw.item.mesh.value) + ", material " +
+                       std::to_string(draw.item.material.value) +
+                       " resolves no pinned variant: " + pal::pinned_variant_request(pinned_key));
+        }
+        if (frame) {
+            const MeshRecord& record = handle_at(engine.meshes, draw.item.mesh);
+            if (pinned_variant_skeleton(variant))
+                write_pinned_bone_texture(state, mesh, record);
+#if BBLITE_VAT
+            // Before the bind group is built: the settings buffer it names has
+            // to exist by then, and a cached group keeps the same buffer while
+            // the clock is rewritten in place.
+            if (pinned_variant_vat(variant))
+                write_pinned_vat_texture(state, mesh, record, engine);
+#endif
+        }
+        return {variant,
+                &ensure_pinned_draw_bindings(state, mesh, draw.item.material.value, variant,
+                                             handle_find(engine.materials, draw.item.material),
+                                             /*build_group=*/frame)};
+#else
+        if (frame)
+            dawn_error("PBR draw in a build with no composed variant table; the transcribed "
+                       "fragment is retired.");
+        return {};
+#endif
+    }
+
+    /**
+     * The block-writing half of the frame's material dispatch: the blocks the
+     * draw's material kind owns, into the state `ensure_draw_state` settled.
+     * The per-mesh vertex, deformation, instancing and morph state is synced
+     * once per frame by the item pass.
+     */
+    void write_draw_blocks(const upstream::RenderDrawCommand& draw, DawnMesh& mesh,
+                           [[maybe_unused]] const DrawBlocks& blocks,
+                           const ShaderPassMatrices& pass_matrices) {
         [[maybe_unused]] auto& engine = data_.engine;
         [[maybe_unused]] auto& state = data_.state;
         [[maybe_unused]] auto& shader_block_scratch = data_.shader_block_scratch;
         [[maybe_unused]] auto& pass_scene = current_frame().pass_scene;
-        [[maybe_unused]] auto& pass_meshes = current_frame().pass_meshes;
-#if BBLITE_NODE_VARIANTS > 0
-        [[maybe_unused]] auto& node_mesh_blocks = current_frame().node_mesh_blocks;
+        switch (draw.item.material_kind) {
+        case upstream::RenderMaterialKind::shader: {
+            if (draw.item.material.value >= engine.materials.size()) {
+                // The SDL backend's named refusal: encoding the draw with
+                // stale or zero uniforms is the silent alternative.
+                pal::refuse_invalid_frame_handle("Shader draw has an invalid material.");
+            }
+            const MaterialRecord& material = handle_at(engine.materials, draw.item.material);
+            const upstream::ShaderVariantInfo& shader_info =
+                upstream::shader_variant_info(draw.item.shader_variant);
+            const ShaderDrawMatrices shader_matrices(
+                *pass_scene, engine, handle_at(engine.meshes, draw.item.mesh), pass_matrices);
+            const ShaderPassMatrices shader_pass_matrices = shader_matrices.apply(pass_matrices);
+            // A block that is exactly the shared scene matrix binds the
+            // frame's own buffer and needs no write; everything else -- custom
+            // gathers, or several system matrices -- owns the material's
+            // buffer and is filled here.
+            const auto write_stage_block = [&](const upstream::ShaderVariantStageBlock& block,
+                                               WGPUBuffer buffer) {
+                if (!block.present || block_is_shared_scene_matrix(block)) {
+                    return;
+                }
+                shader_stage_block_floats(block, shader_pass_matrices, material,
+                                          shader_block_scratch);
+                DawnGpuDevice{state.queue}.write_buffer(buffer, 0, shader_block_scratch.data(),
+                                                        shader_block_scratch.size() *
+                                                            sizeof(float));
+            };
+            write_stage_block(shader_info.vertex, mesh.shader_vertex_uniforms);
+            write_stage_block(shader_info.fragment, mesh.material_uniforms);
+            return;
+        }
+#if BBLITE_STANDARD_VARIANTS > 0
+        case upstream::RenderMaterialKind::standard:
+#if BBLITE_STANDARD_SKELETON
+            if (upstream::standard_variant_skeleton(upstream::standard_variants[blocks.variant]))
+                write_pinned_bone_texture(state, mesh, handle_at(engine.meshes, draw.item.mesh));
 #endif
+            write_standard_draw_blocks(state, *pass_scene, engine, draw,
+                                       blocks.state->mesh_uniforms, *blocks.state);
+            return;
+#endif
+#if BBLITE_NODE_VARIANTS > 0
+        case upstream::RenderMaterialKind::node:
+            write_node_mesh_block(state,
+                                  node_mesh_block_for(current_frame().node_mesh_blocks, *pass_scene,
+                                                      engine, draw.item.mesh),
+                                  *blocks.state);
+            return;
+#endif
+        default:
+#if BBLITE_PBR_VARIANTS > 0
+            write_pinned_draw_blocks(state, *pass_scene, engine, draw, blocks.variant,
+                                     *blocks.state);
+#endif
+            return;
+        }
+    }
 
+    void write_material_uniforms(const upstream::RenderDrawList& list,
+                                 const ShaderPassMatrices& pass_matrices,
+                                 bool pass_dependent_only = false) {
+        const Scene& pass_scene = *current_frame().pass_scene;
+        std::vector<DawnMesh>& pass_meshes = *current_frame().pass_meshes;
         for (const upstream::RenderDrawCommand& draw : list.commands) {
-            DawnMesh& draw_mesh = (*pass_meshes)[draw.item_index];
-            const bool shader_draw =
-                draw.item.material_kind == upstream::RenderMaterialKind::shader;
-            if (pass_dependent_only && !shader_draw) {
+            if (pass_dependent_only &&
+                draw.item.material_kind != upstream::RenderMaterialKind::shader) {
                 continue;
             }
-            // The per-mesh vertex, deformation, instancing and
-            // morph state is synced once per frame by the item
-            // pass above; a draw writes only the blocks its
-            // material kind owns.
-            if (draw.item.material_kind == upstream::RenderMaterialKind::standard) {
-#if BBLITE_STANDARD_VARIANTS > 0
-                // The pin's own per-draw blocks; the transcribed
-                // block is retired, so an unresolved draw errors
-                // naming the mesh, matching the SDL_GPU backend.
-                const std::size_t variant = standard_variant_for_draw(*pass_scene, engine, draw);
-                if (variant == npos) {
-                    dawn_error(("Standard draw for mesh " + std::to_string(draw.item.mesh.value) +
-                                ", material " + std::to_string(draw.item.material.value) +
-                                " resolves no composed variant: " +
-                                standard_variant_request(*pass_scene, engine, draw))
-                                   .c_str());
-                }
-                const MaterialRecord* standard_material =
-                    handle_find(engine.materials, draw.item.material);
-#if BBLITE_STANDARD_SKELETON
-                if (upstream::standard_variant_skeleton(upstream::standard_variants[variant])) {
-                    write_pinned_bone_texture(state, draw_mesh,
-                                              handle_at(engine.meshes, draw.item.mesh));
-                }
-#endif
-                DawnDrawState& standard_state =
-                    ensure_standard_draw_buffers(state, draw_mesh, draw.item.material.value);
-                // The bind group builds at encode: a depth-sampled
-                // emissive render texture's view resolves only
-                // after the frame-graph textures exist.
-                standard_state.group_key =
-                    variant * 2 +
-                    ((standard_material && standard_material->has_emissive_render_texture) ? 1 : 0);
-                write_standard_draw_blocks(state, *pass_scene, engine, draw,
-                                           standard_state.mesh_uniforms, standard_state);
-#else
-                dawn_error("Standard draw in a build with no composed "
-                           "variant table; the transcribed fragment is "
-                           "retired.");
-#endif
-#if BBLITE_NODE_VARIANTS > 0
-            } else if (draw.item.material_kind == upstream::RenderMaterialKind::node) {
-                const std::size_t variant = draw.item.shader_variant;
-                DawnDrawState& node_state = ensure_node_draw_buffers(
-                    state, draw_mesh, draw.item.material.value, upstream::node_variants.at(variant),
-                    handle_at(engine.materials, draw.item.material));
-                write_node_mesh_block(
-                    state,
-                    node_mesh_block_for(node_mesh_blocks, *pass_scene, engine, draw.item.mesh),
-                    node_state);
-                // The group itself is built at encode: a receiving
-                // graph binds the generators' maps, which the frame
-                // graph has not created yet at this point.
-#endif
-            } else if (shader_draw) {
-                if (draw.item.material.value < engine.materials.size()) {
-                    const MaterialRecord& material =
-                        handle_at(engine.materials, draw.item.material);
-                    const upstream::ShaderVariantInfo& shader_info =
-                        upstream::shader_variant_info(draw.item.shader_variant);
-                    const ShaderDrawMatrices shader_matrices(
-                        *pass_scene, engine, handle_at(engine.meshes, draw.item.mesh),
-                        pass_matrices);
-                    const ShaderPassMatrices shader_pass_matrices =
-                        shader_matrices.apply(pass_matrices);
-                    // A block that is exactly the shared scene
-                    // matrix binds the frame's own buffer and
-                    // needs no write; everything else -- custom
-                    // gathers, or several system matrices --
-                    // owns the material's buffer and is filled
-                    // here.
-                    const auto write_stage_block =
-                        [&](const upstream::ShaderVariantStageBlock& block, WGPUBuffer buffer) {
-                            if (!block.present || block_is_shared_scene_matrix(block)) {
-                                return;
-                            }
-                            shader_stage_block_floats(block, shader_pass_matrices, material,
-                                                      shader_block_scratch);
-                            DawnGpuDevice{state.queue}.write_buffer(
-                                buffer, 0, shader_block_scratch.data(),
-                                shader_block_scratch.size() * sizeof(float));
-                        };
-                    write_stage_block(shader_info.vertex, draw_mesh.shader_vertex_uniforms);
-                    write_stage_block(shader_info.fragment, draw_mesh.material_uniforms);
-                } else {
-                    // The SDL backend's named refusal: encoding
-                    // the draw with stale or zero uniforms is
-                    // the silent alternative.
-                    pal::refuse_invalid_frame_handle("Shader draw has an invalid material.");
-                }
-            } else {
-#if BBLITE_PBR_VARIANTS > 0
-                // The pin's own per-draw blocks. The transcribed
-                // block is retired: a PBR draw that resolves no
-                // variant is an error naming the mesh, matching the
-                // SDL_GPU backend.
-                pal::PinnedVariantKey pinned_key;
-                const std::size_t variant =
-                    pinned_variant_for_draw(*pass_scene, engine, draw, npos, &pinned_key);
-                if (variant == npos) {
-                    dawn_error(
-                        ("PBR draw for mesh " + std::to_string(draw.item.mesh.value) +
-                         ", material " + std::to_string(draw.item.material.value) +
-                         " resolves no pinned variant: " + pal::pinned_variant_request(pinned_key))
-                            .c_str());
-                }
-                {
-                    const MeshRecord& variant_record = handle_at(engine.meshes, draw.item.mesh);
-                    if (pinned_variant_skeleton(variant)) {
-                        write_pinned_bone_texture(state, draw_mesh, variant_record);
-                    }
-#if BBLITE_VAT
-                    // Before the bind group is built: the settings
-                    // buffer it names has to exist by then, and a
-                    // cached group keeps the same buffer while the
-                    // clock is rewritten in place.
-                    if (pinned_variant_vat(variant)) {
-                        write_pinned_vat_texture(state, draw_mesh, variant_record, engine);
-                    }
-#endif
-                    DawnDrawState& pinned_state = ensure_pinned_draw_bindings(
-                        state, draw_mesh, draw.item.material.value, variant,
-                        handle_find(engine.materials, draw.item.material));
-                    write_pinned_draw_blocks(state, *pass_scene, engine, draw, variant,
-                                             pinned_state);
-                }
-#else
-                dawn_error("PBR draw in a build with no composed variant "
-                           "table; the transcribed fragment is retired.");
-#endif
-            }
+            DawnMesh& mesh = pass_meshes[draw.item_index];
+            write_draw_blocks(draw, mesh, ensure_draw_state(pass_scene, draw, mesh, /*frame=*/true),
+                              pass_matrices);
         }
     }
 
     void prepare_pipeline([[maybe_unused]] const Scene& scene,
                           const upstream::RenderDrawCommand& draw, const FrameTaskRecord* task,
-                          [[maybe_unused]] std::vector<std::function<void()>>& pending) {
+                          std::vector<std::function<void()>>& pending) {
         auto& state = data_.state;
         const auto& engine = data_.engine;
         const auto* geometry = task && task->kind == FrameTaskKind::geometry ? task : nullptr;
@@ -854,7 +939,7 @@ class DawnSceneRun {
             const auto& record = handle_at(engine.render_targets, task->render.target);
             const auto& gpu = handle_at(state.render_targets, task->render.target);
             const bool borrowed = task->render.depth.source == RenderTextureSource::geometry_depth;
-            samples = record.swapchain ? 1u : task_sample_count(state, record.samples);
+            samples = target_sample_count(state, record);
             has_depth = borrowed || record.has_depth;
             target =
                 DawnTaskTarget{gpu.color_format,
@@ -864,15 +949,13 @@ class DawnSceneRun {
             geometry ? static_cast<std::size_t>(geometry->geometry.shader_index) : npos;
         const auto kind = draw.pipeline;
         const bool shadow_pass = shadow != nullptr;
+        // A geometry-output pipeline reads its task record, so it is made here
+        // on the renderer thread; every other one joins the native preparation.
         const auto prepare = [&](auto action) {
-#if BBLITE_WORKERS
-            if (!geometry &&
-                wgpuDeviceHasFeature(state.device, WGPUFeatureName_ImplicitDeviceSynchronization)) {
+            if (geometry)
+                action();
+            else
                 pending.emplace_back(std::move(action));
-                return;
-            }
-#endif
-            action();
         };
         switch (draw.item.material_kind) {
 #if BBLITE_PBR_VARIANTS > 0
@@ -1084,14 +1167,11 @@ public:
                 create_dawn_texture_view(state.transmission_color, nullptr);
         }
 #if BBLITE_HAS_SPRITE_RENDERER
-        if (!scene.depth_hosted_sprite_layers.empty()) {
-            state.scene_sprite_pass = create_dawn_scene_sprite_pass(
-                state.device, state.queue, state.mips, engine, scene.depth_hosted_sprite_layers,
-                state.sprite_render_textures, state.sprite_render_texture_views,
-                state.frame_color_format, WGPUTextureFormat_Depth24PlusStencil8,
-                state.sample_count);
-            state.has_scene_sprite_pass = true;
-        }
+        sync_dawn_scene_sprite_pass(
+            state.device, state.queue, state.mips, engine, scene, state.scene_sprite_pass,
+            state.has_scene_sprite_pass, state.scene_sprite_renderable_version,
+            state.sprite_render_textures, state.sprite_render_texture_views,
+            state.frame_color_format, WGPUTextureFormat_Depth24PlusStencil8, state.sample_count);
 #endif
 
         state.vertex_module = load_wgsl_module(state, "pbr.vert");
@@ -1174,16 +1254,33 @@ public:
                               sizeof(empty_morph_weight_data));
         }
 #endif
-        upload_environment(state, scene.environment);
-        upload_brdf(state, scene.environment);
-        state.reflection_cubes.reserve(engine.reflection_cubes.size());
-        state.reflection_cube_views.reserve(engine.reflection_cubes.size());
-        for (const auto& cube : engine.reflection_cubes) {
-            WGPUTexture texture = upload_reflection_cube(state, cube);
-            state.reflection_cubes.push_back(texture);
-            state.reflection_cube_views.push_back(cube_view(texture));
+        // Environment and reflection-cube decoding and uploads read these
+        // snapshots and write backend state only; a native job needs the
+        // device's implicit synchronization. Mesh uploads bind the reflection
+        // cubes, so this job finishes before them.
+        const bool native_preparation =
+            wgpuDeviceHasFeature(state.device, WGPUFeatureName_ImplicitDeviceSynchronization);
+        {
+            const EnvironmentState environment = scene.environment;
+            const auto reflection_cubes = engine.reflection_cubes;
+            std::vector<std::function<void()>> environment_jobs;
+            environment_jobs.emplace_back([&] {
+                upload_environment(state, environment);
+                upload_brdf(state, environment);
+                state.reflection_cubes.reserve(reflection_cubes.size());
+                state.reflection_cube_views.reserve(reflection_cubes.size());
+                for (const auto& cube : reflection_cubes) {
+                    WGPUTexture texture = upload_reflection_cube(state, cube);
+                    state.reflection_cubes.push_back(texture);
+                    state.reflection_cube_views.push_back(cube_view(texture));
+                }
+            });
+            auto environment_preparation =
+                run_native_preparation(std::move(environment_jobs), native_preparation);
+            while (environment_preparation.advance())
+                co_yield false;
         }
-        cpu_startup_mark("environment-background");
+        cpu_startup_mark("environment");
         if (startup_budget.exhausted()) {
             co_yield false;
             startup_budget.resume();
@@ -1218,8 +1315,6 @@ public:
             rebuild_task_draw_lists();
         };
         {
-            const bool async_uploads =
-                wgpuDeviceHasFeature(state.device, WGPUFeatureName_ImplicitDeviceSynchronization);
             const auto prepare_image = [&state](const TextureData& data, bool srgb,
                                                 std::array<std::uint8_t, 4> fallback) {
                 std::uint32_t mips = 1;
@@ -1229,47 +1324,16 @@ public:
             // Validate every item's kind and variant before uploading anything.
             validate_render_plan_items(render_plan);
             cpu_startup_mark("render-plan");
-            state.meshes.reserve(render_plan.items.size());
-            for (const upstream::RenderItem& item : render_plan.items) {
-                auto upload = upload_prepared_scene_mesh(
-                    engine, item, state.shared_material_images, prepare_image,
-                    [&] { state.meshes.push_back(upload_dawn_scene_mesh(state, engine, item)); },
-                    async_uploads);
-                while (upload.advance())
-                    co_yield false;
-                if (startup_budget.exhausted()) {
-                    co_yield false;
-                    startup_budget.resume();
-                }
-            }
-            for (std::size_t layer = 1; layer < data_.active_registered_scenes.size(); ++layer) {
-                Scene* overlay_scene = data_.active_registered_scenes[layer].get();
-                if (!overlay_scene)
-                    continue;
-                upstream::RenderPlan overlay_plan =
-                    upstream::build_render_plan(*overlay_scene, engine);
-                validate_render_plan_items(overlay_plan);
-                std::vector<DawnMesh> overlay_layer_meshes;
-                overlay_layer_meshes.reserve(overlay_plan.items.size());
-                for (const upstream::RenderItem& item : overlay_plan.items) {
-                    auto upload = upload_prepared_scene_mesh(
-                        engine, item, state.shared_material_images, prepare_image,
-                        [&] {
-                            overlay_layer_meshes.push_back(
-                                upload_dawn_scene_mesh(state, engine, item));
-                        },
-                        async_uploads);
-                    while (upload.advance())
-                        co_yield false;
-                    if (startup_budget.exhausted()) {
-                        co_yield false;
-                        startup_budget.resume();
-                    }
-                }
-                overlay_plans.push_back(std::move(overlay_plan));
-                state.overlay_meshes.push_back(std::move(overlay_layer_meshes));
-                overlay_topology_versions.push_back(overlay_scene->render_topology_version);
-            }
+            auto uploads = upload_scene_meshes(
+                engine, active_registered_scenes, render_plan, state.meshes, overlay_plans,
+                state.overlay_meshes, overlay_topology_versions, state.shared_material_images,
+                prepare_image,
+                [&](const upstream::RenderItem& item) {
+                    return upload_dawn_scene_mesh(state, engine, item);
+                },
+                native_preparation);
+            while (uploads.advance())
+                co_yield false;
 #if BBLITE_PINNED_MATERIALS
             state.overlay_frames.resize(overlay_plans.size());
 #endif
@@ -1280,30 +1344,78 @@ public:
 
         if (!engine.render_targets.empty())
             create_frame_graph_textures(state, engine, width, height);
-        std::vector<std::function<void()>> pipeline_jobs;
-        for (std::size_t layer = 0; layer < active_registered_scenes.size(); ++layer) {
-            const Scene& layer_scene = *active_registered_scenes[layer];
-            auto pipelines = prepare_scene_pipeline_draws(
-                engine, layer_scene, layer == 0 ? render_plan : overlay_plans[layer - 1],
+        {
+            std::vector<std::function<void()>> background_jobs;
+#if BBLITE_PINNED_BACKGROUNDS
+            // The background arms read the environment uploaded above and write
+            // only `background_arms`; the layout cache they share with the
+            // pipelines synchronizes itself.
+            const EnvironmentState environment = scene.environment;
+            state.background_draws = pal::select_pinned_backgrounds(frame_options, environment);
+            auto background_arms =
+                pal::pinned_background_arm_buffers(state.background_draws, scene);
+            if (!background_arms.empty())
+                background_jobs.emplace_back([&] {
+                    initialize_dawn_backgrounds(state, environment, std::move(background_arms));
+                });
+#endif
+            // The blit pipeline each copy task draws its target with, keyed by
+            // the surface format and the target's sample count.
+            std::vector<std::function<void()>> blit_jobs;
+            for (const auto& layer_scene : active_registered_scenes) {
+                for (const TaskHandle handle : layer_scene->tasks) {
+                    const FrameTaskRecord& task = handle_at(engine.frame_tasks, handle);
+                    if (task.kind != FrameTaskKind::copy ||
+                        task.copy.target.value == invalid_handle ||
+                        frame_options.skip_copy_task(task.copy))
+                        continue;
+                    const std::uint32_t samples = target_sample_count(
+                        state, handle_at(engine.render_targets, task.copy.target));
+                    blit_jobs.emplace_back([&state, samples] {
+                        static_cast<void>(blit_pipeline_for(state, state.surface_format, samples));
+                    });
+                }
+            }
+            auto preparation = prepare_scene_pipelines(
+                engine, active_registered_scenes, render_plan, overlay_plans,
                 [&](TaskHandle handle) -> const upstream::RenderDrawLists& {
                     return handle_at(state.render_tasks, handle).draw_lists;
                 },
-                [&](const upstream::RenderDrawCommand& draw, const FrameTaskRecord* task) {
-                    prepare_pipeline(layer_scene, draw, task, pipeline_jobs);
-                });
-            while (pipelines.advance())
+                [&](const Scene& layer_scene, const upstream::RenderDrawCommand& draw,
+                    const FrameTaskRecord* task, std::vector<std::function<void()>>& jobs) {
+                    prepare_pipeline(layer_scene, draw, task, jobs);
+                },
+                std::move(background_jobs), std::move(blit_jobs), native_preparation);
+            while (preparation.advance())
                 co_yield false;
         }
-#if BBLITE_WORKERS
-        auto preparation = run_native_preparation(std::move(pipeline_jobs));
-        while (preparation.advance())
-            co_yield false;
-#endif
+        // Each draw's per-material blocks and group, which the first frame
+        // would otherwise create before writing their contents. They read
+        // realm records, so they are made here between yields.
+        {
+            auto draw_states = prepare_scene_pipeline_draws(
+                engine, scene, render_plan,
+                [&](TaskHandle handle) -> const upstream::RenderDrawLists& {
+                    return handle_at(state.render_tasks, handle).draw_lists;
+                },
+                [&](const upstream::RenderDrawCommand& draw, const FrameTaskRecord*) {
+                    if (draw.item_index < state.meshes.size())
+                        static_cast<void>(ensure_draw_state(
+                            scene, draw, state.meshes[draw.item_index], /*frame=*/false));
+                });
+            while (draw_states.advance())
+                co_yield false;
+        }
         cpu_startup_mark("draw-pipelines");
-
-#if BBLITE_PINNED_BACKGROUNDS
-        state.background_draws = pal::select_pinned_backgrounds(frame_options, scene.environment);
-        initialize_dawn_backgrounds(state, scene);
+#if BBLITE_HAS_BILLBOARDS
+        {
+            // The systems the scene draws by now build their passes here, off
+            // the realm, rather than inside the first frame.
+            auto billboard_preparation =
+                sync_dawn_billboard_passes(state, engine, scene, native_preparation);
+            while (billboard_preparation.advance())
+                co_yield false;
+        }
 #endif
         cpu_startup_mark("shaders-pipelines");
 #if BBLITE_HAS_TEXT
@@ -1645,6 +1757,15 @@ public:
                 upload_dawn_sprite_pass(state.device, state.queue, rows.engine, sprite_pass,
                                         data.width, data.height, delta_ms);
             }
+            // A build since the last frame (its renderable version) may have
+            // published depth-hosted layers; the scene pass follows them.
+            if (state.scene_sprite_renderable_version != data.scene.state->renderable_version)
+                sync_dawn_scene_sprite_pass(
+                    state.device, state.queue, state.mips, rows.engine, data.scene,
+                    state.scene_sprite_pass, state.has_scene_sprite_pass,
+                    state.scene_sprite_renderable_version, state.sprite_render_textures,
+                    state.sprite_render_texture_views, state.frame_color_format,
+                    WGPUTextureFormat_Depth24PlusStencil8, state.sample_count);
             if (state.has_scene_sprite_pass) {
                 upload_dawn_scene_sprite_pass(state.device, state.queue, rows.engine,
                                               state.scene_sprite_pass, data.width, data.height,
@@ -1737,18 +1858,13 @@ public:
 #if BBLITE_HAS_BILLBOARDS
             DawnState& state = rows.state;
             const Scene& scene = run.data_.scene;
-            // Lazily built, because the systems are known only once the
-            // scene has run; the sort then follows the camera every frame.
-            if (state.billboard_passes.empty()) {
-                for (const BillboardSystemHandle system : scene.billboard_systems) {
-                    state.billboard_passes.push_back(create_dawn_billboard_pass(
-                        state.device, state.queue, rows.engine, system, state.frame_color_format,
-                        WGPUTextureFormat_Depth24PlusStencil8, state.sample_count));
-                    // The atlas reports the chain it allocated; the blit
-                    // that fills it is this state's.
-                    const DawnBillboardPass& built = state.billboard_passes.back();
-                    generate_mipmaps(state, built.atlas, WGPUTextureFormat_RGBA8Unorm,
-                                     built.atlas_mip_levels);
+            // A build since the last frame (its renderable version) may have
+            // changed the systems the scene draws; their passes follow before
+            // any draw reads them, built in place. The sort then follows the
+            // camera every frame.
+            if (state.billboard_renderable_version != scene.state->renderable_version) {
+                auto follow = sync_dawn_billboard_passes(state, rows.engine, scene, false);
+                while (follow.advance()) {
                 }
             }
             // The scene block each program binds at its group 0: the pass's
@@ -1757,7 +1873,7 @@ public:
                 run.data_.pass_blocks.scene(scene), scene, rows.engine, outcome.pass.camera,
                 outcome.pass.matrices.view_projection, outcome.pass.matrices.view);
             for (DawnBillboardPass& billboard : state.billboard_passes) {
-                upload_dawn_billboard_pass(state.queue, scene, rows.engine, billboard,
+                upload_dawn_billboard_pass(state.device, state.queue, scene, rows.engine, billboard,
                                            billboard_block, delta_ms);
             }
 #endif
@@ -1770,11 +1886,10 @@ public:
             const Scene& scene = run.data_.scene;
             const CameraPassMatrices& matrices = outcome.pass.matrices;
             const std::uint32_t width = run.data_.width, height = run.data_.height;
-            // Lazily built for the same reason the billboard passes are: the
-            // clouds are known only once the scene has run. Each update
-            // returns on the renderable's own test without a camera -- which
-            // tests `scene.camera`, not the pass's -- and the sort then
-            // follows the camera with the pin's own epsilon.
+            // Lazily built: the clouds are known only once the scene has run.
+            // Each update returns on the renderable's own test without a
+            // camera -- which tests `scene.camera`, not the pass's -- and the
+            // sort then follows the camera with the pin's own epsilon.
             if (state.splat_passes.empty()) {
                 for (const SplatMeshHandle splat : scene.splat_meshes) {
                     state.splat_passes.push_back(create_dawn_splat_pass(
@@ -2865,10 +2980,7 @@ public:
                             DawnRenderTarget& target =
                                 handle_at(state.render_targets, task.render.target);
                             DawnRenderTask& render_task = handle_at(state.render_tasks, handle);
-                            const std::uint32_t samples =
-                                target_record.swapchain
-                                    ? 1u
-                                    : task_sample_count(state, target_record.samples);
+                            const std::uint32_t samples = target_sample_count(state, target_record);
                             // The camera the task's pass renders through: its
                             // viewport narrows the pass (`executePassBody`).
                             CameraRecord* const pass_camera = task_pass_camera(engine, task);
@@ -3204,7 +3316,7 @@ public:
                             // asked for: a run forced to one sample resolves nothing.
                             const std::uint32_t resolve = task.render.resolve_target.value;
                             if (resolve < state.render_targets.size() &&
-                                task_sample_count(state, target_record.samples) > 1) {
+                                target_sample_count(state, target_record) > 1) {
                                 color_attachment.resolveTarget =
                                     engine.render_targets[resolve].swapchain
                                         ? surface_view
@@ -3636,9 +3748,7 @@ public:
                             if (!pass.pipeline) {
                                 pass = create_dawn_effect_pass(
                                     state, engine, task.effect.effect, target.color_format,
-                                    target_record.swapchain
-                                        ? 1u
-                                        : task_sample_count(state, target_record.samples));
+                                    target_sample_count(state, target_record));
                             }
                             upload_dawn_effect_pass(state.queue, engine, pass, task.effect.effect);
                             WGPURenderPassColorAttachment attachment =
@@ -3814,12 +3924,8 @@ public:
                         pass_descriptor.colorAttachments = &blit_attachment;
                         DawnRenderPass blit_pass{
                             wgpuCommandEncoderBeginRenderPass(encoder, &pass_descriptor)};
-                        const std::uint32_t blit_samples =
-                            target_record.swapchain
-                                ? 1u
-                                : task_sample_count(state, target_record.samples);
-                        WGPURenderPipeline blit_pipeline =
-                            blit_pipeline_for(state, state.surface_format, blit_samples);
+                        WGPURenderPipeline blit_pipeline = blit_pipeline_for(
+                            state, state.surface_format, target_sample_count(state, target_record));
                         wgpuRenderPassEncoderSetPipeline(blit_pass, blit_pipeline);
                         if (surface_pane) {
                             wgpuRenderPassEncoderSetViewport(

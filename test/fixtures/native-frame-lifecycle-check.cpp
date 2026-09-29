@@ -1,4 +1,5 @@
 #include <bblite/pal.hpp>
+#include <bblite/pal_texture_texels.hpp>
 #include <bblite/runtime.hpp>
 #include <cassert>
 #include <type_traits>
@@ -97,15 +98,30 @@ void check_completion() {
             request_animation_frame(engine, [](double) { events.push_back(3); });
         });
     });
+    const auto loaded = [&](const char* key) {
+        FileTexture texture;
+        texture.data.loaded_texels =
+            std::make_shared<LoadedTexels>(DecodedImage{1, 1, {1, 2, 3, 4}});
+        return cache_file_texture(engine, key, texture);
+    };
+    const FileTexture unread = loaded("unread");
+    const FileTexture read = loaded("read");
+    assert(read.data.loaded_texels->take());
     finish_frame(engine);
     assert(events == std::vector<int>({1, 8, 9}));
     assert(engine.pending_start_continuations == 0);
+    // Each frame boundary drops the texels of the loads that settled before it.
+    assert(!unread.data.loaded_texels->take() && engine.unread_loaded_texels.empty());
+    const FileTexture later = loaded("later");
     events.clear();
     run_animation_frame_callbacks(engine);
     assert(events.empty());
     events.push_back(4); // Render consumes the state before post-start RAF callbacks.
+    assert(later.data.loaded_texels->take());
+    const FileTexture unread_later = loaded("unread-later");
     finish_frame(engine);
     assert(events == std::vector<int>({4, 2, 8, 9}));
+    assert(!unread_later.data.loaded_texels->take());
     events.clear();
     run_animation_frame_callbacks(engine);
     finish_frame(engine);

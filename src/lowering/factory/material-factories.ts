@@ -923,7 +923,7 @@ void update_pixels_texture(
             )}
 #include <bblite/runtime.hpp>
 #include <bblite/pal.hpp>
-#include <bblite/pal_image.hpp>
+#include <bblite/pal_texture_texels.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -946,19 +946,9 @@ FileTexture load_file_texture(
     if (const auto found = engine.file_texture_cache.find(key); found != engine.file_texture_cache.end()) {
         return found->second;
     }
-    FileTexture texture;
-    texture.data.bytes = pal::read_binary_file(path);
-    texture.data.sampler = sampler;
-    texture.data.invert_y = invert_y;
-    texture.data.premultiply_alpha = premultiply_alpha;
-    texture.srgb = srgb;
-    texture.identity = engine.next_file_texture_identity++;
-    const pal::DecodedImage decoded = pal::decode_image(
-        js::ArrayBuffer(texture.data.bytes));
-    texture.width = static_cast<std::uint32_t>(decoded.width);
-    texture.height = static_cast<std::uint32_t>(decoded.height);
-    engine.file_texture_cache.emplace(key, texture);
-    return texture;
+    std::vector<std::uint8_t> bytes = pal::read_binary_file(path);
+    return pal::cache_file_texture(engine, key, pal::decode_file_texture(
+        file_texture_record(engine, sampler, invert_y, srgb, premultiply_alpha), std::move(bytes)));
 }
 
 SolidTexture create_solid_texture(

@@ -24,10 +24,12 @@ import type {
 } from "./types.js";
 import type {
     CapturedClosure,
+    ClosureBorrowing,
     NativeCaptureBinding,
     NativeExpression,
 } from "./closure-captures.js";
 import type { NativeStatement, NativeEmission } from "./native-statements.js";
+import type { NativeDeclaration } from "./native-declarations.js";
 import type {
     ParameterizedResourceLoop,
     ResourceLoop,
@@ -372,7 +374,7 @@ export interface LoweringServices {
     };
     captureManagedClosureLines(
         emitBody: () => void,
-        byReference?: boolean | "entry",
+        byReference?: ClosureBorrowing,
     ): CapturedClosure;
     beginInlineFrame(wrapped: boolean): void;
     endInlineFrame(): void;
@@ -515,6 +517,13 @@ export interface LoweringServices {
     requirePresentationHost(node: ts.Node): string;
     pbrLightmapEnabled(): boolean;
     reachFeature(feature: Feature, site?: ts.Node | string): void;
+    /**
+     * The locals that open a CPU profile scope ahead of a native body, when
+     * `--source-profile` names its function; none otherwise.
+     */
+    sourceProfileScopeDeclarations(
+        declaration: ts.SignatureDeclaration,
+    ): NativeDeclaration[];
     compileSceneRegistration(scene: Value, node: ts.Node): string;
     ensureDefaultRenderTask(
         scene: Value,

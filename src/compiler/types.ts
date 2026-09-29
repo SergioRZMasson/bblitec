@@ -8,6 +8,7 @@ export {
     nativeDataMetadata,
     objectTruthinessCpp,
     optionalPresentCpp,
+    optionalValueCpp,
     presenceCpp,
     presenceFlagCpp,
     statedTruthinessCpp,
@@ -79,6 +80,8 @@ export interface CompileOptions extends DeploymentOptions {
     initialSearch?: string;
     /** Optional audited host-page UI companion for a registered native scene. */
     nativeHostUi?: NativeHostUi;
+    /** Source functions whose native bodies open a CPU profile scope (`--source-profile`). */
+    sourceProfile?: readonly string[];
 }
 
 export interface CompileManifest {
@@ -1209,6 +1212,8 @@ export interface CompileResult {
      * a reader of the tree actually wants.
      */
     nodeParticles?: CompiledNodeParticles;
+    /** The `--source-profile` names whose native bodies carry a timing scope. */
+    sourceProfileScopes?: readonly string[];
 }
 
 /** What `manifest.json` records about a node-particle program. */
@@ -2027,6 +2032,12 @@ export interface ValueFields {
     freshData?: true;
     dataStore?: TypedArrayKind | "numberindex";
     /**
+     * A typed-array element's store through a slot that does not own the
+     * named array, for an assignment whose right-hand side writes no storage
+     * (`bbl::js::BorrowedTypedArraySlot`).
+     */
+    borrowedStoreCpp?: string;
+    /**
      * Set on a value read out of a container of const elements (a span,
      * including a materialized constant table). It cannot be bound by
      * reference, and the source language would not let it be written
@@ -2648,6 +2659,9 @@ export type Feature =
     | "engine:dispose"
     | "engine:gpu-retirement"
     | "engine:gpu-task-timing"
+    // Per-source-function CPU scopes and allocation counters, reached only by
+    // the `--source-profile` generation option (docs/debugging.md).
+    | "profile:source"
     | "compute:storage-texture"
     | "compute:texture-mipmaps"
     | "compute:binding-decl"
@@ -2973,4 +2987,5 @@ export interface ResolvedCompileOptions extends DeploymentOptions {
     search: string;
     initialSearch?: string;
     nativeHostUi?: NativeHostUi;
+    sourceProfile?: readonly string[];
 }

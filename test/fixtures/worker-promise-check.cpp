@@ -5,19 +5,58 @@
 #include <bblite/pal_iteration.hpp>
 #include <bblite/pal_async_engine.hpp>
 
+#include <atomic>
+#include <chrono>
 #include <iostream>
+#include <optional>
+#include <thread>
 
 namespace {
 int asset_loads = 0;
-}
+std::atomic<bool> realm_timer_ran = false;
+} // namespace
 namespace bbl {
-AssetHandle load_gltf(Engine&, const std::string& path) {
-    ++asset_loads;
+// glTF files for the realm loads: "missing" is unreadable, "invalid" fails to
+// parse, and preparing "large" lasts until the realm's timer has run.
+struct GltfSource {
+    std::string path;
+    std::thread::id reader;
+    std::optional<std::thread::id> preparer;
+};
+std::shared_ptr<GltfSource> read_gltf(const std::string& path) {
     if (path == "missing")
         throw std::runtime_error("fixture asset unavailable");
-    return {17};
+    if (path == "invalid")
+        throw std::runtime_error("Not a valid GLB file");
+    return std::make_shared<GltfSource>(GltfSource{path, std::this_thread::get_id(), {}});
+}
+void prepare_gltf(GltfSource& file) {
+    if (file.path == "large")
+        for (int attempt = 0; attempt < 500 && !realm_timer_ran; ++attempt)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    file.preparer = std::this_thread::get_id();
+}
+AssetHandle load_gltf(Engine&, GltfSource& file) {
+    ++asset_loads;
+    if (file.reader == std::this_thread::get_id() || file.preparer != file.reader)
+        throw std::runtime_error("The glTF file was not read and prepared by its native job");
+    return {file.path == "large" ? 23u : 17u};
 }
 } // namespace bbl
+namespace bbl::pal {
+// Image files for the realm texture loads: the name's bytes, "slow" finishing
+// after later loads, "missing" unreadable. The decoded width is the byte count.
+std::vector<std::uint8_t> read_binary_file(const std::string& path) {
+    if (path == "missing.png")
+        throw std::runtime_error("fixture image unavailable");
+    if (path == "slow.png")
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    return {path.begin(), path.end()};
+}
+DecodedImage decode_image(std::span<const std::uint8_t> bytes) {
+    return {static_cast<int>(bytes.size()), 2, std::vector<std::uint8_t>(bytes.size() * 2 * 4)};
+}
+} // namespace bbl::pal
 
 namespace {
 using namespace bbl;
@@ -300,7 +339,7 @@ void asset_tasks_preserve_owners_and_errors() {
         const auto first = pal::load_realm_gltf(*engine, "ready");
         const auto failed = pal::load_realm_gltf(*engine, "missing");
         require(asset_loads == 0 && first.pending() && failed.pending(),
-                "Asset decoding blocked its promise creation");
+                "Asset loading blocked its promise creation");
         const std::weak_ptr<Engine> weak = engine;
         engine.reset();
         require(!weak.expired(), "Pending asset work lost its engine");
@@ -326,7 +365,130 @@ void asset_tasks_preserve_owners_and_errors() {
                            finish();
                        });
     });
-    require(completed == 2 && asset_loads == 2, "Asset tasks repeated or lost a decode");
+    require(completed == 2 && asset_loads == 1,
+            "Asset loads repeated, lost or applied a failed read");
+}
+
+// A realm glTF load reads and decodes its file on a native thread while the
+// realm runs its timers, then applies it on the realm in start order.
+void gltf_loads_read_off_the_realm_and_settle_in_start_order() {
+    const js::RealmScope realm;
+    pal::EventLoop loop;
+    const auto engine = std::make_shared<Engine>();
+    engine->realm_owner = engine;
+    const auto disposed = std::make_shared<Engine>();
+    disposed->realm_owner = disposed;
+    disposed->device_disposed = true;
+    asset_loads = 0;
+    std::vector<std::string> settled;
+    bool timer_ran = false;
+    const auto rethrow = [](std::exception_ptr error) { std::rethrow_exception(error); };
+    const auto message = [](std::exception_ptr error) {
+        std::string text;
+        try {
+            std::rethrow_exception(error);
+        } catch (const std::runtime_error& failure) {
+            text = failure.what();
+        }
+        return text;
+    };
+    loop.run([&] {
+        const auto texture = pal::load_realm_file_texture(
+            *engine, "slow.png", TextureSamplerState{}, true, false, false);
+        const auto large = pal::load_realm_gltf(*engine, "large");
+        const auto invalid = pal::load_realm_gltf(*engine, "invalid");
+        const auto unloadable = pal::load_realm_gltf(*disposed, "missing");
+        loop.set_timeout(
+            [&] {
+                timer_ran = true;
+                realm_timer_ran = true;
+            },
+            0);
+        texture.observe([&](const StoredTexture&) { settled.emplace_back("texture"); }, rethrow);
+        large.observe(
+            [&](const AssetHandle& asset) {
+                require(asset.value == 23, "The large glTF lost its asset");
+                require(timer_ran, "glTF reading blocked the realm's timer");
+                settled.emplace_back("large");
+            },
+            rethrow);
+        invalid.observe([](const AssetHandle&) { require(false, "An invalid glTF loaded"); },
+                        [&](std::exception_ptr error) {
+                            require(message(error) == "Not a valid GLB file",
+                                    "A glTF parse failure changed its error");
+                            settled.emplace_back("invalid");
+                        });
+        unloadable.observe(
+            [](const AssetHandle&) { require(false, "A disposed engine loaded a glTF"); },
+            [&](std::exception_ptr error) {
+                require(message(error) == "Cannot load an asset into a disposed engine.",
+                        "A disposed engine reported the file's failure first");
+                settled.emplace_back("disposed");
+                loop.close();
+            });
+    });
+    require((settled == std::vector<std::string>{"texture", "large", "invalid", "disposed"}),
+            "Realm glTF loads settled out of start order");
+    require(asset_loads == 1, "A failed glTF read was applied");
+}
+
+void file_textures_decode_off_the_realm_and_settle_in_call_order() {
+    const js::RealmScope realm;
+    pal::EventLoop loop;
+    const auto engine = std::make_shared<Engine>();
+    engine->realm_owner = engine;
+    std::vector<std::string> settled;
+    bool timer_ran = false;
+    const auto load = [&](const char* path) {
+        return pal::load_realm_file_texture(*engine, path, TextureSamplerState{}, true, false,
+                                            false);
+    };
+    const auto rethrow = [](std::exception_ptr error) { std::rethrow_exception(error); };
+    loop.run([&] {
+        const auto slow = load("slow.png");
+        const auto fast = load("fast.png");
+        const auto failed = load("missing.png");
+        require(load("slow.png") == slow,
+                "A pending load of the same image returned a new promise");
+        require(slow.pending() && fast.pending() && failed.pending(),
+                "Texture decoding blocked its promise creation");
+        loop.set_timeout([&] { timer_ran = true; }, 0);
+        slow.observe(
+            [&](const StoredTexture& stored) {
+                const auto& texture = std::get<FileTexture>(stored);
+                require(texture.width == 8 && texture.height == 2 && texture.identity == 1,
+                        "The slow texture lost its decoded record");
+                require(texture.data.loaded_texels &&
+                            texture.data.loaded_texels->take()->rgba.size() == 8 * 2 * 4,
+                        "The slow texture lost the texels its load decoded");
+                require(timer_ran, "Texture decoding blocked the realm's timer");
+                settled.emplace_back("slow");
+            },
+            rethrow);
+        fast.observe(
+            [&](const StoredTexture& stored) {
+                require(std::get<FileTexture>(stored).identity == 2,
+                        "The fast texture lost its identity");
+                settled.emplace_back("fast");
+                require(!load("fast.png").pending(), "A finished load decoded its image again");
+            },
+            rethrow);
+        failed.observe([](const StoredTexture&) { require(false, "Texture failure resolved"); },
+                       [&](std::exception_ptr error) {
+                           try {
+                               std::rethrow_exception(error);
+                           } catch (const std::runtime_error& failure) {
+                               require(std::string_view(failure.what()) ==
+                                           "fixture image unavailable",
+                                       "Texture failure lost its source error");
+                           }
+                           settled.emplace_back("failed");
+                           require(load("missing.png").pending(), "A failed load was kept");
+                           loop.close();
+                       });
+    });
+    require((settled == std::vector<std::string>{"slow", "fast", "failed"}),
+            "Texture loads settled out of call order");
 }
 } // namespace
 
@@ -339,6 +501,8 @@ int main() {
         unhandled_rejections_reach_the_realm_error_handler();
         renderer_tasks_yield_and_retire();
         asset_tasks_preserve_owners_and_errors();
+        file_textures_decode_off_the_realm_and_settle_in_call_order();
+        gltf_loads_read_off_the_realm_and_settle_in_start_order();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

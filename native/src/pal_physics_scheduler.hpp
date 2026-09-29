@@ -2,6 +2,7 @@
 
 #include <LinearMath/btThreads.h>
 #include <bblite/joining_thread.hpp>
+#include <bblite/pal_native_workers.hpp>
 #include <algorithm>
 #include <atomic>
 #include <charconv>
@@ -23,7 +24,16 @@
 
 namespace bbl::pal {
 
-/** Stable workers and ordered sums for Bullet's parallel-loop interface. */
+/**
+ * Stable workers and ordered sums for Bullet's parallel-loop interface.
+ *
+ * A loop is finished when its chunks are, not when every worker has checked
+ * in: a worker joins a published loop only while it is published, and the
+ * owner retires it -- then waits for the workers inside it -- once every
+ * chunk is claimed. A worker the operating system has not scheduled yet
+ * therefore never holds up a loop the others have already run, which is what
+ * a solver iteration's dozens of short phases per sub-step need.
+ */
 class PhysicsWorkerPool final : public btITaskScheduler {
     static constexpr unsigned spin_iterations = 4096;
     struct Work {
@@ -33,11 +43,11 @@ class PhysicsWorkerPool final : public btITaskScheduler {
         virtual void invoke(int first, int last) const = 0;
     };
     std::mutex error_mutex_;
-    const Work* work_ = nullptr;
     std::exception_ptr error_;
+    alignas(64) std::atomic<const Work*> work_ = nullptr;
     alignas(64) std::atomic<int> next_ = 0;
     alignas(64) std::atomic<std::uint64_t> generation_ = 0;
-    alignas(64) std::atomic<std::size_t> finished_ = 0;
+    alignas(64) std::atomic<int> joined_ = 0;
     bool initialized_ = false;
     const std::thread::id owner_ = std::this_thread::get_id();
     std::vector<btScalar> sums_;
@@ -69,31 +79,30 @@ class PhysicsWorkerPool final : public btITaskScheduler {
 
     bool can_parallelize(int count, int grain) const {
         return !workers_.empty() && count / grain >= getNumThreads() &&
-               std::this_thread::get_id() == owner_ && work_ == nullptr;
+               std::this_thread::get_id() == owner_ &&
+               work_.load(std::memory_order_relaxed) == nullptr;
     }
 
     void dispatch(const Work& work) {
-        work_ = &work;
         error_ = {};
-        finished_ = 0;
-        next_ = 0;
+        next_.store(0, std::memory_order_relaxed);
+        work_.store(&work, std::memory_order_seq_cst);
         generation_.fetch_add(1, std::memory_order_release);
         generation_.notify_all();
         consume(work);
-        for (unsigned spin = 0;
-             spin < spin_iterations && finished_.load(std::memory_order_acquire) != workers_.size();
-             ++spin)
+        // Every chunk is claimed. Retire the loop, then wait for the workers
+        // inside it: a worker either joined before the retirement, and is
+        // counted here, or reads the retired pointer and leaves (both sides
+        // are sequentially consistent, so one of the two always holds).
+        work_.store(nullptr, std::memory_order_seq_cst);
+        while (joined_.load(std::memory_order_seq_cst) != 0)
             spin_pause();
-        for (auto count = finished_.load(std::memory_order_acquire); count != workers_.size();
-             count = finished_.load(std::memory_order_acquire))
-            finished_.wait(count, std::memory_order_acquire);
-        work_ = nullptr;
         if (error_)
             std::rethrow_exception(error_);
     }
 
 public:
-    PhysicsWorkerPool() : btITaskScheduler("bblite native workers") {}
+    PhysicsWorkerPool() : btITaskScheduler("bblite physics workers") {}
     ~PhysicsWorkerPool() override {
         for (auto& worker : workers_)
             worker.request_stop();
@@ -122,9 +131,10 @@ public:
                     if (stop.stop_requested())
                         return;
                     observed = generation_.load(std::memory_order_acquire);
-                    consume(*work_);
-                    if (finished_.fetch_add(1, std::memory_order_acq_rel) + 1 == workers_.size())
-                        finished_.notify_one();
+                    joined_.fetch_add(1, std::memory_order_seq_cst);
+                    if (const Work* work = work_.load(std::memory_order_seq_cst))
+                        consume(*work);
+                    joined_.fetch_sub(1, std::memory_order_release);
                 }
             });
     }
@@ -185,7 +195,8 @@ public:
             std::unique_ptr<PhysicsWorkerPool> scheduler;
             try {
                 scheduler = std::make_unique<PhysicsWorkerPool>();
-                thread_count_ = std::min(8, scheduler->getMaxNumThreads());
+                thread_count_ = std::min(static_cast<int>(default_physics_threads),
+                                         scheduler->getMaxNumThreads());
                 if (const char* setting = std::getenv("BBLITE_PHYSICS_THREADS")) {
                     const std::string_view value(setting);
                     const auto parsed =

@@ -159,7 +159,8 @@ test("awaited file textures retain the owned texture carrier through helper and 
         void main();
     `);
     assert.match(result.cpp, /Promise<bbl::StoredTexture>/);
-    assert.match(result.cpp, /load_file_texture/);
+    // A realm decodes the image in a native job; the load settles its promise.
+    assert.match(result.cpp, /co_await bbl::pal::load_realm_file_texture\(/);
 });
 
 test("async records own arrays of opaque material handles", () => {

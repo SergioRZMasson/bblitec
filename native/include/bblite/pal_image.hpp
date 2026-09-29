@@ -15,6 +15,11 @@ struct DecodedImage {
     std::vector<std::uint8_t> rgba;
 };
 
+/**
+ * Serializes SDL_image codec calls process-wide: every load and save runs
+ * its codec's initializer (IMG_InitPNG, IMG_InitJPG, ...), which updates
+ * unsynchronized library state.
+ */
 inline std::mutex& image_decoder_mutex() {
     static std::mutex mutex;
     return mutex;

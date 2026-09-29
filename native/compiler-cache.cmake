@@ -1,10 +1,12 @@
 option(BBLITE_NATIVE_CACHE "Reuse compiled objects across scene trees with ccache" ON)
+# The cache root: ccache's objects and native-header-cache.cmake's
+# content-addressed inputs, with or without ccache.
+set(BBLITE_NATIVE_CACHE_DIR "${BBLITE_NATIVE_ROOT}/../artifacts/native-cache" CACHE PATH "Shared native object cache")
+get_filename_component(BBLITE_NATIVE_CACHE_DIR "${BBLITE_NATIVE_CACHE_DIR}" ABSOLUTE)
 set(BBLITE_NATIVE_CACHE_ACTIVE OFF)
 if(BBLITE_NATIVE_CACHE AND CMAKE_GENERATOR MATCHES "Ninja|Makefiles" AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
     find_program(BBLITE_CCACHE NAMES ccache HINTS "${BBLITE_NATIVE_ROOT}/../artifacts/tools/ccache")
     if(BBLITE_CCACHE)
-        set(BBLITE_NATIVE_CACHE_DIR "${BBLITE_NATIVE_ROOT}/../artifacts/native-cache" CACHE PATH "Shared native object cache")
-        get_filename_component(BBLITE_NATIVE_CACHE_DIR "${BBLITE_NATIVE_CACHE_DIR}" ABSOLUTE)
         # Worktrees share this cache (tools/setup-worktree.ps1). base_dir makes
         # every path under the checkout relative in the key, so another
         # checkout of the same sources hits; the size covers several trees'

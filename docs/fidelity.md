@@ -210,8 +210,12 @@ does not read. Arbitrary async builders refuse. Both backends use Slug WGSL.
 ## Audio contract
 
 LabSound starts playback without a browser autoplay gate. Lifecycle promises settle after device
-transitions. Decode reads on the realm thread and retains attached ArrayBuffers. Topology/scheduling
-agreement does not establish PCM fidelity.
+transitions; a realm's `createAudioEngineAsync` opens its playback device in a native job. SDL's
+main thread initializes SDL's audio subsystem once for the run, never a worker, and devices never quit
+it: a Window host does so as its application realm starts, whose device opens wait for it; otherwise
+the first context created on that thread does, and a realm elsewhere refuses before then. Decode
+copies the encoded bytes on the realm thread, retaining attached ArrayBuffers, and decodes them in a
+native job. Topology/scheduling agreement does not establish PCM fidelity.
 
 ## What is measured: the full page
 

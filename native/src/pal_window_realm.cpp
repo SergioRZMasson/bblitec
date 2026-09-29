@@ -1,3 +1,4 @@
+#include <bblite/features/has_audio.hpp>
 #include <bblite/features/has_browser_file.hpp>
 #include <bblite/features/has_pbr_renderer.hpp>
 
@@ -13,6 +14,9 @@
 #include "pal_window.hpp"
 #include "pal_gpu_dispatch.hpp"
 #include "pal_file_io.hpp"
+#if BBLITE_HAS_AUDIO
+#include <bblite/pal_audio.hpp>
+#endif
 #if BBLITE_HAS_PBR_RENDERER
 #include "pal_camera_controls.hpp"
 #endif
@@ -415,8 +419,10 @@ void apply_document(Engine& engine, DocumentSnapshot snapshot,
     ++engine.ui_revision;
 }
 
-void tick_document() {
-    update_window_document();
+namespace {
+/** The periodic document tick: publishes without waiting for the display. */
+void tick_document_changes() {
+    update_window_document(false);
     auto& doc = current_document();
     const auto observers = doc.observers;
     for (const auto& observer : observers)
@@ -429,7 +435,14 @@ void tick_document() {
     const auto media = doc.media;
     for (const auto& query : media)
         query->deliver();
-    EventLoop::current().set_timeout(tick_document, 16);
+    EventLoop::current().set_timeout(tick_document_changes, 16);
+}
+} // namespace
+
+void tick_document() {
+    // The initial document is on display before the realm continues.
+    update_window_document();
+    tick_document_changes();
 }
 
 void dispatch_canvas_input(const WindowPointerEvent& packet) {
@@ -565,9 +578,29 @@ void window_on_application_error(bool rejection, std::uint64_t identity,
 void window_off_application_error(bool rejection, std::uint64_t identity) {
     current_document().errors->remove(rejection, identity);
 }
-void update_window_document() {
+void update_window_document(bool wait) {
     auto& doc = current_document();
     auto& host = *doc.host;
+    const auto await_display = [&host](std::unique_lock<std::mutex>& lock, std::uint64_t revision) {
+        host.wake.wait(lock, [&] { return host.stopping || host.completed >= revision; });
+        if (host.stopping)
+            throw WorkerTerminated{};
+    };
+    // One snapshot is applied at a time, since a text-only snapshot is a delta
+    // over the one before it. Without waiting, changes stay unpublished until
+    // the display has applied that earlier snapshot.
+    bool publish = true;
+    {
+        std::unique_lock lock(host.mutex);
+        if (host.stopping)
+            throw WorkerTerminated{};
+        if (host.completed < host.requested) {
+            if (wait)
+                await_display(lock, host.requested);
+            else
+                publish = false;
+        }
+    }
     // Snapshot source state on its owner before taking the presentation lock.
     const auto input_revision = doc.engine.dom_input ? doc.engine.dom_input->revision : 0;
     const auto text_since = doc.published_input_revision == input_revision &&
@@ -576,10 +609,10 @@ void update_window_document() {
                                         doc.published_revision, doc.published_text_revision)
                                 ? std::optional(doc.published_text_revision)
                                 : std::nullopt;
-    auto snapshot = doc.published_revision != doc.engine.ui_revision ||
-                            doc.published_input_revision != input_revision ||
-                            doc.published_canvas_revision != doc.engine.ui_canvas_revision ||
-                            doc.published_focus_revision != doc.engine.ui_focus_revision
+    auto snapshot = publish && (doc.published_revision != doc.engine.ui_revision ||
+                                doc.published_input_revision != input_revision ||
+                                doc.published_canvas_revision != doc.engine.ui_canvas_revision ||
+                                doc.published_focus_revision != doc.engine.ui_focus_revision)
                         ? snapshot_document(doc.engine, text_since, doc.published_canvas_revision)
                         : nullptr;
     std::unique_lock lock(host.mutex);
@@ -594,9 +627,8 @@ void update_window_document() {
         doc.published_focus_revision = doc.engine.ui_focus_revision;
         doc.published_input_revision = input_revision;
         host.wake.notify_all();
-        host.wake.wait(lock, [&] { return host.stopping || host.completed >= revision; });
-        if (host.stopping)
-            throw WorkerTerminated{};
+        if (wait)
+            await_display(lock, revision);
     }
     const auto layout = host.layout;
     lock.unlock();
@@ -855,6 +887,11 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
                 &destroy_ui_rml_runtime);
             std::atomic<bool> finished = false;
             std::exception_ptr application_error;
+#if BBLITE_HAS_AUDIO
+            // SDL initializes audio on this, its main thread, once for the run:
+            // right after the application realm starts, whose device opens wait for it.
+            audio_announce_subsystem();
+#endif
             std::thread application([&] {
                 try {
                     const js::RealmScope state;
@@ -957,6 +994,9 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
                         application.join();
                 }
             } stop{services, application};
+#if BBLITE_HAS_AUDIO
+            audio_initialize_subsystem();
+#endif
             std::unordered_map<std::uint32_t, OffscreenFrame> latest;
             PlatformInputReplay input_replay;
             LayoutSnapshot next_layout;

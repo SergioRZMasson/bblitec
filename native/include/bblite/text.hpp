@@ -95,29 +95,18 @@ struct WorldMatrixProvider {
 
 #if BBLITE_HAS_TEXT
 /**
- * `addDeferredSceneRenderables` over the native scene: its deferred-builder
- * queue runs the pin's builder after construction, publishes the text
- * renderables the builder returned and adopts its disposer. The builder's
- * failure rejects the scene's registration, as the pin's async builder does.
+ * `addDeferredSceneRenderables` for text (`add_deferred_scene_renderables`):
+ * the pin's builder runs when the scene builds, its text renderables join
+ * the scene's and its disposer the scene's disposables.
  */
 template <class Build> void add_deferred_text_renderables(Scene& scene, Build build) {
-    if (scene.disposed)
-        throw std::runtime_error(
-            "Text attachment after scene disposal requires the pinned async late-cleanup "
-            "lifecycle.");
-    const std::weak_ptr<SceneState> owner = scene.state;
-    scene.deferred_builders.emplace_back(
-        [owner, build = std::move(build)] {
-            const auto state = owner.lock();
-            if (!state)
-                return;
-            const auto built = build();
-            for (const auto& renderable : built.renderables)
-                state->text_renderables.push_back(renderable);
-            if (built.dispose)
-                state->disposables.push_back(built.dispose);
-        },
-        SceneDeferredFailure::promise_rejection);
+    add_deferred_scene_renderables(scene, [build = std::move(build)](SceneState& state) {
+        const auto built = build();
+        for (const auto& renderable : built.renderables)
+            state.text_renderables.push_back(renderable);
+        if (built.dispose)
+            state.disposables.push_back(built.dispose);
+    });
 }
 #endif
 

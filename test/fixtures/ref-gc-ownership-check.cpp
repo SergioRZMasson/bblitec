@@ -7,6 +7,12 @@
 
 using namespace bbl::js;
 
+// Allocations outstanding outside the thread's recycled lists, which keep
+// freed blocks and vectors for reuse.
+std::size_t live_allocations() {
+    return outstanding_allocations - detail::recycled_allocations_held;
+}
+
 template <typename T> gc::Node* node_of(const Ref<T>& value) {
     gc::Node* node = nullptr;
     const gc::SharedNodes shared;
@@ -66,7 +72,7 @@ void closure_bodies() {
 void untraced_payloads() {
     const auto nodes = managed_node_count();
     const auto managed_allocations = gc::registry.total_allocations;
-    const auto outstanding = outstanding_allocations;
+    const auto outstanding = live_allocations();
     {
         auto plain = make_ref<int>(5);
         auto copy = plain;
@@ -77,14 +83,14 @@ void untraced_payloads() {
         assert(gc::registry.total_allocations == managed_allocations + 1);
         assert(collect_cycles() == 0 && *plain == 5 && holder->value == 0);
     }
-    assert(managed_node_count() == nodes && outstanding_allocations == outstanding);
+    assert(managed_node_count() == nodes && live_allocations() == outstanding);
     check_registry();
 }
 
 void ref_owners_and_allocations() {
     const auto nodes = managed_node_count();
     const auto allocations = allocation_count;
-    const auto outstanding = outstanding_allocations;
+    const auto outstanding = live_allocations();
     const auto managed_allocations = gc::registry.total_allocations;
     std::weak_ptr<const void> weak;
     {
@@ -92,7 +98,7 @@ void ref_owners_and_allocations() {
         auto* node = node_of(source);
         assert(node && node->owners() == 1 && Payload::live == 1);
         assert(allocation_count == allocations + 1);
-        assert(outstanding_allocations == outstanding + 1);
+        assert(live_allocations() == outstanding + 1);
         assert(gc::registry.total_allocations == managed_allocations + 1);
         {
             auto copy = source;
@@ -126,14 +132,14 @@ void ref_owners_and_allocations() {
         const std::owner_less<> less;
         assert(!weak.expired() && !less(weak, duplicate) && !less(duplicate, weak));
         assert(allocation_count == allocations + 2);
-        assert(outstanding_allocations == outstanding + 2);
+        assert(live_allocations() == outstanding + 2);
         assert(collect_cycles() == 0 && node->owners() == 1);
         assert(source->value == 42);
     }
     assert(weak.expired() && Payload::live == 0);
-    assert(outstanding_allocations == outstanding + 1);
+    assert(live_allocations() == outstanding + 1);
     weak.reset();
-    assert(outstanding_allocations == outstanding);
+    assert(live_allocations() == outstanding);
     assert(managed_node_count() == nodes);
     check_registry();
 }
@@ -141,7 +147,7 @@ void ref_owners_and_allocations() {
 void shared_alias_owners_and_allocations() {
     const auto nodes = managed_node_count();
     const auto allocations = allocation_count;
-    const auto outstanding = outstanding_allocations;
+    const auto outstanding = live_allocations();
     auto source = make_gc_shared<Payload>(7);
     auto* node = gc::registry.nodes.back();
     assert(node->owners() == 1 && allocation_count == allocations + 1);
@@ -153,9 +159,9 @@ void shared_alias_owners_and_allocations() {
     assert(collect_cycles() == 0 && node->owners() == 1);
     alias.reset();
     assert(weak.expired() && Payload::live == 0 && managed_node_count() == nodes);
-    assert(outstanding_allocations == outstanding + 1);
+    assert(live_allocations() == outstanding + 1);
     weak.reset();
-    assert(outstanding_allocations == outstanding);
+    assert(live_allocations() == outstanding);
     check_registry();
 }
 
@@ -173,7 +179,7 @@ struct Cycle {
 
 void exact_cycle_edges() {
     const auto nodes = managed_node_count();
-    const auto outstanding = outstanding_allocations;
+    const auto outstanding = live_allocations();
     auto reference = make_ref<Cycle>();
     auto* reference_node = node_of(reference);
     auto shared = make_gc_shared<Cycle>();
@@ -194,7 +200,7 @@ void exact_cycle_edges() {
     assert(Cycle::live == 0 && identity.expired());
     assert(managed_node_count() == nodes);
     identity.reset();
-    assert(outstanding_allocations == outstanding);
+    assert(live_allocations() == outstanding);
     check_registry();
 }
 
@@ -208,7 +214,7 @@ struct CollectDuringConstruction {
 
 void construction_reentrancy() {
     const auto nodes = managed_node_count();
-    const auto outstanding = outstanding_allocations;
+    const auto outstanding = live_allocations();
     {
         auto root = make_ref<Traced>(42);
         auto reference = make_ref<CollectDuringConstruction>(nodes + 1);
@@ -217,7 +223,7 @@ void construction_reentrancy() {
         assert(managed_node_count() == nodes + 3);
         check_registry();
     }
-    assert(managed_node_count() == nodes && outstanding_allocations == outstanding);
+    assert(managed_node_count() == nodes && live_allocations() == outstanding);
 }
 
 struct CollectDuringDestruction {
@@ -234,7 +240,7 @@ struct CollectDuringDestruction {
 
 void destruction_reentrancy() {
     const auto nodes = managed_node_count();
-    const auto outstanding = outstanding_allocations;
+    const auto outstanding = live_allocations();
     {
         auto root = make_ref<Traced>(42);
         CollectDuringDestruction::destructions = 0;
@@ -249,7 +255,7 @@ void destruction_reentrancy() {
         assert(managed_node_count() == nodes + 1);
         check_registry();
     }
-    assert(managed_node_count() == nodes && outstanding_allocations == outstanding);
+    assert(managed_node_count() == nodes && live_allocations() == outstanding);
 }
 
 struct FailingConstruction {
@@ -264,7 +270,7 @@ struct FailingConstruction {
 
 void construction_failure() {
     const auto nodes = managed_node_count();
-    const auto outstanding = outstanding_allocations;
+    const auto outstanding = live_allocations();
     for (const bool shared : {false, true}) {
         bool threw = false;
         try {
@@ -276,7 +282,7 @@ void construction_failure() {
             threw = value == 19;
         }
         assert(threw && managed_node_count() == nodes);
-        assert(outstanding_allocations == outstanding);
+        assert(live_allocations() == outstanding);
         check_registry();
     }
 }
@@ -287,7 +293,7 @@ void registry_growth_failure() {
     while (gc::registry.nodes.size() < gc::registry.nodes.capacity())
         roots.push_back(make_ref<Traced>(23));
     const auto nodes = managed_node_count();
-    const auto outstanding = outstanding_allocations;
+    const auto outstanding = live_allocations();
     for (const bool shared : {false, true}) {
         const auto allocations = allocation_count;
         const auto managed_allocations = gc::registry.total_allocations;
@@ -305,7 +311,7 @@ void registry_growth_failure() {
         assert(threw && allocation_count == allocations + 1);
         assert(gc::registry.total_allocations == managed_allocations);
         assert(Payload::live == 0 && managed_node_count() == nodes);
-        assert(outstanding_allocations == outstanding);
+        assert(live_allocations() == outstanding);
         check_registry();
     }
 }
@@ -314,7 +320,7 @@ int main(int argc, char** argv) {
     const std::string_view selected = argc > 1 ? argv[1] : "all";
     gc::registry.nodes.reserve(16);
     const auto nodes = managed_node_count();
-    const auto outstanding = outstanding_allocations;
+    const auto outstanding = live_allocations();
     if (selected == "all" || selected == "owners") {
         ref_owners_and_allocations();
         untraced_payloads();
@@ -330,7 +336,7 @@ int main(int argc, char** argv) {
         construction_failure();
         registry_growth_failure();
     }
-    assert(managed_node_count() == nodes && outstanding_allocations == outstanding);
+    assert(managed_node_count() == nodes && live_allocations() == outstanding);
     std::printf(
         "ref-gc-ownership-check: ok (Ref=1 allocation, weak token=1, shared=1; "
         "untraced payloads and closures unregistered; cycle edges=2/2, collected=2; registry and allocations "

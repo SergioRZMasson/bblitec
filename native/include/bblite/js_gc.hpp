@@ -284,15 +284,135 @@ template <typename T> struct SharedBlock final : Node {
 };
 } // namespace gc
 
+namespace detail {
+
+/**
+ * Heap allocations the thread's recycled lists hold: every kept item and each
+ * list's own storage. Allocation accounting subtracts it, so memory a list
+ * keeps for reuse is not counted as outstanding.
+ */
+inline thread_local std::size_t recycled_allocations_held = 0;
+
+/**
+ * One thread's free list of `Item`s of one kind, keeping at most `Kept`, so
+ * the cells, records and containers a frame creates and drops reuse their
+ * memory instead of reaching the heap each time. `Free` releases an item the
+ * list does not keep. An item released on another thread joins that
+ * thread's list.
+ */
+template <typename Item, std::size_t Kept, typename Free> struct RecycledList {
+    RecycledList() {
+        items.reserve(Kept);
+        ++recycled_allocations_held;
+    }
+    RecycledList(const RecycledList&) = delete;
+    RecycledList& operator=(const RecycledList&) = delete;
+    ~RecycledList() {
+        for (Item* item : items)
+            Free{}(item);
+        recycled_allocations_held -= items.size() + 1;
+    }
+    /** A kept item, or null. */
+    [[nodiscard]] Item* take() noexcept {
+        if (items.empty())
+            return nullptr;
+        Item* item = items.back();
+        items.pop_back();
+        --recycled_allocations_held;
+        return item;
+    }
+    /** Keeps `item` when there is room; the caller frees it otherwise. */
+    [[nodiscard]] bool keep(Item* item) noexcept {
+        if (items.size() >= Kept)
+            return false;
+        items.push_back(item); // Within the reserved capacity: no allocation.
+        ++recycled_allocations_held;
+        return true;
+    }
+    std::vector<Item*> items;
+};
+
+// The thread's list, reached through a trivially destructible pointer so a
+// release during thread teardown, after the list itself is gone, still
+// finds out that it is gone and frees its item directly.
+template <typename List> inline thread_local List* thread_list = nullptr;
+template <typename List> inline thread_local bool thread_list_retired = false;
+
+template <typename List> struct ThreadListOwner {
+    List list;
+    ~ThreadListOwner() {
+        thread_list<List> = nullptr;
+        thread_list_retired<List> = true;
+    }
+};
+
+/** The thread's list, created on first use; null once the thread is tearing down. */
+template <typename List> [[nodiscard]] List* recycled_list() {
+    if (thread_list<List> == nullptr && !thread_list_retired<List>) {
+        static thread_local ThreadListOwner<List> owner;
+        thread_list<List> = &owner.list;
+    }
+    return thread_list<List>;
+}
+
+struct FreeBlock {
+    void operator()(void* block) const noexcept { ::operator delete(block); }
+};
+
+/**
+ * The shared blocks of one payload type (the control block with its payload,
+ * or a control block alone). A list serves one block size.
+ */
+template <typename Tag> struct RecycledBlocks : RecycledList<void, 128, FreeBlock> {
+    std::size_t block_size = 0;
+};
+
+/** Shared-block memory drawn from and returned to the thread's list for `Tag`. */
+template <typename T, typename Tag> struct RecycledBlockAllocator {
+    using value_type = T;
+    RecycledBlockAllocator() = default;
+    // Implicit, as a standard allocator's rebinding conversion is.
+    template <typename U> RecycledBlockAllocator(const RecycledBlockAllocator<U, Tag>&) noexcept {}
+    template <typename U> struct rebind {
+        using other = RecycledBlockAllocator<U, Tag>;
+    };
+    [[nodiscard]] T* allocate(std::size_t count) {
+        auto* list = recycled_list<RecycledBlocks<Tag>>();
+        if (count == 1 && list != nullptr && list->block_size == sizeof(T)) {
+            if (void* block = list->take())
+                return static_cast<T*>(block);
+        }
+        return static_cast<T*>(::operator new(count * sizeof(T)));
+    }
+    void deallocate(T* block, std::size_t count) noexcept {
+        auto* list = thread_list<RecycledBlocks<Tag>>;
+        if (count == 1 && list != nullptr &&
+            (list->block_size == 0 || list->block_size == sizeof(T)) && list->keep(block)) {
+            list->block_size = sizeof(T);
+            return;
+        }
+        ::operator delete(block);
+    }
+    template <typename U>
+    [[nodiscard]] friend bool operator==(const RecycledBlockAllocator&,
+                                         const RecycledBlockAllocator<U, Tag>&) noexcept {
+        return true;
+    }
+};
+
+} // namespace detail
+
 /**
  * Shared storage with ordinary shared_ptr alias/weak semantics. A payload
  * that can own a traced edge joins cycle collection with its visitor; any
- * other payload cannot close a cycle, and reference counting releases it.
+ * other payload cannot close a cycle, and reference counting releases it,
+ * into the thread's recycled blocks.
  */
 template <typename T, typename... Args>
 [[nodiscard]] std::shared_ptr<T> make_gc_shared(Args&&... args) {
     if constexpr (!gc_traceable<T>) {
-        return std::make_shared<T>(std::forward<Args>(args)...);
+        return std::allocate_shared<T>(detail::RecycledBlockAllocator<T, T>{},
+                                       std::forward<Args>(args)...);
     } else {
         auto block = std::make_shared<gc::SharedBlock<T>>(std::forward<Args>(args)...);
         block->identity = block;
@@ -314,7 +434,8 @@ template <bool Traced, typename T, typename... Args>
     if constexpr (Traced)
         return make_gc_shared<T>(std::forward<Args>(args)...);
     else
-        return std::make_shared<T>(std::forward<Args>(args)...);
+        return std::allocate_shared<T>(detail::RecycledBlockAllocator<T, T>{},
+                                       std::forward<Args>(args)...);
 }
 
 template <typename T> [[nodiscard]] auto make_gc_cell(T&& value) {

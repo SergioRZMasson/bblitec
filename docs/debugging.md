@@ -148,9 +148,10 @@ Artifact suffix gpu means SDL_GPU; CLI values are sdl_gpu/dawn.
 | `BBLITE_UI_STYLE_TRACE`, `BBLITE_PHYSICS_TRACE`, `BBLITE_TRACE_PHYSICS_RAYS` | UI boxes/display after tree changes, body positions/quaternions per step, and ray queries |
 | `BBLITE_CPU_PROFILE`, `BBLITE_MEM_PROFILE` | CPU stages and memory every 30 frames; CPU also records renderer frames ≥10 ms, Window frames ≥4 ms, UI updates, font shaping and SDL presentation/resource costs |
 | `BBLITE_PHYSICS_PAIR_PROFILE=1` | With CPU profiling: narrow-phase timings grouped by collision-shape pair; adds per-pair timing overhead |
+| `BBLITE_SOURCE_PROFILE` | Timing scopes in named source functions and allocation counters (below) |
 | `BBLITE_PHYSICS_THREADS` | Bullet worker count including its controller; defaults to at most eight available hardware threads. `1` selects serial collision detection and solving |
 | `BBLITE_FPS_PROFILE` | Scene FPS over one-second windows, with p99 and maximum frame intervals |
-| `BBLITE_TIMER_PROFILE=1` | Actual realm-timer callback timestamps and requested delays; group by realm and timer ID to measure callback gaps, independently of capture clocks |
+| `BBLITE_TIMER_PROFILE=1` | Actual realm-timer scheduling (`[cpu][timer-set]`), callback (`[cpu][timer]`) and clearing (`[cpu][timer-clear]`) timestamps and requested delays; group by realm and timer ID to measure callback gaps, including before the first callback and before clearing, independently of capture clocks |
 | `BBLITE_AUDIO_CAPTURE`, `BBLITE_AUDIO_CAPTURE_SECONDS` | WAV path/duration in enabled builds |
 | `BBLITE_LOCAL_STORAGE_ROOT` | Isolated storage |
 | `BBLITE_FILE_DIALOG_SAVE_PATH`, `BBLITE_FILE_DIALOG_OPEN_PATH` | Noninteractive dialog paths |
@@ -167,6 +168,21 @@ Prefer `--gpu-debug` over `BBLITE_GPU_DEBUG=1`: it also prevents blocking SDL as
 CPU physics output separates world phases from solver setup, contacts, split impulses, iterations
 and finish. Solver values sum the participating islands' CPU times, so parallel phases overlap;
 contacts are included in setup and split impulses in iterations.
+
+`BBLITE_SOURCE_PROFILE=<name>,...` attributes a frame's CPU to scene source functions. It is read
+by `process` and `compile`, which pass it to bblitec as `--source-profile` and regenerate the scene
+with a timing scope in each named function: its own name, `Class.method` for a class member, or the
+variable or property an unnamed function is bound to. Generation fails naming every name that times no
+function: a misspelling, an async function or generator, or a function lowered inline at its calls
+(select its caller). With `BBLITE_CPU_PROFILE=1`, each
+`[cpu][frame]` line of a direct renderer is followed by
+`[cpu][source] frame= function= calls= self_ms= total_ms=` for every selected function that ran in
+that frame, and by `[cpu][alloc] frame= allocations= bytes= frees= allocation_ms= collection_ms=`:
+the frame's global `operator new`/`delete` calls, requested bytes and time inside them, and the
+frame-boundary cycle collection. `self_ms` excludes time in other selected functions it called;
+`total_ms` includes it. Only a regenerated build carries the scopes and the counters, and their own
+cost falls inside what they time; selecting a function called hundreds of thousands of times a frame
+inflates its figures. Unset the variable and `process` again to return to the ordinary build.
 
 Android debug intents accept `nativeResolution=true` to bypass the source pixel-ratio cap for
 profiling. Automated captures also bypass it to retain the requested golden dimensions.
