@@ -45,18 +45,41 @@ struct DawnGpuTimestampQuerySet final : GpuTimestampQuerySet {
     }
 };
 
+/**
+ * A native pass's timestamp writes, set on its descriptor as the source's
+ * patched encoder sets them on the pass it times.
+ */
+class DawnPassTimestamps {
+public:
+    DawnPassTimestamps() = default;
+    explicit DawnPassTimestamps(const std::optional<GpuTaskPassTimestamps>& writes) {
+        if (!writes)
+            return;
+        if (writes->begin)
+            add(*writes->begin);
+        add(writes->end);
+    }
+    void add(const GpuTimestampWrite& write) {
+        const auto* queries = dynamic_cast<const DawnGpuTimestampQuerySet*>(write.query_set.get());
+        if (!queries || write.index >= queries->capacity ||
+            (writes_.querySet && writes_.querySet != queries->queries))
+            throw std::runtime_error("GPU timestamp write requires a compatible live query set.");
+        writes_.querySet = queries->queries;
+        (write.beginning ? writes_.beginningOfPassWriteIndex : writes_.endOfPassWriteIndex) =
+            write.index;
+    }
+    const WGPUPassTimestampWrites* get() const { return writes_.querySet ? &writes_ : nullptr; }
+
+private:
+    WGPUPassTimestampWrites writes_ = WGPU_PASS_TIMESTAMP_WRITES_INIT;
+};
+
+/** A timestamp beside no native pass, written by an empty marker pass. */
 inline void encode_dawn_gpu_timestamp(WGPUCommandEncoder encoder, const GpuTimestampWrite& write) {
-    const auto* queries = dynamic_cast<const DawnGpuTimestampQuerySet*>(write.query_set.get());
-    if (!queries || write.index >= queries->capacity)
-        throw std::runtime_error("GPU timestamp write requires a compatible live query set.");
-    WGPUPassTimestampWrites timestamp = WGPU_PASS_TIMESTAMP_WRITES_INIT;
-    timestamp.querySet = queries->queries;
-    if (write.beginning)
-        timestamp.beginningOfPassWriteIndex = write.index;
-    else
-        timestamp.endOfPassWriteIndex = write.index;
+    DawnPassTimestamps timestamps;
+    timestamps.add(write);
     WGPUComputePassDescriptor descriptor = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
-    descriptor.timestampWrites = &timestamp;
+    descriptor.timestampWrites = timestamps.get();
     const auto pass = require_dawn_resource(
         wgpuCommandEncoderBeginComputePass(encoder, &descriptor), "GPU timestamp marker pass");
     wgpuComputePassEncoderEnd(pass);

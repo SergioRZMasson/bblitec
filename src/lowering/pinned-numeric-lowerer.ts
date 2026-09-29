@@ -4590,12 +4590,21 @@ export class PinnedNumericLowerer {
                         : "!="
                 } ${address(rightBuffer)})`;
             }
+            // `null` is absence only for a binding whose absent value it is.
+            const nullAbsence = (expression: ts.Expression) =>
+                this.binding(expression)?.absentValue === "null"
+                    ? this.absenceTest(expression)
+                    : undefined;
             const absent =
                 ts.isIdentifier(right) && right.text === "undefined"
                     ? this.absenceTest(left)
                     : ts.isIdentifier(left) && left.text === "undefined"
                       ? this.absenceTest(right)
-                      : undefined;
+                      : right.kind === ts.SyntaxKind.NullKeyword
+                        ? nullAbsence(left)
+                        : left.kind === ts.SyntaxKind.NullKeyword
+                          ? nullAbsence(right)
+                          : undefined;
             if (absent !== undefined) {
                 return node.operatorToken.kind ===
                     ts.SyntaxKind.EqualsEqualsEqualsToken

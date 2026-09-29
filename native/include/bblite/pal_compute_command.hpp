@@ -54,17 +54,38 @@ struct ComputeCommandEncoder {
     std::shared_ptr<OffscreenDevice> device;
     std::vector<ComputeCommand> commands;
     bool pass_active = false, finished = false;
+    /**
+     * Set while timed source tasks record: the timestamps of each pass they
+     * open, which the source's patched encoder attaches to that pass.
+     */
+    std::function<std::optional<GpuTaskPassTimestamps>()> timed_pass;
+    std::optional<GpuTimestampWrite> timed_pass_end;
     ComputePassEncoder begin_compute_pass(const std::string&) {
         if (pass_active || finished)
             throw std::runtime_error("Compute command encoder is not recordable.");
-        pass_active = true;
+        open_pass();
         return {this, {}};
     }
     ComputeMipmapPassEncoder begin_mipmap_pass(std::shared_ptr<ComputeMipmapLevel> level) {
         if (pass_active || finished || !level)
             throw std::runtime_error("Mipmap command encoder is not recordable.");
-        pass_active = true;
+        open_pass();
         return {this, std::move(level)};
+    }
+    void open_pass() {
+        pass_active = true;
+        const auto writes = timed_pass ? timed_pass() : std::nullopt;
+        if (!writes)
+            return;
+        if (writes->begin)
+            commands.emplace_back(*writes->begin);
+        timed_pass_end = writes->end;
+    }
+    void close_pass() {
+        pass_active = false;
+        if (timed_pass_end)
+            commands.emplace_back(*timed_pass_end);
+        timed_pass_end.reset();
     }
     void finish() {
         if (pass_active || finished)
@@ -86,7 +107,7 @@ inline void ComputeMipmapPassEncoder::draw(std::uint32_t vertices) {
 inline void ComputeMipmapPassEncoder::end() {
     if (!owner || !owner->pass_active)
         throw std::runtime_error("Mipmap pass has ended.");
-    owner->pass_active = false;
+    owner->close_pass();
     owner = nullptr;
 }
 inline void ComputePassEncoder::dispatch(std::uint32_t x, std::uint32_t y, std::uint32_t z) {
@@ -98,7 +119,7 @@ inline void ComputePassEncoder::dispatch(std::uint32_t x, std::uint32_t y, std::
 inline void ComputePassEncoder::end() {
     if (!owner || !owner->pass_active)
         throw std::runtime_error("Compute pass has ended.");
-    owner->pass_active = false;
+    owner->close_pass();
     owner = nullptr;
 }
 inline std::uint32_t compute_api_dimension(double value) {

@@ -3,7 +3,6 @@
 // each paired with its Dawn twin (pal_dawn_scene_<family>.cpp), compiled as
 // one translation unit (pal_sdl_gpu_scene_all.cpp).
 #pragma once
-#include <bblite/features/gpu_task_timing.hpp>
 #include <bblite/features/has_billboards.hpp>
 #include <bblite/features/has_clustered_lights.hpp>
 #include <bblite/features/has_detailed_picking.hpp>
@@ -104,10 +103,8 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_gpu.h>
 #include "pal_sdl_gpu_shared.hpp"
-#if BBLITE_GPU_TASK_TIMING
 #include <bblite/pal_gpu_task_timing.hpp>
 #include "pal_sdl_gpu_timestamp.hpp"
-#endif
 #if BBLITE_HAS_TAA
 #include "pal_sdl_gpu_temporal.hpp"
 #include "pal_temporal_shared.hpp"
@@ -1574,8 +1571,9 @@ void draw_node_variant(GpuState& state, SDL_GPUCommandBuffer* command, SDL_GPURe
 GpuState::EsmBlur& ensure_esm_blur(GpuState& state, const ShadowGeneratorRecord& generator,
                                    SDL_GPUTexture* source);
 
-/** The pin's two blur passes, run straight after the caster pass. */
-void run_esm_blur(GpuState& state, SDL_GPUCommandBuffer* command, std::uint32_t esm_index);
+/** One of the pin's two blur passes, run straight after the caster pass. */
+void run_esm_blur(GpuState& state, SDL_GPUCommandBuffer* command, std::uint32_t esm_index,
+                  bool vertical);
 #endif
 
 void update_shadow_generators(GpuState& state, const Scene& scene, Engine& engine);

@@ -6,7 +6,6 @@
 #pragma once
 
 #include <bblite/features/device_recovery.hpp>
-#include <bblite/features/gpu_task_timing.hpp>
 #include <bblite/features/has_billboards.hpp>
 #include <bblite/features/has_clustered_lights.hpp>
 #include <bblite/features/has_detailed_picking.hpp>
@@ -57,9 +56,7 @@
 
 #include "pal_camera_controls.hpp"
 #include "pal_dawn_shared.hpp"
-#if BBLITE_GPU_TASK_TIMING
 #include <bblite/pal_gpu_task_timing.hpp>
-#endif
 #include "pal_dawn_compute_texture.hpp"
 #if BBLITE_OFFSCREEN_SURFACES
 #include "pal_dawn_offscreen.hpp"
@@ -2475,9 +2472,10 @@ inline WGPUTextureFormat esm_texture_format(upstream::EsmTextureFormat format) {
 DawnState::EsmBlur& ensure_esm_blur(DawnState& state, WGPUTextureView source,
                                     std::uint32_t esm_index);
 
-/** The pin's two blur passes, run straight after the caster pass. */
+/** One of the pin's two blur passes, run straight after the caster pass. */
 void run_esm_blur(DawnState& state, WGPUCommandEncoder encoder, WGPUTextureView source,
-                  std::uint32_t esm_index);
+                  std::uint32_t esm_index, bool vertical,
+                  const WGPUPassTimestampWrites* timestamps);
 #endif
 
 /** The view a generator's map is sampled through. */
@@ -3216,16 +3214,18 @@ prepare_dawn_post_process_pass(DawnState& state, Engine& engine, TaskHandle hand
 }
 
 void encode_dawn_post_process_pass(WGPUCommandEncoder encoder, WGPUTextureView surface_view,
-                                   const PreparedDawnPostProcessPass& prepared);
+                                   const PreparedDawnPostProcessPass& prepared,
+                                   const WGPUPassTimestampWrites* timestamps = nullptr);
 
 template <typename SourceTextureView>
 void record_post_process_pass(DawnState& state, Engine& engine, TaskHandle handle,
                               WGPUCommandEncoder encoder, WGPUTextureView surface_view,
                               std::uint32_t width, std::uint32_t height, std::size_t index,
-                              SourceTextureView source_texture_view) {
+                              SourceTextureView source_texture_view,
+                              const WGPUPassTimestampWrites* timestamps = nullptr) {
     const auto prepared = prepare_dawn_post_process_pass(state, engine, handle, width, height,
                                                          index, source_texture_view);
-    encode_dawn_post_process_pass(encoder, surface_view, prepared);
+    encode_dawn_post_process_pass(encoder, surface_view, prepared, timestamps);
 }
 #endif
 

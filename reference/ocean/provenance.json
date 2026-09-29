@@ -3,8 +3,8 @@
   "scene": "ocean",
   "pin": {
     "package": "@babylonjs/lite",
-    "version": "1.31.1",
-    "sourceVersion": "7d66215c1c897734a3c2f25bdd15d0e7062ed8f4"
+    "version": "1.32.0",
+    "sourceVersion": "2e064d88ec7422af946f8ec7f089ac6519f99295"
   },
   "reference": {
     "source": "reference/ocean/babylon-lite-golden.png",
@@ -25,7 +25,7 @@
     "fixedAnimationFrame": "130",
     "fixedCaptureFrame": "30",
     "fixedAnimationCallbacks": "1",
-    "engine": "Babylon Lite v1.31.1",
+    "engine": "Babylon Lite v1.32.0",
     "loadingDetail": "Preparing scene…",
     "animationFrozen": "true",
     "seekWarmupFrames": "6",
@@ -139,7 +139,7 @@
     },
     {
       "path": "corpus/babylon-lite/lab/lite/src/demos/ocean/timing.ts",
-      "sha256": "e79fbd27a783a4871bb813b07f8d7eb9212fe9a2553be79bab997a213f32514d"
+      "sha256": "72afc166beefb178b2b929c4933d1d4a06f7a0b74e4326e28c2fa6e0a2a93e42"
     }
   ],
   "browser": {
@@ -147,7 +147,7 @@
     "ignoredDefaultArguments": [
       "--hide-scrollbars"
     ],
-    "version": "154.0.8037.57",
+    "version": "154.0.8037.58",
     "arguments": [
       "--force-color-profile=srgb",
       "--enable-unsafe-webgpu"
@@ -191,10 +191,10 @@
     {
       "area": "GPU task timing",
       "browser": "timestamp-query supported; full-page panel contains live FPS, GPU frame index and durations",
-      "native": "timestamp-query not enabled; pinned unsupported result",
+      "native": "timestamp-query supported on both backends; the panel shows native live durations",
       "parity": "No screenshot masking, browser capability override or threshold changes applied. Canvas image is stable; full-page timing text is nondeterministic."
     }
   ],
   "canvasSha256": "31f18e7d4e424fea5249fd99d221b3e3054dc053f536cedce5092e1c943a4582",
-  "capturedAt": "2026-09-26T07:10:42.756Z"
+  "capturedAt": "2026-09-29T09:55:07.389Z"
 }

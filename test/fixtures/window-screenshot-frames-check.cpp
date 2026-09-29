@@ -86,7 +86,7 @@ struct ScreenshotPresenter final : WindowPresenter {
                  const std::string& capture) override {
         if (!checked_cleanup && !checkpoint_frames.empty()) {
             for (const auto& checkpoint :
-                 window_screenshot_checkpoints(checkpoint_frames, read_frame_options(), false)) {
+                 window_screenshot_checkpoints(checkpoint_frames, read_frame_options(), 6)) {
                 assert(!std::filesystem::exists(checkpoint.path));
                 assert(!std::filesystem::exists(checkpoint.path + ".build-stamp"));
             }
@@ -119,16 +119,16 @@ int main() {
     FrameOptions options;
     options.screenshot_path = final_path;
     options.screenshot_frame = 6;
-    assert(window_screenshot_checkpoints("", FrameOptions{}, true).empty());
-    const auto parsed = window_screenshot_checkpoints("0,2,4", options, false);
+    assert(window_screenshot_checkpoints("", FrameOptions{}, 0).empty());
+    const auto parsed = window_screenshot_checkpoints("0,2,4", options, 6);
     assert(parsed.size() == 3 && parsed[0].frame == 0 && parsed[1].frame == 2 &&
            parsed[2].frame == 4);
     assert(parsed[0].path == "artifacts/window-screenshot-frames/final.frame-0.png");
     const auto rejects = [&](std::string_view value, const FrameOptions& frame_options,
-                             bool engine_frames = false) {
+                             long final_frame = 6) {
         bool rejected = false;
         try {
-            static_cast<void>(window_screenshot_checkpoints(value, frame_options, engine_frames));
+            static_cast<void>(window_screenshot_checkpoints(value, frame_options, final_frame));
         } catch (const std::invalid_argument&) {
             rejected = true;
         }
@@ -138,7 +138,8 @@ int main() {
                               "2,2", "4,2", "6", "7", "999999999999999999999999"})
         rejects(value, options);
     rejects("0", FrameOptions{});
-    rejects("0", options, true);
+    // Engine-frame capture validates against its own final frame.
+    rejects("5", options, 5);
     auto path_options = options;
     for (const auto& [path, expected] :
          std::array{std::pair{"a.b/output", "a.b/output.frame-2.png"},
@@ -146,7 +147,7 @@ int main() {
                     std::pair{"a.b/name.old.png", "a.b/name.old.frame-2.png"},
                     std::pair{"a.b/\xc3\xa9.png", "a.b/\xc3\xa9.frame-2.png"}}) {
         path_options.screenshot_path = path;
-        assert(window_screenshot_checkpoints("2", path_options, false).front().path == expected);
+        assert(window_screenshot_checkpoints("2", path_options, 6).front().path == expected);
     }
 
     std::filesystem::create_directories("artifacts/window-screenshot-frames");

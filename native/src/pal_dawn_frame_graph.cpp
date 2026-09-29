@@ -1,7 +1,6 @@
 // Dawn driver for a standalone FrameGraphContext. It records only the tasks
 // the context owns and therefore carries no scene/camera/mesh renderer.
 #include <bblite/upstream/pinned_surface.hpp>
-#include <bblite/features/gpu_task_timing.hpp>
 #include <bblite/features/has_effect_task.hpp>
 #include <bblite/features/has_frame_graph_renderer.hpp>
 #include <bblite/features/has_post_process.hpp>
@@ -26,9 +25,7 @@
 #endif
 #include "pal_platform_events.hpp"
 #include "pal_dawn_shared.hpp"
-#if BBLITE_GPU_TASK_TIMING
 #include <bblite/pal_gpu_task_timing.hpp>
-#endif
 #include "pal_gpu_common.hpp"
 #include "pal_gpu_frame.hpp"
 #include "pal_gpu_targets.hpp"
@@ -250,7 +247,8 @@ std::size_t post_process_program(State& state, const upstream::PostProcessShader
 
 void record_post_process(State& state, Engine& engine, TaskHandle task_handle,
                          std::size_t pass_index, WGPUCommandEncoder encoder,
-                         WGPUTextureView surface_view, std::uint32_t width, std::uint32_t height) {
+                         WGPUTextureView surface_view, std::uint32_t width, std::uint32_t height,
+                         const WGPUPassTimestampWrites* timestamps) {
     PostProcessPassOptions& pass =
         handle_at(engine.frame_tasks, task_handle).post_process.passes.at(pass_index);
     const upstream::PostProcessShaderInfo& info =
@@ -323,6 +321,7 @@ void record_post_process(State& state, Engine& engine, TaskHandle task_handle,
     WGPURenderPassDescriptor descriptor = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
     descriptor.colorAttachmentCount = 1;
     descriptor.colorAttachments = &attachment;
+    descriptor.timestampWrites = timestamps;
     DawnRenderPass render_pass{wgpuCommandEncoderBeginRenderPass(encoder, &descriptor)};
     if (pass.has_viewport) {
         const PixelViewport rect =
@@ -412,9 +411,7 @@ public:
         static_cast<void>(
             advance_frame(engine, *context, frame_clock, frame_options.frame_delta_ms));
         begin_measurement();
-#if BBLITE_GPU_TASK_TIMING
         begin_gpu_task_timing_frame(engine);
-#endif
         return FramePreparation::ready;
     }
     bool acquire() {
@@ -429,18 +426,13 @@ public:
     }
     void encode() {
         encoder = wgpuDeviceCreateCommandEncoder(state.device, nullptr);
-#if BBLITE_GPU_TASK_TIMING
-        GpuTaskTimingSequence timing_sequence(
-            engine, [&](const auto& write) { encode_dawn_gpu_timestamp(encoder, write); });
-#endif
+        GpuTaskTimingSequence timing_sequence(engine);
         for (const TaskHandle handle : context->tasks) {
             FrameTaskRecord& task = handle_at(engine.frame_tasks, handle);
             if (task.execution_enabled == false) {
                 continue;
             }
-#if BBLITE_GPU_TASK_TIMING
             const auto timing_scope = timing_sequence.scoped_task(engine, handle);
-#endif
 #if BBLITE_HAS_EFFECT_TASK
             if (task.kind == FrameTaskKind::effect) {
                 DawnEffectPass& pass = state.effects.at(handle.value);
@@ -465,6 +457,8 @@ public:
                 WGPURenderPassDescriptor descriptor = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
                 descriptor.colorAttachmentCount = 1;
                 descriptor.colorAttachments = &attachment;
+                const DawnPassTimestamps timestamps{timing_sequence.pass()};
+                descriptor.timestampWrites = timestamps.get();
                 DawnRenderPass render_pass{wgpuCommandEncoderBeginRenderPass(encoder, &descriptor)};
                 record_dawn_effect_pass(render_pass, pass);
                 wgpuRenderPassEncoderEnd(render_pass);
@@ -474,8 +468,9 @@ public:
 #if BBLITE_HAS_POST_PROCESS
                 if (task.kind == FrameTaskKind::post_process) {
                 for (std::size_t index = 0; index < task.post_process.passes.size(); ++index) {
+                    const DawnPassTimestamps timestamps{timing_sequence.pass()};
                     record_post_process(state, engine, handle, index, encoder, surface_view, width,
-                                        height);
+                                        height, timestamps.get());
                 }
             } else
 #endif
@@ -497,9 +492,7 @@ public:
         submit_dawn_command(state.queue, command);
         command.reset();
         encoder.reset();
-#if BBLITE_GPU_TASK_TIMING
         finish_gpu_task_timing_frame(engine);
-#endif
         if (capture_frame) {
             finish_dawn_surface_capture(state, capture, width, height,
                                         frame_options.screenshot_path);

@@ -54,6 +54,7 @@ test("SDL D3D12 timestamps retain readbacks and command reuse with validation en
         cpp,
         `
         #include <SDL3/SDL.h>
+        #include <bblite/js_data.hpp>
         #include <bblite/pal_gpu_timestamp.hpp>
         #include "pal_sdl_gpu_commands.hpp"
         #include <algorithm>

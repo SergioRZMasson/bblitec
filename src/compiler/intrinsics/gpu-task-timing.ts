@@ -52,6 +52,7 @@ function timingProjection(
         supported: booleanValue("timing.supported"),
         enabled: booleanValue("timing.enabled"),
         frameIndex: { kind: "number", cpp: "timing.frame_index" },
+        totalDurationMs: { kind: "number", cpp: "timing.total_duration_ms" },
         droppedTaskCount: { kind: "number", cpp: "timing.dropped_task_count" },
         tasks: context.dataLowerer.leafValue(entries, taskType),
         error: context.dataLowerer.leafValue(

@@ -1,9 +1,11 @@
 #pragma once
 
 #include "pal_sdl_gpu_shared.hpp"
+#include <bblite/js_data.hpp>
 #include <bblite/pal_gpu_timestamp.hpp>
 #include <algorithm>
 #include <cstring>
+#include <exception>
 #include <limits>
 
 #ifndef SDL_BBLITE_GPU_TIMESTAMPS
@@ -112,6 +114,21 @@ inline void encode_sdl_gpu_timestamp(SDL_GPUCommandBuffer* command,
         throw std::runtime_error("SDL timestamp query index or backend is invalid.");
     if (!SDL_BBLiteWriteGPUTimestamp(command, queries->pool, write.index))
         gpu_error("SDL timestamp write");
+}
+
+/**
+ * One source pass, whose timestamps SDL_GPU writes outside passes: the begin
+ * one now, the end one when the returned scope runs or closes. A source pass
+ * can span several native passes.
+ */
+inline auto sdl_timed_pass(SDL_GPUCommandBuffer* command,
+                           const std::optional<GpuTaskPassTimestamps>& writes) {
+    if (writes && writes->begin)
+        encode_sdl_gpu_timestamp(command, *writes->begin);
+    return js::finally([command, end = writes ? std::optional(writes->end) : std::nullopt] {
+        if (end && std::uncaught_exceptions() == 0)
+            encode_sdl_gpu_timestamp(command, *end);
+    });
 }
 
 /** Every resolve owns distinct storage while the query heap is reused on the queue. */

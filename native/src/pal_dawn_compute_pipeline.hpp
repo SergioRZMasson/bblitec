@@ -192,9 +192,12 @@ create_dawn_compute_bind_group(WGPUDevice device, const ComputeBindGroupDescript
         require_dawn_resource(wgpuDeviceCreateBindGroup(device, &info), "compute bind group");
     return result;
 }
-inline void encode_dawn_compute(WGPUCommandEncoder command, const ComputeDispatch& source) {
+inline void encode_dawn_compute(WGPUCommandEncoder command, const ComputeDispatch& source,
+                                const WGPUPassTimestampWrites* timestamps = nullptr) {
+    WGPUComputePassDescriptor descriptor = WGPU_COMPUTE_PASS_DESCRIPTOR_INIT;
+    descriptor.timestampWrites = timestamps;
     DawnOwned<WGPUComputePassEncoder, wgpuComputePassEncoderRelease> pass{require_dawn_resource(
-        wgpuCommandEncoderBeginComputePass(command, nullptr), "compute pass")};
+        wgpuCommandEncoderBeginComputePass(command, &descriptor), "compute pass")};
     wgpuComputePassEncoderSetPipeline(
         pass, dawn_compute_resource<DawnComputePipeline>(source.pipeline).handle);
     for (std::size_t index = 0; index < source.groups.size(); ++index) {

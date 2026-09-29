@@ -104,6 +104,8 @@ void ui_on_click(Engine& engine, UiElementHandle element, std::function<void()> 
 /** Programmatic HTMLElement.click(), including reached default actions. */
 void ui_click(Engine& engine, UiElementHandle element, bool trusted = false);
 void ui_focus(Engine& engine, UiElementHandle element, bool visible = true);
+/** Records focus without focus or blur events: native focus a Window display resolved. */
+void ui_record_focus(Engine& engine, UiElementHandle element, bool visible);
 bool ui_clear_focus(Engine& engine, UiElementHandle next = {});
 UiElementHandle ui_active_element(Engine& engine);
 #if BBLITE_HAS_BROWSER_FILE

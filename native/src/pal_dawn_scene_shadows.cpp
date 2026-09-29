@@ -135,26 +135,25 @@ DawnState::EsmBlur& ensure_esm_blur(DawnState& state, WGPUTextureView source,
 }
 
 void run_esm_blur(DawnState& state, WGPUCommandEncoder encoder, WGPUTextureView source,
-                  std::uint32_t esm_index) {
+                  std::uint32_t esm_index, bool vertical,
+                  const WGPUPassTimestampWrites* timestamps) {
     const DawnState::EsmBlur& blur = ensure_esm_blur(state, source, esm_index);
-    const auto pass = [&](WGPUTextureView view, WGPUBindGroup group) {
-        WGPURenderPassColorAttachment attachment = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
-        attachment.view = view;
-        attachment.loadOp = WGPULoadOp_Clear;
-        attachment.storeOp = WGPUStoreOp_Store;
-        attachment.clearValue = {0.0, 0.0, 0.0, 0.0};
-        WGPURenderPassDescriptor descriptor = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
-        descriptor.colorAttachmentCount = 1;
-        descriptor.colorAttachments = &attachment;
-        DawnRenderPass render{wgpuCommandEncoderBeginRenderPass(encoder, &descriptor)};
-        wgpuRenderPassEncoderSetPipeline(render, blur.pipeline);
-        wgpuRenderPassEncoderSetBindGroup(render, 0, group, 0, nullptr);
-        count_gpu_draw(wgpuRenderPassEncoderDraw, render, 3, 1, 0, 0);
-        wgpuRenderPassEncoderEnd(render);
-        render.reset();
-    };
-    pass(blur.blur_h_view, blur.horizontal);
-    pass(blur.blur_v_view, blur.vertical);
+    WGPURenderPassColorAttachment attachment = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
+    attachment.view = vertical ? blur.blur_v_view : blur.blur_h_view;
+    attachment.loadOp = WGPULoadOp_Clear;
+    attachment.storeOp = WGPUStoreOp_Store;
+    attachment.clearValue = {0.0, 0.0, 0.0, 0.0};
+    WGPURenderPassDescriptor descriptor = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
+    descriptor.colorAttachmentCount = 1;
+    descriptor.colorAttachments = &attachment;
+    descriptor.timestampWrites = timestamps;
+    DawnRenderPass render{wgpuCommandEncoderBeginRenderPass(encoder, &descriptor)};
+    wgpuRenderPassEncoderSetPipeline(render, blur.pipeline);
+    wgpuRenderPassEncoderSetBindGroup(render, 0, vertical ? blur.vertical : blur.horizontal, 0,
+                                      nullptr);
+    count_gpu_draw(wgpuRenderPassEncoderDraw, render, 3, 1, 0, 0);
+    wgpuRenderPassEncoderEnd(render);
+    render.reset();
 }
 #endif
 

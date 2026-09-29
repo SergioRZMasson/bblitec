@@ -90,13 +90,13 @@ void prepare_temporal_scene_uniforms(FrameTaskRecord& task, CameraRecord* camera
                 std::array<double, 3> color;
             };
             struct Environment {
-                double lod_generation_scale;
-                bool has_harmonics;
+                double lod_generation_scale{};
+                bool has_harmonics{};
                 std::array<float, 36> harmonics{};
             };
             struct PackScene {
-                double exposure, contrast;
-                bool tone_mapping_enabled;
+                double exposure{}, contrast{};
+                bool tone_mapping_enabled{};
                 std::optional<Fog> fog{};
                 std::optional<std::array<double, 4>> clip_plane{};
                 std::optional<Environment> environment{};

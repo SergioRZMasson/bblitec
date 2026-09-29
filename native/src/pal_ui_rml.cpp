@@ -1317,10 +1317,32 @@ void dispatch_ui_focus(Engine& engine, UiElementHandle element, std::string type
 }
 } // namespace
 
+namespace {
+void set_ui_focus_visible(Engine& engine, bool visible) {
+    if (engine.ui_focus_visible != visible) {
+        engine.ui_focus_visible = visible;
+        ++engine.ui_focus_revision;
+    }
+}
+
+void set_ui_focused_element(Engine& engine, UiElementHandle element) {
+    engine.ui_focused_element = element;
+    if (element.value != invalid_handle)
+        engine.canvas_focused = false;
+    ++engine.ui_focus_revision;
+}
+} // namespace
+
+void ui_record_focus(Engine& engine, UiElementHandle element, bool visible) {
+    set_ui_focus_visible(engine, visible);
+    if (engine.ui_focused_element != element)
+        set_ui_focused_element(engine, element);
+}
+
 bool ui_clear_focus(Engine& engine, UiElementHandle next) {
     const auto previous = ui_active_element(engine);
-    engine.ui_focused_element = {};
-    const auto revision = ++engine.ui_focus_revision;
+    set_ui_focused_element(engine, {});
+    const auto revision = engine.ui_focus_revision;
     if (previous.value != invalid_handle)
         dispatch_ui_focus(engine, previous, "blur", next);
     return revision == engine.ui_focus_revision;
@@ -1329,18 +1351,13 @@ bool ui_clear_focus(Engine& engine, UiElementHandle next) {
 void ui_focus(Engine& engine, UiElementHandle element, bool visible) {
     if (!ui_focusable(engine, element))
         return;
-    if (engine.ui_focus_visible != visible) {
-        engine.ui_focus_visible = visible;
-        ++engine.ui_focus_revision;
-    }
+    set_ui_focus_visible(engine, visible);
     const auto previous = ui_active_element(engine);
     if (previous == element)
         return;
     if (!ui_clear_focus(engine, element))
         return;
-    engine.ui_focused_element = element;
-    engine.canvas_focused = false;
-    ++engine.ui_focus_revision;
+    set_ui_focused_element(engine, element);
     dispatch_ui_focus(engine, element, "focus", previous);
 }
 

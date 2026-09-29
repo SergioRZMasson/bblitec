@@ -17,7 +17,6 @@
 #include "pal_gpu_shader_passes.hpp"
 #include <bblite/features/compute_frame_graph.hpp>
 #include <bblite/features/device_recovery.hpp>
-#include <bblite/features/gpu_task_timing.hpp>
 #include <bblite/features/has_billboards.hpp>
 #include <bblite/features/has_clustered_lights.hpp>
 #include <bblite/features/has_detailed_picking.hpp>
@@ -1647,9 +1646,7 @@ public:
             }
             return FramePreparation::restart;
         }
-#if BBLITE_GPU_TASK_TIMING
         begin_gpu_task_timing_frame(engine);
-#endif
 #if BBLITE_COMPUTE_FRAME_GRAPH
         begin_compute_frame_prefix(engine);
 #endif
@@ -2694,20 +2691,13 @@ public:
                         }
                     }
 #endif
-#if BBLITE_GPU_TASK_TIMING
-                    GpuTaskTimingSequence timing_sequence(
-                        engine,
-                        [&](const auto& write) { encode_sdl_gpu_timestamp(command, write); },
-                        &graph_scene);
-#endif
+                    GpuTaskTimingSequence timing_sequence(engine, &graph_scene);
                     for (const TaskHandle handle : graph_scene.tasks) {
                         [[maybe_unused]] FrameTaskRecord& task =
                             handle_at(engine.frame_tasks, handle);
                         if (task.execution_enabled == false)
                             continue;
-#if BBLITE_GPU_TASK_TIMING
                         const auto timing_scope = timing_sequence.scoped_task(engine, handle);
-#endif
 #if BBLITE_COMPUTE_FRAME_GRAPH
                         if (task.kind == FrameTaskKind::compute) {
                             if (surface_command) {
@@ -2842,6 +2832,8 @@ public:
                                     // `createRenderTask({clrColor:{0,0,0,0}})`.
                                     shadow_color.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
                                 }
+                                auto caster_timing =
+                                    sdl_timed_pass(command, timing_sequence.pass());
                                 SdlRenderPass shadow_pass{SDL_BeginGPURenderPass(
                                     command, target_record.has_color ? &shadow_color : nullptr,
                                     target_record.has_color ? 1u : 0u, &shadow_depth)};
@@ -2859,12 +2851,17 @@ public:
                                            handle_at(task_draw_lists, handle), nullptr, nullptr,
                                            nullptr, nullptr, &generator);
                                 shadow_pass.end();
+                                caster_timing.run();
 #if BBLITE_SHADOWS_ESM
                                 // `renderEsmShadowMap` blurs the map it just
                                 // drew, in two passes, before anything samples
                                 // it.
                                 if (generator.filter == ShadowFilter::esm_directional) {
-                                    run_esm_blur(state, command, generator.esm_index);
+                                    for (const bool vertical : {false, true}) {
+                                        const auto blur_timing =
+                                            sdl_timed_pass(command, timing_sequence.pass());
+                                        run_esm_blur(state, command, generator.esm_index, vertical);
+                                    }
                                 }
 #endif
                                 continue;
@@ -2901,6 +2898,7 @@ public:
                                 task_depth.store_op = SDL_GPU_STOREOP_STORE;
                                 task_depth.stencil_load_op = task_depth.load_op;
                                 task_depth.stencil_store_op = SDL_GPU_STOREOP_STORE;
+                                auto depth_timing = sdl_timed_pass(command, timing_sequence.pass());
                                 SdlRenderPass task_pass{
                                     SDL_BeginGPURenderPass(command, nullptr, 0, &task_depth)};
                                 set_task_camera_viewport(task_pass, task_camera, target.width,
@@ -2955,6 +2953,7 @@ public:
                                     }
                                 }
                                 task_pass.end();
+                                depth_timing.run();
                                 if (target.depth_copy)
                                     encode_metal_depth_copy(state, command, target);
                                 continue;
@@ -3015,6 +3014,9 @@ public:
                                 task_depth_pointer = &task_depth;
                             }
 #if BBLITE_HAS_TAA
+                            // The temporal source's pass is encoded after its
+                            // post-process writes, outside this task.
+                            timing_sequence.refuse("temporal anti-aliasing sources");
                             PreparedSdlScenePass prepared;
                             prepared.target = target_info;
                             if (task_depth_pointer)
@@ -3045,6 +3047,7 @@ public:
                             temporal_passes.emplace_back(std::move(prepared));
                             continue;
 #endif
+                            auto color_timing = sdl_timed_pass(command, timing_sequence.pass());
                             SdlRenderPass task_pass{SDL_BeginGPURenderPass(command, &target_info, 1,
                                                                            task_depth_pointer)};
                             set_task_camera_viewport(task_pass, task_camera, target.width,
@@ -3093,6 +3096,9 @@ public:
 #endif
                             }
                             task_pass.end();
+                            // The utility layer below is its own rendering
+                            // context in the source, outside this task.
+                            color_timing.run();
                             if (graph_layer == 0 && task.render.scene_stages) {
                                 // Utility layers share the primary surface's MSAA
                                 // attachment, before its resolve/present tasks run.
@@ -3135,8 +3141,10 @@ public:
                         if (task.kind == FrameTaskKind::geometry) {
                             // Without a camera the task does not execute, not
                             // even its clears.
-                            if (upstream::geometry_task_skips(geometry_pass.camera))
+                            if (upstream::geometry_task_skips(geometry_pass.camera)) {
+                                timing_sequence.passless();
                                 continue;
+                            }
                             const std::array<float, 16>& geometry_matrix =
                                 geometry_pass.matrices.view_projection;
                             GpuGeometryTask& geometry = handle_at(state.geometry_tasks, handle);
@@ -3229,6 +3237,8 @@ public:
                                                       : SDL_GPU_STOREOP_DONT_CARE;
                             task_depth.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
                             task_depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+                            const auto geometry_timing =
+                                sdl_timed_pass(command, timing_sequence.pass());
                             SdlRenderPass task_pass{SDL_BeginGPURenderPass(
                                 command, target_infos.data(),
                                 static_cast<Uint32>(target_infos.size()), &task_depth)};
@@ -3293,6 +3303,8 @@ public:
                                 SDL_FColor{task.effect.clear_color.r, task.effect.clear_color.g,
                                            task.effect.clear_color.b, task.effect.clear_color.a};
                             effect_target.store_op = SDL_GPU_STOREOP_STORE;
+                            const auto effect_timing =
+                                sdl_timed_pass(command, timing_sequence.pass());
                             SdlRenderPass effect_pass{
                                 SDL_BeginGPURenderPass(command, &effect_target, 1, nullptr)};
                             record_effect_pass(command, effect_pass, engine, pass,
@@ -3304,6 +3316,9 @@ public:
 #if BBLITE_HAS_POST_PROCESS
                         if (task.kind == FrameTaskKind::post_process) {
 #if BBLITE_HAS_TAA
+                            // Temporal builds encode every post-process pass
+                            // after the frame's final writes, outside its task.
+                            timing_sequence.refuse("post-process tasks of temporal frames");
                             if (task.post_process.taa) {
                                 auto& taa = *task.post_process.taa;
                                 auto& source = engine.frame_tasks.at(
@@ -3357,6 +3372,8 @@ public:
                             // built; a plain effect is the same loop over one.
                             for (std::size_t index = 0; index < task.post_process.passes.size();
                                  ++index) {
+                                const auto post_process_timing =
+                                    sdl_timed_pass(command, timing_sequence.pass());
                                 record_post_process_pass(state, engine, handle, command, swapchain,
                                                          swapchain_format, width, height, index,
                                                          capture_texture, source_texture,
@@ -3374,11 +3391,16 @@ public:
                         }
 #endif
                         const CopyTaskOptions& copy = task.copy;
-                        if (frame_options.skip_copy_task(copy))
+                        if (frame_options.skip_copy_task(copy)) {
+                            timing_sequence.passless();
                             continue;
+                        }
                         const bool force_full_viewport = frame_options.full_copy_viewport(copy);
                         if (copy.resolve_target.value != invalid_handle &&
                             copy.target.value == invalid_handle) {
+                            // The source's resolve path is always one pass.
+                            const auto resolve_timing =
+                                sdl_timed_pass(command, timing_sequence.pass());
                             if (copy.source.source != RenderTextureSource::render_target) {
                                 throw std::runtime_error("Resolve source must be a render target.");
                             }
@@ -3419,6 +3441,7 @@ public:
 
                         const RenderTargetRecord& target_record =
                             handle_at(engine.render_targets, copy.target);
+                        const auto blit_timing = sdl_timed_pass(command, timing_sequence.pass());
                         // A copy writing a VIEWPORT of the swapchain composes
                         // with whatever else wrote the rest of it -- scene 187
                         // presents SMAA into one half and the raw image into
@@ -4277,9 +4300,7 @@ public:
                 gpu_error("SDL_SubmitGPUCommandBuffer");
             }
         }
-#if BBLITE_GPU_TASK_TIMING
         finish_gpu_task_timing_frame(engine);
-#endif
 #if BBLITE_COMPUTE_FRAME_GRAPH
         finish_compute_frame_prefix(engine);
 #endif

@@ -55,7 +55,8 @@ struct DawnComputeMipmapLevel final : ComputeMipmapLevel {
     std::shared_ptr<DawnComputeTexture> texture;
     DawnTextureView source, target;
     DawnBindGroup bindings;
-    void encode(WGPUCommandEncoder encoder, std::uint32_t vertices) const {
+    void encode(WGPUCommandEncoder encoder, std::uint32_t vertices,
+                const WGPUPassTimestampWrites* timestamps = nullptr) const {
         WGPURenderPassColorAttachment color = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
         color.view = target;
         color.loadOp = WGPULoadOp_Clear;
@@ -64,6 +65,7 @@ struct DawnComputeMipmapLevel final : ComputeMipmapLevel {
         WGPURenderPassDescriptor render = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
         render.colorAttachmentCount = 1;
         render.colorAttachments = &color;
+        render.timestampWrites = timestamps;
         DawnRenderPass pass{require_dawn_resource(
             wgpuCommandEncoderBeginRenderPass(encoder, &render), "mipmap pass")};
         wgpuRenderPassEncoderSetPipeline(pass, pipeline->pipeline);
