@@ -38,7 +38,7 @@ Artifact paths are relative to `generated/<id>/`.
 | Graphics guards | Async Window/worker realms expose existing host graphics identity; computation-only realms may lack it |
 | Compute limits | Dawn queries device limits; SDL_GPU has no numeric shader-resource queries and uses 256-byte uniform offsets |
 | Engine disposal | A Window engine invalidates its run and releases its GPU lease; the shared native transport remains available to other engines |
-| GPU task timing | Pinned frame-graph task snapshots use asynchronous hardware timestamp readback; [backend capability](backends.md#backend-comparison) determines availability |
+| GPU task timing | Pinned frame-graph task snapshots use asynchronous hardware timestamp readback; [backend capability](backends.md#backend-comparison) determines availability. Dawn attaches a task's timestamps to its passes as the source does; SDL_GPU writes them outside passes, at each source pass's boundaries. A pass this port omits, such as thin-instance culling's, is not timed |
 | UI | RmlUi and retained Canvas2D; [compatibility limits](ui.md) |
 | Pointer offsets | offsetX/offsetY read clientX/clientY: exact for the full-window primary canvas, not target-relative for auxiliary canvases or UI elements |
 | Camera touch | One finger uses pointer rotation; two-finger span changes feed the existing wheel zoom accumulator |

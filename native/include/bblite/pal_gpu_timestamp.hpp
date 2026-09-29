@@ -24,4 +24,10 @@ struct GpuTimestampWrite {
     bool beginning = true;
 };
 
+/** The timestamps one source pass carries: a task's first pass also begins it. */
+struct GpuTaskPassTimestamps {
+    std::optional<GpuTimestampWrite> begin;
+    GpuTimestampWrite end;
+};
+
 } // namespace bbl::pal

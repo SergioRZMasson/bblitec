@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bblite/features/gpu_task_timing.hpp>
 #include <bblite/features/workers.hpp>
 
 #include <bblite/pal_offscreen.hpp>
@@ -24,6 +25,7 @@ struct GpuTaskTimingSnapshot {
     bool enabled = false;
     double frame_index = 0;
     std::vector<GpuTaskTimingEntry> tasks;
+    double total_duration_ms = 0;
     double dropped_task_count = 0;
     std::optional<std::string> error;
     std::any projection;
@@ -56,9 +58,13 @@ struct GpuTaskTimingReadback {
     double dropped_task_count = 0;
 };
 
-struct GpuTaskTimingTask {
-    GpuTimestampWrite begin;
-    GpuTimestampWrite end;
+/** The source task whose passes are being timed (`ActiveTaskTiming`). */
+struct GpuActiveTaskTiming {
+    double begin_query_index = -1;
+    double end_query_index = -1;
+    double pass_count = 0;
+    bool conflicted = false;
+    bool dropped = false;
 };
 
 using GpuTaskTimingPublisher = std::function<void(std::shared_ptr<GpuTaskTimingSnapshot>)>;
@@ -77,7 +83,13 @@ struct GpuTaskTimer {
     std::vector<GpuTaskTimingRecord> records;
     double task_capacity;
     double max_in_flight;
+    std::optional<GpuActiveTaskTiming> active_task_timing;
+    double next_query_index = 0;
+    double next_task_index = 0;
+    /** `gpuTaskTimerExecute`'s task index, held from its task's begin to its end. */
+    double task_index = 0;
     double frame_index = 0;
+    double last_published_frame_index = 0;
     double dropped_task_count = 0;
     double in_flight = 0;
     bool skip_frame = false;
@@ -90,19 +102,29 @@ struct GpuTaskTimer {
           query_set(device->create_gpu_timestamp_query_set(gpu_timestamp_index(capacity * 2))),
           task_capacity(capacity), max_in_flight(maximum) {}
 
+    void restore_timing_encoder();
     void begin_frame();
-    std::optional<GpuTaskTimingTask> begin_task(const std::string& name);
-    void end_task(const GpuTimestampWrite& end, const std::string& name);
+    /** Native execution brackets one source task with begin_task and end_task. */
+    void begin_task();
+    void end_task(const std::string& name);
+    /** The timestamps of one source pass of the active task, if it gets any. */
+    std::optional<GpuTaskPassTimestamps> pass_timestamps(bool has_timestamp_writes);
     void finish_frame();
+    void publish_snapshot(std::shared_ptr<GpuTaskTimingSnapshot> snapshot);
     void poll();
     void dispose();
     void complete_readback(const GpuTaskTimingReadback& pending,
                            const std::vector<std::uint64_t>& raw);
     void fail_readback(const GpuTaskTimingReadback& pending, const std::string& error);
 
-    GpuTaskTimingTask writes(double begin, double end) const {
-        return {{query_set, gpu_timestamp_index(begin), true},
-                {query_set, gpu_timestamp_index(end), false}};
+    GpuTimestampWrite timestamp_write(double index, bool beginning) const {
+        return {query_set, gpu_timestamp_index(index), beginning};
+    }
+    GpuTaskPassTimestamps pass_writes(double begin, double end) const {
+        return {timestamp_write(begin, true), timestamp_write(end, false)};
+    }
+    GpuTaskPassTimestamps end_write(double end) const {
+        return {std::nullopt, timestamp_write(end, false)};
     }
 
     void enqueue_readback(double query_count, double frame,
@@ -158,18 +180,6 @@ inline std::shared_ptr<GpuTaskTimer> active_gpu_task_timer(const Engine& engine)
                                                                     : nullptr;
 }
 
-inline void begin_gpu_task_timing_frame(Engine& engine) {
-    if (const auto timer = active_gpu_task_timer(engine)) {
-        timer->poll();
-        timer->begin_frame();
-    }
-}
-
-inline void finish_gpu_task_timing_frame(Engine& engine) {
-    if (const auto timer = active_gpu_task_timer(engine))
-        timer->finish_frame();
-}
-
 /** Source task names, retained by each native frame-task facade. */
 inline const std::string& gpu_timing_task_name(const FrameTaskRecord& task) {
     switch (task.kind) {
@@ -191,26 +201,57 @@ inline const std::string& gpu_timing_task_name(const FrameTaskRecord& task) {
     throw std::logic_error("Unknown native frame task kind.");
 }
 
-/** One source shadow task expands to several adjacent native caster passes. */
-template <typename Write> class GpuTaskTimingSequence {
+/**
+ * Whether the source's copy task may copy without a pass (`tryBuildFastPath`),
+ * where this port always blits. Formats, sizes and texture usage are known
+ * only to the backends, so any copy the remaining conditions admit counts.
+ */
+inline bool copy_task_may_skip_pass(const Engine& engine, const CopyTaskOptions& copy) {
+    if (copy.has_viewport || copy.resolve_target.value != invalid_handle)
+        return false;
+    const RenderTargetRecord& target = handle_at(engine.render_targets, copy.target);
+    if (target.swapchain || !target.has_color || target.samples != 1)
+        return false;
+    return copy.source.source != RenderTextureSource::render_target ||
+           handle_at(engine.render_targets, copy.source.target).samples == 1;
+}
+
+#if BBLITE_GPU_TASK_TIMING
+inline void begin_gpu_task_timing_frame(Engine& engine) {
+    if (const auto timer = active_gpu_task_timer(engine)) {
+        timer->poll();
+        timer->begin_frame();
+    }
+}
+
+inline void finish_gpu_task_timing_frame(Engine& engine) {
+    if (const auto timer = active_gpu_task_timer(engine))
+        timer->finish_frame();
+}
+
+/**
+ * Native execution of one frame graph's source tasks. `scoped_task` brackets a
+ * task as `gpuTaskTimerExecute` does, and native code asks `pass` for the
+ * timestamps of each pass the source task opens, as the source's patched
+ * encoder does. One source shadow task spans the adjacent native caster tasks.
+ */
+class GpuTaskTimingSequence {
 public:
-    GpuTaskTimingSequence(const Engine& engine, Write write, const Scene* scene = nullptr)
-        : timer_(active_gpu_task_timer(engine)), write_(std::move(write)) {
+    explicit GpuTaskTimingSequence(const Engine& engine, const Scene* scene = nullptr)
+        : timer_(active_gpu_task_timer(engine)), scene_(scene) {
         if (!timer_ || !scene || !scene->state->shadow_task_name)
             return;
-        shadow_name_ = scene->state->shadow_task_name;
         const bool has_casters =
             std::any_of(scene->tasks.begin(), scene->tasks.end(), [&](TaskHandle handle) {
                 const auto& task = handle_at(engine.frame_tasks, handle);
                 return task.kind == FrameTaskKind::render &&
                        task.render.shadow_generator.value != invalid_handle;
             });
+        // The source's shadow task still runs; with no generator to render
+        // it opens no pass.
         if (!has_casters) {
-            if (const auto timed = timer_->begin_task(*shadow_name_)) {
-                write_(timed->begin);
-                timer_->end_task(timed->end, *shadow_name_);
-                write_(timed->end);
-            }
+            timer_->begin_task();
+            timer_->end_task(shadow_name());
         }
     }
     GpuTaskTimingSequence(const GpuTaskTimingSequence&) = delete;
@@ -221,59 +262,104 @@ public:
     }
 
     auto scoped_task(const Engine& engine, TaskHandle handle) {
-        const auto marker = begin(handle_at(engine.frame_tasks, handle));
-        return js::finally([this, &engine, handle, marker] {
-            if (marker && std::uncaught_exceptions() == 0)
-                end(*marker, handle_at(engine.frame_tasks, handle));
+        const bool began = begin(engine, handle_at(engine.frame_tasks, handle));
+        return js::finally([this, &engine, handle, began] {
+            if (began && std::uncaught_exceptions() == 0)
+                end(gpu_timing_task_name(handle_at(engine.frame_tasks, handle)));
         });
     }
 
-    std::optional<GpuTimestampWrite> begin(const FrameTaskRecord& task) {
+    /** The timestamps of one pass the current source task opens, if it gets any. */
+    std::optional<GpuTaskPassTimestamps> pass() {
         if (!timer_)
             return std::nullopt;
+        ++passes_;
+        return timer_->pass_timestamps(false);
+    }
+
+    /** The current task opens no pass in the source either. */
+    void passless() { passless_ = true; }
+
+    /** A source pass structure this port does not reproduce cannot be timed. */
+    void refuse(const char* passes) const {
+        if (timer_)
+            throw std::runtime_error(std::string("GPU task timing does not represent the "
+                                                 "source passes of ") +
+                                     passes + ".");
+    }
+
+private:
+    bool begin(const Engine& engine, const FrameTaskRecord& task) {
+        if (!timer_)
+            return false;
+        if (task.kind == FrameTaskKind::screen_space)
+            refuse("screen-space effect tasks");
+        if (task.kind == FrameTaskKind::post_process && task.post_process.taa)
+            refuse("temporal anti-aliasing tasks");
+        if (task.kind == FrameTaskKind::copy && copy_task_may_skip_pass(engine, task.copy))
+            refuse("copies the source may make without a pass");
         const bool shadow = task.kind == FrameTaskKind::render &&
                             task.render.shadow_generator.value != invalid_handle;
         if (!shadow)
             finish_shadows();
         if (task.kind == FrameTaskKind::compute)
-            return std::nullopt;
-        if (shadow && shadows_started_)
-            return std::nullopt;
-        if (shadow && !shadow_name_)
-            throw std::logic_error("Native shadow passes have no source task label.");
-        const auto timed = timer_->begin_task(shadow ? *shadow_name_ : gpu_timing_task_name(task));
-        if (shadow)
-            shadows_started_ = true;
-        if (!timed)
-            return std::nullopt;
-        write_(timed->begin);
+            return false;
         if (shadow) {
-            shadows_end_ = timed->end;
-            return std::nullopt;
+            if (!shadows_started_) {
+                (void)shadow_name(); // refuses a label-less task before it opens
+                timer_->begin_task();
+                shadows_started_ = true;
+            }
+            return false;
         }
-        return timed->end;
+        timer_->begin_task();
+        passes_ = 0;
+        passless_ = false;
+        return true;
     }
 
-    void end(const GpuTimestampWrite& marker, const FrameTaskRecord& task) {
-        timer_->end_task(marker, gpu_timing_task_name(task));
-        write_(marker);
+    void end(const std::string& name) {
+        // A native branch that asks for no pass would drop its task silently.
+        if (passes_ == 0 && !passless_)
+            throw std::logic_error("Native execution of task '" + name + "' timed no pass.");
+        timer_->end_task(name);
     }
 
-private:
     void finish_shadows() {
-        if (shadows_end_) {
-            timer_->end_task(*shadows_end_, *shadow_name_);
-            write_(*shadows_end_);
-            shadows_end_.reset();
+        if (shadows_started_) {
+            timer_->end_task(shadow_name());
+            shadows_started_ = false;
         }
-        shadows_started_ = false;
+    }
+
+    /** The source shadow task's label, read when it is recorded, as the source reads it. */
+    const std::string& shadow_name() const {
+        if (!scene_ || !scene_->state->shadow_task_name)
+            throw std::logic_error("Native shadow passes have no source task label.");
+        return *scene_->state->shadow_task_name;
     }
     std::shared_ptr<GpuTaskTimer> timer_;
-    Write write_;
+    const Scene* scene_;
     bool shadows_started_ = false;
-    std::optional<std::string> shadow_name_;
-    std::optional<GpuTimestampWrite> shadows_end_;
+    std::size_t passes_ = 0;
+    bool passless_ = false;
 };
+#else
+/** Builds without `engine:gpu-task-timing` time nothing. */
+inline void begin_gpu_task_timing_frame(Engine&) {}
+inline void finish_gpu_task_timing_frame(Engine&) {}
+
+class GpuTaskTimingSequence {
+public:
+    explicit GpuTaskTimingSequence(const Engine&, const Scene* = nullptr) {}
+    auto scoped_task(const Engine&, TaskHandle) const {
+        return js::finally([] {});
+    }
+    std::optional<GpuTaskPassTimestamps> pass() const { return std::nullopt; }
+    void passless() const {}
+    void refuse(const char*) const {}
+};
+#endif
 
 } // namespace bbl::pal
 
@@ -281,6 +367,7 @@ namespace bbl {
 std::shared_ptr<pal::GpuTaskTimingSnapshot>
 make_gpu_task_timing_snapshot(std::string status, bool supported, bool enabled, double frame_index,
                               std::vector<pal::GpuTaskTimingEntry> tasks, double dropped_task_count,
+                              double total_duration_ms,
                               std::optional<std::string> error = std::nullopt);
 bool is_render_task_gpu_timing_supported(std::shared_ptr<pal::GpuTaskTimingState> engine);
 std::shared_ptr<pal::GpuTaskTimingSnapshot>

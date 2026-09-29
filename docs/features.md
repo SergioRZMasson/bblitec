@@ -240,6 +240,9 @@ the pin's own message. Shared worker/offscreen recovery and engine render-functi
 teardown after a disposer throws. It is independent of recovery. On Windows, application iteration
 stalls during the modal window move/resize loop.
 GPU task timing queries and enable requests expose the [native capability result](fidelity.md#semantic-contract).
+Timing refuses tasks whose source passes this port does not reproduce: temporal anti-aliasing and
+screen-space tasks, copies that may take the source's pass-less fast path, and on SDL_GPU the colour
+render and post-process tasks of builds with temporal anti-aliasing.
 
 Same-engine canvases have independent targets, cameras, rectangles and input ownership.
 

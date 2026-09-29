@@ -51,7 +51,8 @@ void write_dawn_post_process_uniforms(DawnState& state, Engine& engine, TaskHand
 }
 
 void encode_dawn_post_process_pass(WGPUCommandEncoder encoder, WGPUTextureView surface_view,
-                                   const PreparedDawnPostProcessPass& prepared) {
+                                   const PreparedDawnPostProcessPass& prepared,
+                                   const WGPUPassTimestampWrites* timestamps) {
     WGPURenderPassColorAttachment attachment = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
     attachment.view = prepared.presents ? surface_view : prepared.output;
     attachment.loadOp = prepared.clear ? WGPULoadOp_Clear : WGPULoadOp_Load;
@@ -59,6 +60,7 @@ void encode_dawn_post_process_pass(WGPUCommandEncoder encoder, WGPUTextureView s
     WGPURenderPassDescriptor pass_descriptor = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
     pass_descriptor.colorAttachmentCount = 1;
     pass_descriptor.colorAttachments = &attachment;
+    pass_descriptor.timestampWrites = timestamps;
     DawnRenderPass post_pass{wgpuCommandEncoderBeginRenderPass(encoder, &pass_descriptor)};
     if (prepared.viewport) {
         const PixelViewport& rectangle = *prepared.viewport;

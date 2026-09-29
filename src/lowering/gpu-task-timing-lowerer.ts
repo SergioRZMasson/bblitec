@@ -30,6 +30,7 @@ const snapshotSchema: PinnedRecordSchema = {
         enabled: { cpp: "enabled" },
         frameIndex: { cpp: "frame_index" },
         tasks: { cpp: "tasks", convert: move },
+        totalDurationMs: { cpp: "total_duration_ms" },
         droppedTaskCount: { cpp: "dropped_task_count" },
         error: { cpp: "error", convert: move },
     },
@@ -64,7 +65,7 @@ export function lowerGpuTaskTiming(context: LoweringContext): LoweredSource {
             // transfer into the snapshot cannot change source observations.
             context.assertFunctionBodyShape(
                 declaration,
-                "{ return { status, supported, enabled, frameIndex, tasks, droppedTaskCount, error }; }",
+                "{ return { status, supported, enabled, frameIndex, tasks, totalDurationMs, droppedTaskCount, error }; }",
                 "GPU task timing snapshot ownership transfer",
             );
         const bindings = new Map<string, PinnedBinding>();
@@ -244,6 +245,7 @@ export function lowerGpuTaskTiming(context: LoweringContext): LoweredSource {
                   frameIndex: "double",
                   tasks: "std::vector<pal::GpuTaskTimingEntry>",
                   droppedTaskCount: "double",
+                  totalDurationMs: "double",
                   error: "std::optional<std::string>",
               }
             : {

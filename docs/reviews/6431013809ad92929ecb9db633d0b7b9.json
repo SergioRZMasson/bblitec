@@ -1,0 +1,87 @@
+{
+    "angles": ["reuse", "simplification", "efficiency", "altitude"],
+    "findings": [
+        {
+            "summary": "Time compute tasks at the encoder the lowered pin calls: ComputeCommandEncoder's begin_compute_pass/begin_mipmap_pass and the pass encoders' end() push the pass's timestamps through a timed_pass hook, replacing time_compute_task_passes, which rebuilt each command list afterwards, merged adjacent source passes and skipped a pass that records no dispatch.",
+            "applied": true
+        },
+        {
+            "summary": "Dawn attaches a task's timestamps to the real pass descriptor, as 1.32 does (DawnPassTimestamps at the caster, ESM blur, depth, colour, geometry, effect, post-process, resolve and blit passes; compute dispatch and mip passes take the neighbouring writes in submit_dawn_compute_commands). Marker passes remain only where no native pass exists: the single-sample resolve copy and a compute pass with no dispatch.",
+            "applied": true
+        },
+        {
+            "summary": "Decide the record-level refusals (screen-space tasks, temporal anti-aliasing post-process, copies) once in GpuTaskTimingSequence::begin for all four drivers; SDL_GPU keeps only its temporal-build deferral refusals at their sites.",
+            "applied": true
+        },
+        {
+            "summary": "Narrow the copy refusal to copies that may take the pin's pass-less fast path (no viewport, no resolve target, a single-sample offscreen colour target and source): viewport, multisampled and swapchain copies are timed as the blit pass the pin records. Formats, sizes and texture usage are not native record facts, so those copies count as possible fast paths.",
+            "applied": true
+        },
+        {
+            "summary": "Guard a missed pass hook: the sequence counts pass() per begun task and throws a logic_error at its end when none was asked for, unless the site declared the task pass-less as the source is (geometry without a camera, the filtered debug copy).",
+            "applied": true
+        },
+        {
+            "summary": "State in the fidelity row that a pass this port omits (thin-instance culling's) is not timed, and correct the row: Dawn attaches timestamps to its passes, SDL_GPU writes them at source pass boundaries outside passes.",
+            "applied": true
+        },
+        {
+            "summary": "Give builds without engine:gpu-task-timing a no-op GpuTaskTimingSequence and frame hooks, so the four drivers lose every #if BBLITE_GPU_TASK_TIMING around pass scopes, refusals, construction and frame begin/finish.",
+            "applied": true
+        },
+        {
+            "summary": "Replace the bespoke Pass RAII class with js::finally: sdl_timed_pass writes the begin timestamp and returns a Finally whose run() is the early close before the utility layer and the depth copy.",
+            "applied": true
+        },
+        {
+            "summary": "Spell the active timing's absence through PinnedBinding.absentCpp instead of a hand-matched !timing hook.",
+            "applied": true
+        },
+        {
+            "summary": "Bind the readback envelope locals with absentCpp and let the shared lowerer test === null against a binding whose declared absence is null, retiring the envelope's dereference and null-comparison hooks (generated timer and audio-disposal lowerings byte-identical).",
+            "applied": true
+        },
+        {
+            "summary": "Drop the endWrite capture: the asserted later-pass declaration lets the return emit end_write(active.end_query_index) directly, as the first-pass return does.",
+            "applied": true
+        },
+        {
+            "summary": "Fold the no-operation map and the four fixed-line statement hooks into one statement table.",
+            "applied": true
+        },
+        {
+            "summary": "Delete the dead timer.records.length and executeTask hooks left from 1.31.1, so a new use in a later pin fails instead of lowering silently.",
+            "applied": true
+        },
+        {
+            "summary": "Assert restoreTimingEncoder's patched-encoder prefix with assertStatementShapes and lower the rest, instead of two phase-gated hooks.",
+            "applied": true
+        },
+        {
+            "summary": "Share one timestamp_write between pass_writes and end_write, and build the timer and active-timing bindings in one loop.",
+            "applied": true
+        },
+        {
+            "summary": "finish_frame moves the frame's records instead of copying them and reserves the next frame's capacity; the lowerer asserts nothing reads timer.records between the source's copy and its clear.",
+            "applied": true
+        },
+        {
+            "summary": "Say why end_task may test the skip rule again: only begin_frame writes it.",
+            "applied": true
+        },
+        {
+            "summary": "Trim the duplicated comments: the shared sequence comment no longer restates the SDL_GPU transport, and Dawn's utility-layer comment went with its explicit end; features.md names SDL_GPU's temporal-build refusals.",
+            "applied": true
+        },
+        {
+            "summary": "complete_readback could move each task name out of the pending readback instead of copying it.",
+            "applied": false,
+            "blockedBy": "Declined: poll() hands the same pending readback to fail_readback when completion throws partway, so moved-from records would become observable there; the saving is one short-string copy per task per frame.",
+            "filedIn": "docs/reviews (declined in this record)"
+        },
+        {
+            "summary": "The timing sequence no longer copies the shadow task's label per graph layer: it holds its scene and reads the label when the task is recorded, where the source reads task.name.",
+            "applied": true
+        }
+    ]
+}

@@ -63,32 +63,29 @@ GpuState::EsmBlur& ensure_esm_blur(GpuState& state, const ShadowGeneratorRecord&
     return blur;
 }
 
-void run_esm_blur(GpuState& state, SDL_GPUCommandBuffer* command, std::uint32_t esm_index) {
+void run_esm_blur(GpuState& state, SDL_GPUCommandBuffer* command, std::uint32_t esm_index,
+                  bool vertical) {
     const GpuState::EsmBlur& blur = state.esm_blurs[esm_index];
     const upstream::EsmShadowResources& resources = upstream::esm_shadow_resources[esm_index];
-    const auto blur_pass = [&](SDL_GPUTexture* into, SDL_GPUTexture* read,
-                               const std::array<float, 4>& direction) {
-        SDL_GPUColorTargetInfo target{};
-        target.texture = into;
-        target.load_op = SDL_GPU_LOADOP_CLEAR;
-        target.store_op = SDL_GPU_STOREOP_STORE;
-        target.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
-        SdlRenderPass pass{SDL_BeginGPURenderPass(command, &target, 1, nullptr)};
-        SDL_BindGPUGraphicsPipeline(pass, blur.pipeline);
-        SDL_GPUTextureSamplerBinding binding{};
-        binding.texture = read;
-        binding.sampler = state.shadow_filtering_sampler;
-        SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-        // `BlurParams` is declared in both stages, so both are pushed.
-        SdlGpuWriteDevice{}.write_vertex_uniform(
-            command, 0, direction.data(), static_cast<Uint32>(direction.size() * sizeof(float)));
-        SdlGpuWriteDevice{}.write_fragment_uniform(
-            command, 0, direction.data(), static_cast<Uint32>(direction.size() * sizeof(float)));
-        count_gpu_draw(SDL_DrawGPUPrimitives, pass, 3, 1, 0, 0);
-        pass.end();
-    };
-    blur_pass(blur.blur_h, blur.source, resources.blur_directions[0]);
-    blur_pass(blur.blur_v, blur.blur_h, resources.blur_directions[1]);
+    const std::array<float, 4>& direction = resources.blur_directions[vertical ? 1 : 0];
+    SDL_GPUColorTargetInfo target{};
+    target.texture = vertical ? blur.blur_v : blur.blur_h;
+    target.load_op = SDL_GPU_LOADOP_CLEAR;
+    target.store_op = SDL_GPU_STOREOP_STORE;
+    target.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
+    SdlRenderPass pass{SDL_BeginGPURenderPass(command, &target, 1, nullptr)};
+    SDL_BindGPUGraphicsPipeline(pass, blur.pipeline);
+    SDL_GPUTextureSamplerBinding binding{};
+    binding.texture = vertical ? blur.blur_h : blur.source;
+    binding.sampler = state.shadow_filtering_sampler;
+    SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+    // `BlurParams` is declared in both stages, so both are pushed.
+    SdlGpuWriteDevice{}.write_vertex_uniform(command, 0, direction.data(),
+                                             static_cast<Uint32>(direction.size() * sizeof(float)));
+    SdlGpuWriteDevice{}.write_fragment_uniform(
+        command, 0, direction.data(), static_cast<Uint32>(direction.size() * sizeof(float)));
+    count_gpu_draw(SDL_DrawGPUPrimitives, pass, 3, 1, 0, 0);
+    pass.end();
 }
 #endif
 

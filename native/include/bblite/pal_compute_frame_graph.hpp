@@ -150,18 +150,15 @@ inline void begin_compute_frame_prefix(Engine& engine, bool shadows_submitted = 
                 record_compute_frame_task(task);
 #if BBLITE_GPU_TASK_TIMING
         if (const auto timer = pal::active_gpu_task_timer(engine)) {
+            encoder->timed_pass = [timer] { return timer->pass_timestamps(false); };
             for (const auto& task : prefix.tasks) {
                 if (!task->execution_enabled)
                     continue;
-                const auto timed = timer->begin_task(task->name);
-                if (timed)
-                    encoder->commands.emplace_back(timed->begin);
+                timer->begin_task();
                 (void)execute_compute_frame_tasks(std::span(&task, 1));
-                if (timed) {
-                    timer->end_task(timed->end, task->name);
-                    encoder->commands.emplace_back(timed->end);
-                }
+                timer->end_task(task->name);
             }
+            encoder->timed_pass = nullptr;
         } else
 #endif
             (void)execute_compute_frame_tasks(prefix.tasks);

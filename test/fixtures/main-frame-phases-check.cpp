@@ -104,6 +104,7 @@ namespace bbl::pal {
 [[noreturn]] void gpu_error(const char* operation) { throw std::runtime_error(operation); }
 [[noreturn]] void dawn_error(const std::string& operation) { throw std::runtime_error(operation); }
 double monotonic_milliseconds() { return 123.0; }
+void begin_gpu_task_timing_frame(Engine&) {}
 struct TestClock {};
 double advance_frame(Engine&, Scene&, TestClock&, double delta) {
     events.push_back("advance");

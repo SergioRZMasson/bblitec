@@ -2,7 +2,6 @@
 // ordered render-target tasks, so this translation unit deliberately has no
 // scene renderer, camera, mesh, material, or image-loader dependency.
 #include <bblite/upstream/pinned_surface.hpp>
-#include <bblite/features/gpu_task_timing.hpp>
 #include <bblite/features/has_effect_task.hpp>
 #include <bblite/features/has_frame_graph_renderer.hpp>
 #include <bblite/features/has_post_process.hpp>
@@ -34,10 +33,8 @@
 #include "pal_sdl_gpu_effect.hpp"
 #endif
 #include "pal_sdl_gpu_shared.hpp"
-#if BBLITE_GPU_TASK_TIMING
 #include <bblite/pal_gpu_task_timing.hpp>
 #include "pal_sdl_gpu_timestamp.hpp"
-#endif
 
 namespace bbl::pal {
 
@@ -406,9 +403,7 @@ public:
         static_cast<void>(
             advance_frame(engine, *context, frame_clock, frame_options.frame_delta_ms));
         begin_measurement();
-#if BBLITE_GPU_TASK_TIMING
         begin_gpu_task_timing_frame(engine);
-#endif
         return FramePreparation::ready;
     }
     bool acquire() {
@@ -431,18 +426,13 @@ public:
     void synchronize() { build_graph(state, engine, width, height); }
     void encode() {
         capture_texture = nullptr;
-#if BBLITE_GPU_TASK_TIMING
-        GpuTaskTimingSequence timing_sequence(
-            engine, [&](const auto& write) { encode_sdl_gpu_timestamp(command, write); });
-#endif
+        GpuTaskTimingSequence timing_sequence(engine);
         for (const TaskHandle handle : context->tasks) {
             FrameTaskRecord& task = handle_at(engine.frame_tasks, handle);
             if (task.execution_enabled == false) {
                 continue;
             }
-#if BBLITE_GPU_TASK_TIMING
             const auto timing_scope = timing_sequence.scoped_task(engine, handle);
-#endif
 #if BBLITE_HAS_EFFECT_TASK
             if (task.kind == FrameTaskKind::effect) {
                 EffectPass& pass = state.effects.at(handle.value);
@@ -467,6 +457,7 @@ public:
                 if (samples != SDL_GPU_SAMPLECOUNT_1) {
                     target.resolve_texture = output.sampled;
                 }
+                const auto effect_timing = sdl_timed_pass(command, timing_sequence.pass());
                 SdlRenderPass render_pass{SDL_BeginGPURenderPass(command, &target, 1, nullptr)};
                 record_effect_pass(command, render_pass, engine, pass, task.effect.effect);
                 render_pass.end();
@@ -477,6 +468,8 @@ public:
 #if BBLITE_HAS_POST_PROCESS
                 if (task.kind == FrameTaskKind::post_process) {
                 for (std::size_t index = 0; index < task.post_process.passes.size(); ++index) {
+                    const auto post_process_timing =
+                        sdl_timed_pass(command, timing_sequence.pass());
                     record_post_process(state, engine, handle, index, command, swapchain, width,
                                         height, capture_texture);
                 }
@@ -502,9 +495,7 @@ public:
         } else if (!command.submit()) {
             gpu_error("SDL_SubmitGPUCommandBuffer frame graph");
         }
-#if BBLITE_GPU_TASK_TIMING
         finish_gpu_task_timing_frame(engine);
-#endif
     }
     void finish_run() {
         if (!SDL_WaitForGPUIdle(state.gpu.device))

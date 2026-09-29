@@ -18,9 +18,7 @@
 #if defined(__linux__) && !defined(__ANDROID__)
 #include "pal_gpu_canvas_targets.hpp"
 #endif
-#if BBLITE_GPU_TASK_TIMING
 #include "pal_dawn_gpu_timestamp.hpp"
-#endif
 #if BBLITE_COMPUTE_SHADERS
 #include "pal_dawn_compute_pipeline.hpp"
 #endif

@@ -1,8 +1,8 @@
 {
   "package": "@babylonjs/lite",
-  "version": "1.31.1",
+  "version": "1.32.0",
   "repository": "https://github.com/BabylonJS/Babylon-Lite.git",
-  "sourceVersion": "7d66215c1c897734a3c2f25bdd15d0e7062ed8f4",
+  "sourceVersion": "2e064d88ec7422af946f8ec7f089ac6519f99295",
   "scenes": [
     {
       "id": "scene1",
@@ -3660,7 +3660,7 @@
         "sha256": "6669eefcaee453bbabe617fda3a2207cb819bc0e6785aadac673fef81c58ba6d",
         "provenance": {
           "source": "reference/ocean/provenance.json",
-          "sha256": "0923a28e46471e0093b243e09d17ad825db0a33bb779c8224361286111b72dbb"
+          "sha256": "008ed3364ede5b2f560071117801ba9dfd6e37fd6edc6a32cd0cfcdd9136ebff"
         }
       },
       "files": [
@@ -3772,7 +3772,7 @@
         {
           "upstreamPath": "lab/lite/src/demos/ocean/timing.ts",
           "source": "corpus/babylon-lite/lab/lite/src/demos/ocean/timing.ts",
-          "sha256": "e79fbd27a783a4871bb813b07f8d7eb9212fe9a2553be79bab997a213f32514d"
+          "sha256": "72afc166beefb178b2b929c4933d1d4a06f7a0b74e4326e28c2fa6e0a2a93e42"
         }
       ]
     },
@@ -4551,7 +4551,7 @@
         "sha256": "7787bf18b0b0aa0f2913bda5d4dac71ded95defd8f82acc60dcc6c679ca83348",
         "provenance": {
           "source": "reference/playroom/provenance.json",
-          "sha256": "e36394f646f937144b071739c17f484b0b7c617ad4dba9a3e1ab8b61e8a9267e"
+          "sha256": "ed9544c4d927d89e5cf04058b8be0e9d2c0eb55d5d67f351835d870d988d3f13"
         }
       },
       "files": [

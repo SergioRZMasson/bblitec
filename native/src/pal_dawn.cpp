@@ -18,7 +18,6 @@
 #include "pal_gpu_shader_passes.hpp"
 #include <bblite/features/compute_frame_graph.hpp>
 #include <bblite/features/device_recovery.hpp>
-#include <bblite/features/gpu_task_timing.hpp>
 #include <bblite/features/has_billboards.hpp>
 #include <bblite/features/has_clustered_lights.hpp>
 #include <bblite/features/has_effect_task.hpp>
@@ -1625,9 +1624,7 @@ public:
         if (request_renderer_restart_if_scene_set_changed(engine, active_registered_scenes)) {
             return FramePreparation::restart;
         }
-#if BBLITE_GPU_TASK_TIMING
         begin_gpu_task_timing_frame(engine);
-#endif
 #if BBLITE_COMPUTE_FRAME_GRAPH
         begin_compute_frame_prefix(engine);
 #endif
@@ -2942,19 +2939,12 @@ public:
                         graph_layer == 0 ? state.meshes : state.overlay_meshes[graph_layer - 1];
                     pass_scene = &graph_scene;
                     pass_meshes = &graph_meshes;
-#if BBLITE_GPU_TASK_TIMING
-                    GpuTaskTimingSequence timing_sequence(
-                        engine,
-                        [&](const auto& write) { encode_dawn_gpu_timestamp(encoder, write); },
-                        &graph_scene);
-#endif
+                    GpuTaskTimingSequence timing_sequence(engine, &graph_scene);
                     for (const TaskHandle handle : graph_scene.tasks) {
                         FrameTaskRecord& task = handle_at(engine.frame_tasks, handle);
                         if (task.execution_enabled == false)
                             continue;
-#if BBLITE_GPU_TASK_TIMING
                         const auto timing_scope = timing_sequence.scoped_task(engine, handle);
-#endif
 #if BBLITE_COMPUTE_FRAME_GRAPH
                         if (task.kind == FrameTaskKind::compute) {
                             if (surface_encoder) {
@@ -3085,6 +3075,8 @@ public:
                                 shadow_descriptor.colorAttachments =
                                     target_record.has_color ? &shadow_color : nullptr;
                                 shadow_descriptor.depthStencilAttachment = &shadow_attachment;
+                                const DawnPassTimestamps caster_timestamps{timing_sequence.pass()};
+                                shadow_descriptor.timestampWrites = caster_timestamps.get();
                                 DawnRenderPass shadow_pass_encoder{
                                     wgpuCommandEncoderBeginRenderPass(encoder, &shadow_descriptor)};
                                 const ShadowGeneratorRecord& shadow_generator = handle_at(
@@ -3108,8 +3100,13 @@ public:
                                 // `renderEsmShadowMap` blurs the map it just drew, in
                                 // two passes, before anything samples it.
                                 if (esm_shadow_index != invalid_handle) {
-                                    run_esm_blur(state, encoder, target.sampled_color_view,
-                                                 esm_shadow_index);
+                                    for (const bool vertical : {false, true}) {
+                                        const DawnPassTimestamps blur_timestamps{
+                                            timing_sequence.pass()};
+                                        run_esm_blur(state, encoder, target.sampled_color_view,
+                                                     esm_shadow_index, vertical,
+                                                     blur_timestamps.get());
+                                    }
                                 }
 #endif
                                 continue;
@@ -3143,6 +3140,8 @@ public:
                                     WGPU_RENDER_PASS_DESCRIPTOR_INIT;
                                 pass_descriptor.colorAttachmentCount = 0;
                                 pass_descriptor.depthStencilAttachment = &depth_attachment;
+                                const DawnPassTimestamps depth_timestamps{timing_sequence.pass()};
+                                pass_descriptor.timestampWrites = depth_timestamps.get();
                                 DawnRenderPass task_pass{
                                     wgpuCommandEncoderBeginRenderPass(encoder, &pass_descriptor)};
                                 set_task_camera_viewport(task_pass, pass_camera, target.width,
@@ -3360,6 +3359,8 @@ public:
                                 }
                                 pass_descriptor.depthStencilAttachment = &depth_attachment;
                             }
+                            const DawnPassTimestamps color_timestamps{timing_sequence.pass()};
+                            pass_descriptor.timestampWrites = color_timestamps.get();
                             DawnRenderPass task_pass{
                                 wgpuCommandEncoderBeginRenderPass(encoder, &pass_descriptor)};
                             set_task_camera_viewport(task_pass, pass_camera, target.width,
@@ -3522,8 +3523,10 @@ public:
                             // Without a camera the task does not execute, not
                             // even its clears.
                             if (upstream::geometry_task_skips(
-                                    geometry_pass_camera(engine, graph_scene)))
+                                    geometry_pass_camera(engine, graph_scene))) {
+                                timing_sequence.passless();
                                 continue;
+                            }
                             DawnGeometryTask& geometry = handle_at(state.geometry_tasks, handle);
                             DawnRenderTask& render_task = handle_at(state.render_tasks, handle);
                             const std::uint32_t samples =
@@ -3581,6 +3584,8 @@ public:
                             pass_descriptor.colorAttachmentCount = color_attachments.size();
                             pass_descriptor.colorAttachments = color_attachments.data();
                             pass_descriptor.depthStencilAttachment = &depth_attachment;
+                            const DawnPassTimestamps geometry_timestamps{timing_sequence.pass()};
+                            pass_descriptor.timestampWrites = geometry_timestamps.get();
                             DawnRenderPass task_pass{
                                 wgpuCommandEncoderBeginRenderPass(encoder, &pass_descriptor)};
                             // Over the task's own attachments, which the frame
@@ -3764,6 +3769,8 @@ public:
                             WGPURenderPassDescriptor descriptor = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
                             descriptor.colorAttachmentCount = 1;
                             descriptor.colorAttachments = &attachment;
+                            const DawnPassTimestamps effect_timestamps{timing_sequence.pass()};
+                            descriptor.timestampWrites = effect_timestamps.get();
                             DawnRenderPass effect_pass{
                                 wgpuCommandEncoderBeginRenderPass(encoder, &descriptor)};
                             record_dawn_effect_pass(effect_pass, pass);
@@ -3775,16 +3782,19 @@ public:
 #if BBLITE_HAS_POST_PROCESS
                         if (task.kind == FrameTaskKind::post_process) {
 #if BBLITE_HAS_TAA
-                            const auto execute_pass = [&](std::size_t child, bool write_uniforms) {
-                                auto prepared = prepare_dawn_post_process_pass(
-                                    state, engine, handle, width, height, child,
-                                    source_texture_view, write_uniforms);
-                                encode_dawn_post_process_pass(encoder, surface_view, prepared);
-                                if (prepared.presents) {
-                                    frame_graph_presented = true;
-                                }
-                                return upstream::post_process_leaf_draw_count();
-                            };
+                            const auto execute_pass =
+                                [&](std::size_t child, bool write_uniforms,
+                                    const WGPUPassTimestampWrites* timestamps = nullptr) {
+                                    auto prepared = prepare_dawn_post_process_pass(
+                                        state, engine, handle, width, height, child,
+                                        source_texture_view, write_uniforms);
+                                    encode_dawn_post_process_pass(encoder, surface_view, prepared,
+                                                                  timestamps);
+                                    if (prepared.presents) {
+                                        frame_graph_presented = true;
+                                    }
+                                    return upstream::post_process_leaf_draw_count();
+                                };
                             if (task.post_process.taa) {
                                 auto& taa = *task.post_process.taa;
                                 const auto source_handle = task.post_process.source_tasks.at(0);
@@ -3829,8 +3839,11 @@ public:
                                 ++taa.execution_count;
                             } else {
                                 for (std::size_t child = 0; child < task.post_process.passes.size();
-                                     ++child)
-                                    execute_pass(child, true);
+                                     ++child) {
+                                    const DawnPassTimestamps post_process_timestamps{
+                                        timing_sequence.pass()};
+                                    execute_pass(child, true, post_process_timestamps.get());
+                                }
                             }
                             continue;
 #endif
@@ -3838,9 +3851,11 @@ public:
                             // plain effect is the same loop over one.
                             for (std::size_t index = 0; index < task.post_process.passes.size();
                                  ++index) {
-                                record_post_process_pass(state, engine, handle, encoder,
-                                                         surface_view, width, height, index,
-                                                         source_texture_view);
+                                const DawnPassTimestamps post_process_timestamps{
+                                    timing_sequence.pass()};
+                                record_post_process_pass(
+                                    state, engine, handle, encoder, surface_view, width, height,
+                                    index, source_texture_view, post_process_timestamps.get());
                                 const RenderTargetRecord& output_record =
                                     engine.render_targets[task.post_process.passes[index]
                                                               .output_target.value];
@@ -3860,11 +3875,15 @@ public:
                         }
 #endif
                         const CopyTaskOptions& copy = task.copy;
-                        if (frame_options.skip_copy_task(copy))
+                        if (frame_options.skip_copy_task(copy)) {
+                            timing_sequence.passless();
                             continue;
+                        }
                         const bool force_full_viewport = frame_options.full_copy_viewport(copy);
                         if (copy.resolve_target.value != invalid_handle &&
                             copy.target.value == invalid_handle) {
+                            // The source's resolve path is always one pass.
+                            const auto resolve_timing = timing_sequence.pass();
                             if (copy.source.source != RenderTextureSource::render_target) {
                                 throw std::runtime_error("Resolve source must be a render target.");
                             }
@@ -3875,7 +3894,10 @@ public:
                             if (!state.multisampled()) {
                                 // Nothing to average: the pinned resolve of a
                                 // single-sample source is the source, so the frame
-                                // graph's resolve step is a texture copy.
+                                // graph's resolve step is a texture copy, whose
+                                // timestamps have marker passes of their own.
+                                if (resolve_timing && resolve_timing->begin)
+                                    encode_dawn_gpu_timestamp(encoder, *resolve_timing->begin);
                                 WGPUTexelCopyTextureInfo copy_source{};
                                 copy_source.texture = resolve_source.color;
                                 WGPUTexelCopyTextureInfo copy_destination{};
@@ -3884,6 +3906,8 @@ public:
                                                           resolve_source.height, 1};
                                 wgpuCommandEncoderCopyTextureToTexture(encoder, &copy_source,
                                                                        &copy_destination, &extent);
+                                if (resolve_timing)
+                                    encode_dawn_gpu_timestamp(encoder, resolve_timing->end);
                                 continue;
                             }
                             WGPURenderPassColorAttachment resolve_attachment =
@@ -3896,6 +3920,8 @@ public:
                                 WGPU_RENDER_PASS_DESCRIPTOR_INIT;
                             pass_descriptor.colorAttachmentCount = 1;
                             pass_descriptor.colorAttachments = &resolve_attachment;
+                            const DawnPassTimestamps resolve_timestamps{resolve_timing};
+                            pass_descriptor.timestampWrites = resolve_timestamps.get();
                             DawnRenderPass resolve_pass{
                                 wgpuCommandEncoderBeginRenderPass(encoder, &pass_descriptor)};
                             wgpuRenderPassEncoderEnd(resolve_pass);
@@ -3922,6 +3948,8 @@ public:
                         WGPURenderPassDescriptor pass_descriptor = WGPU_RENDER_PASS_DESCRIPTOR_INIT;
                         pass_descriptor.colorAttachmentCount = 1;
                         pass_descriptor.colorAttachments = &blit_attachment;
+                        const DawnPassTimestamps blit_timestamps{timing_sequence.pass()};
+                        pass_descriptor.timestampWrites = blit_timestamps.get();
                         DawnRenderPass blit_pass{
                             wgpuCommandEncoderBeginRenderPass(encoder, &pass_descriptor)};
                         WGPURenderPipeline blit_pipeline = blit_pipeline_for(
@@ -4092,9 +4120,7 @@ public:
         submit_dawn_command(state.queue, command);
         command.reset();
         encoder.reset();
-#if BBLITE_GPU_TASK_TIMING
         finish_gpu_task_timing_frame(engine);
-#endif
 #if BBLITE_COMPUTE_FRAME_GRAPH
         finish_compute_frame_prefix(engine);
 #endif
