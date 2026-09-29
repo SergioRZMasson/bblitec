@@ -1138,6 +1138,7 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
                     if (frame_options.test_pass && is_platform_input_event(event) &&
                         !is_replayed_ui_event(event))
                         continue;
+                    end_press_mouse_capture(event);
                     // Mouse motion has no cancelable native default. Keep its
                     // source callbacks ordered in the realm mailbox without
                     // making worker presentation wait for a busy Window realm.
@@ -1149,8 +1150,10 @@ static Iteration<int> window_application_iterations(WorkerEntry initialize, Engi
                             await_input();
                         if (finished)
                             break;
-                        if (!move && batch->default_prevented)
+                        if (!move && batch->default_prevented) {
+                            end_withheld_ui_press(display, event);
                             continue;
+                        }
                     }
                     const bool reaches_canvas = handle_ui_rml_event(*ui, event);
                     // Complete synchronous native-default transactions,

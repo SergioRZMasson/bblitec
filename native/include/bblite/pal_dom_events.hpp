@@ -142,6 +142,7 @@ struct DomInput {
     std::function<std::vector<DomEventTarget>(double, double)> hit_path;
     std::function<std::vector<DomEventTarget>()> focus_path;
     std::function<bool(DomEventTarget)> can_activate;
+    std::function<void()> end_withheld_press;
     std::vector<DomEventTarget> hover_path;
     std::vector<DomEventTarget> pressed_path;
     std::set<double> suppress_compatibility_mouse;

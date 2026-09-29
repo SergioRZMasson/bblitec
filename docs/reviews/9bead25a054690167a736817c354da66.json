@@ -1,0 +1,25 @@
+{
+    "angles": ["reuse", "simplification", "efficiency", "altitude"],
+    "findings": [
+        {
+            "summary": "Pairing presses at RmlUi's pointer-lock filter was one level too shallow: every physical mouse release now ends SDL's capture request in both event drains (end_press_mouse_capture, before DOM listeners, the prevented-default continue and the UI filter), superseding both the per-button mask and a lock-entry SDL_CaptureMouse(false).",
+            "applied": true
+        },
+        {
+            "summary": "A prevented release withholds it from RmlUi too: minecraft's canvas contextmenu preventDefault on an unlocked right-click left SDL_CaptureMouse standing, which takes effect at once; the drain-level release covers it (cdb: SDL_CaptureMouse 1 then 0 for every press).",
+            "applied": true
+        },
+        {
+            "summary": "Delete the pressed-button mirror mask: it went stale on prevented releases and focus loss, and let a relative-mode release reach RmlUi when a listener locked during a UI press; the pointer-lock filter keeps its absolute rule and original comment.",
+            "applied": true
+        },
+        {
+            "summary": "A prevented release on the textarea resize grip left the resize running; the drains call a UI-installed DomInput::end_withheld_press, the grip's own SDL_CaptureMouse(false) is gone (the drains own the release), and the dom-input fixture asserts the hook.",
+            "applied": true
+        },
+        {
+            "summary": "State the capture fact once, at end_press_mouse_capture, instead of a six-line symptom narrative in the filter comment.",
+            "applied": true
+        }
+    ]
+}

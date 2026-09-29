@@ -117,6 +117,11 @@ int main() {
         assert(!send(down));
         assert(!send(up));
         assert(clicks == 1);
+        runtime.resizing = log;
+        pal::end_withheld_ui_press(engine, down);
+        assert(runtime.resizing.value == log.value);
+        pal::end_withheld_ui_press(engine, up);
+        assert(runtime.resizing.value == invalid_handle);
     }
     {
         Engine engine;
