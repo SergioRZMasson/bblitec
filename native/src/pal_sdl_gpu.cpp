@@ -1244,8 +1244,8 @@ public:
 
         vertex_shader.reset();
 #if BBLITE_RENDERER_TRANSMISSION
-        image_processing_vertex_shader.reset();
-        image_processing_fragment_shader.reset();
+        image_processing_vertex.shader.reset();
+        image_processing_fragment.shader.reset();
 #endif
         depth_only_fragment_shader.reset();
         shader_vertex_shaders.clear();
