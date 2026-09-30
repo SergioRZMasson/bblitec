@@ -17,6 +17,7 @@ import {
     parseCanvasCell,
     parsePublishedRows,
     publishedPair,
+    spellingProblems,
     severityColor,
     verifyStatus,
 } from "../src/verify-status.js";
@@ -141,6 +142,40 @@ test("reads the canvas-only pair a coverage cell publishes, in both forms", () =
     assert.equal(parseCanvasCell("BoomBox PBR"), undefined);
 });
 
+test("a measured cell is written full/foreground or pixel-perfect, never spaced or breakable", () => {
+    const row = (sdl: string, dawn: string): string =>
+        `| 1 | <img src="images/scenes/scene1.png" alt="Scene 1" width="160"> | ${sdl} | ${dawn} | BoomBox PBR |`;
+    // A colored cell renders without the spaces, and GitHub squeezes the
+    // narrow columns, so a plain one is unspaced and cannot break.
+    assert.deepEqual(
+        spellingProblems(
+            parsePublishedRows(row("pixel-perfect", "0.000 / 0.001")),
+            "status.md",
+        ).map((problem) => problem.split(":")[1]),
+        ["1 scene1 SDL_GPU", "1 scene1 Dawn"],
+    );
+    const [spaced] = parsePublishedRows(row("0.000 / 0.001", "0.002 / 0.003"));
+    assert.deepEqual(spaced?.values, ["0.000", "0.001", "0.002", "0.003"]);
+    assert.deepEqual(
+        spellingProblems(
+            parsePublishedRows(row("pixel\u2011perfect", "0.000/0.001")),
+        ),
+        [],
+    );
+    // A colored cell is a math span, which never wraps.
+    assert.deepEqual(
+        spellingProblems(
+            parsePublishedRows(
+                row(
+                    "$\\color{#cf222e}{\\textsf{1.143}} / \\color{#9a6700}{\\textsf{0.904}}$",
+                    "pixel\u2011perfect",
+                ),
+            ),
+        ),
+        [],
+    );
+});
+
 test("an exact match publishes pixel-perfect, and a MAD that rounds to zero does not", () => {
     assert.deepEqual(publishedPair(0, 0), ["pixel-perfect", "pixel-perfect"]);
     assert.deepEqual(publishedPair(0.0003, 0.0004), ["0.000", "0.000"]);
@@ -242,7 +277,7 @@ test("checks the published canvas-only pair against the canvas lane's report", (
         );
         const problems = canvasProblems(rows, root, "status.md");
         assert.deepEqual(problems, [
-            "status.md:1 tetris canvas-only Dawn: published 0.001 / 0.002, measured 0.001 / 0.003",
+            "status.md:1 tetris canvas-only Dawn: published 0.001/0.002, measured 0.001/0.003",
         ]);
     } finally {
         rmSync(root, { recursive: true, force: true });
@@ -256,9 +291,9 @@ test("verifyStatus returns the wobble-exempt cells with their newest values inst
         writeFileSync(
             statusPath,
             [
-                '| 2 | <img src="images/scenes/scene2.png" alt="Scene 2" width="160"> | 0.000 / 0.000 | pixel-perfect | Directional Light Sphere |',
-                '| 3 | <img src="images/scenes/scene3.png" alt="Scene 3" width="160"> | pixel-perfect | 0.000 / 0.000 | Fog Boxes |',
-                '| 126 | <img src="images/scenes/scene126.png" alt="Scene 126" width="160"> | 0.000 / 0.001 | 0.002 / 0.005 | Gaussian Splat Shader Plugin |',
+                '| 2 | <img src="images/scenes/scene2.png" alt="Scene 2" width="160"> | 0.000/0.000 | pixel\u2011perfect | Directional Light Sphere |',
+                '| 3 | <img src="images/scenes/scene3.png" alt="Scene 3" width="160"> | pixel\u2011perfect | 0.000/0.000 | Fog Boxes |',
+                '| 126 | <img src="images/scenes/scene126.png" alt="Scene 126" width="160"> | 0.000/0.001 | 0.002/0.005 | Gaussian Splat Shader Plugin |',
             ].join("\n"),
         );
         const parityRoot = join(root, "parity");

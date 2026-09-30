@@ -45,6 +45,8 @@ interface PublishedRow {
     coverage: string;
     /** The published canvas-only pair per backend, when the cell carries one. */
     canvas?: Record<"sdl_gpu" | "dawn", [string, string]>;
+    /** The backends whose measured cell is not written the table's way. */
+    misspelled: string[];
 }
 
 const GREEN = "#1a7f37";
@@ -53,6 +55,16 @@ const RED = "#cf222e";
 
 /** A backend whose capture matches its reference exactly publishes this. */
 export const PIXEL_PERFECT = "pixel-perfect";
+
+/**
+ * How a measured cell is written, so that it reads like a colored one and
+ * stays on one line: a pair is `full/foreground` without spaces (a math
+ * span drops them, and a browser never breaks inside a number), and an
+ * exact match is `pixel-perfect` with a no-break hyphen (U+2011). GitHub
+ * sizes the columns and strips any CSS that could forbid the break, so the
+ * long coverage notes squeeze the narrow columns.
+ */
+const CELL_PIXEL_PERFECT = "pixel\u2011perfect";
 
 /**
  * How the table spells one backend's measured pair: `pixel-perfect` when
@@ -70,15 +82,15 @@ export function publishedPair(
 
 /** A published pair as the table writes it. */
 function pairText(pair: readonly [string, string]): string {
-    return pair[0] === PIXEL_PERFECT ? PIXEL_PERFECT : pair.join(" / ");
+    return pair[0] === PIXEL_PERFECT ? PIXEL_PERFECT : pair.join("/");
 }
 
-/** One backend's published pair: `pixel-perfect` or `full / foreground`. */
-const PAIR = `${PIXEL_PERFECT}|\\d+\\.\\d+ \\/ \\d+\\.\\d+`;
+/** One backend's published pair: `pixel-perfect` or `full/foreground`. */
+const PAIR = `${PIXEL_PERFECT}|\\d+\\.\\d+ ?\\/ ?\\d+\\.\\d+`;
 
 function parsePair(text: string): [string, string] {
     if (text === PIXEL_PERFECT) return [PIXEL_PERFECT, PIXEL_PERFECT];
-    const [full, foreground] = text.split(" / ");
+    const [full, foreground] = text.split(/ ?\/ ?/);
     return [full!, foreground!];
 }
 
@@ -92,7 +104,7 @@ export function severityColor(value: number): string {
 /**
  * The canvas-only pair a coverage cell publishes, in either of the two
  * forms the table uses: one pair per backend, or one pair "on both
- * backends". A pair is `full / foreground` or `pixel-perfect`, and the
+ * backends". A pair is `full/foreground` or `pixel-perfect`, and the
  * `MAD` after "canvas-only" is optional (it reads oddly before
  * `pixel-perfect`).
  */
@@ -130,21 +142,28 @@ export function parsePublishedRows(status: string): PublishedRow[] {
         // in the green band prints plain, and a cell holding any
         // yellow/red value keeps the colored math span. (GitHub stops
         // rendering math expressions after a few hundred per page, so the
-        // table cannot colour its default state.)
+        // table cannot colour its default state.) The first two are read
+        // in any spelling, so a misspelled one is reported, not skipped.
         const colors: string[] = [];
         const values: string[] = [];
+        const misspelled: string[] = [];
         for (const cell of line.matchAll(
-            /\| (?:(pixel-perfect)|([0-9.]+) \/ ([0-9.]+)|\$\\color\{(#[0-9a-f]{6})\}\{\\textsf\{([0-9.]+)\}\} \/ \\color\{(#[0-9a-f]{6})\}\{\\textsf\{([0-9.]+)\}\}\$)(?= \|)/g,
+            /\| (?:(?<perfect>pixel[-\u2011]perfect)|(?<full>[0-9.]+)(?<separator>[ \u00a0]*\/[ \u00a0]*)(?<foreground>[0-9.]+)|\$\\color\{(?<fullColor>#[0-9a-f]{6})\}\{\\textsf\{(?<fullMath>[0-9.]+)\}\} \/ \\color\{(?<foregroundColor>#[0-9a-f]{6})\}\{\\textsf\{(?<foregroundMath>[0-9.]+)\}\}\$)(?= \|)/g,
         )) {
-            if (cell[1] !== undefined) {
+            const group = cell.groups!;
+            const backend = values.length === 0 ? "SDL_GPU" : "Dawn";
+            if (group.perfect !== undefined) {
                 colors.push(GREEN, GREEN);
                 values.push(PIXEL_PERFECT, PIXEL_PERFECT);
-            } else if (cell[2] !== undefined) {
+                if (group.perfect !== CELL_PIXEL_PERFECT)
+                    misspelled.push(backend);
+            } else if (group.full !== undefined) {
                 colors.push(GREEN, GREEN);
-                values.push(cell[2], cell[3]!);
+                values.push(group.full, group.foreground!);
+                if (group.separator !== "/") misspelled.push(backend);
             } else {
-                colors.push(cell[4]!, cell[6]!);
-                values.push(cell[5]!, cell[7]!);
+                colors.push(group.fullColor!, group.foregroundColor!);
+                values.push(group.fullMath!, group.foregroundMath!);
             }
         }
         if (values.length !== 4) continue;
@@ -157,10 +176,24 @@ export function parsePublishedRows(status: string): PublishedRow[] {
             colors,
             values,
             coverage,
+            misspelled,
             ...(canvas !== undefined ? { canvas } : {}),
         });
     }
     return rows;
+}
+
+/** The measured cells not written the way the table writes them. */
+export function spellingProblems(
+    rows: readonly PublishedRow[],
+    statusPath = "docs/status.md",
+): string[] {
+    return rows.flatMap((row) =>
+        row.misspelled.map(
+            (backend) =>
+                `${statusPath}:${row.line} ${row.sceneId} ${backend}: write the cell full/foreground without spaces, or pixel-perfect with a no-break hyphen (U+2011), as the colored cells read and so that it cannot wrap.`,
+        ),
+    );
 }
 
 /**
@@ -372,6 +405,7 @@ export function verifyStatus(options: VerifyStatusOptions = {}): StatusVerdict {
     }
     problems.push(...outOfOrderRows(rows, statusPath));
     problems.push(...coverageProblems(rows, statusPath));
+    problems.push(...spellingProblems(rows, statusPath));
     problems.push(...canvasProblems(rows, canvasRoot, statusPath));
     const columns = [
         "SDL_GPU full",
