@@ -48,7 +48,7 @@ import {
 import { CompileError } from "./compile-error.js";
 import { httpResponseProperty } from "./http.js";
 import { errorValue, thrownMessage } from "./error-values.js";
-import { renderClosure } from "./closure-captures.js";
+import { renderClosure, type NativeCaptureBinding } from "./closure-captures.js";
 import { cppIdentifierPattern } from "../cpp-literals.js";
 import { pinOperand } from "./evaluation-order.js";
 import { sceneRelativeSourceLabel } from "../source-location.js";
@@ -2039,13 +2039,14 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
      *    itself miss composes its flag into the result's;
      *  - an `optional(T)` left evaluates once into a temporary and
      *    selects natively. Scalar alternatives use the expression's joined
-     *    type. The right side and its preparation stay inside the selection,
-     *    so they are evaluated only when the left is nullish;
+     *    type;
      *  - a left the model already proves non-nullish (a number, boolean,
      *    string, or non-optional data value) IS the result, and the dead
      *    right side is discarded exactly as JavaScript never evaluates
      *    it.
      *
+     * In both selecting arms the right side and its preparation stay inside
+     * the selection, so they are evaluated only when the left is nullish.
      * Anything else returns undefined and the caller's refusal names the
      * routes.
      */
@@ -2153,7 +2154,42 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
             if (leftFound === "true") {
                 return left;
             }
-            const fallback = this.context.compileValue(expression.right);
+            // The fallback runs only on a miss, so what it emits (a pinned
+            // call result, say) stays inside the arm the select takes.
+            let compiledFallback: Value | undefined;
+            const fallbackLines = this.context.captureEmittedLines(() => {
+                this.context.enterRuntimeControlFlow();
+                try {
+                    compiledFallback = this.context.compileValue(
+                        expression.right,
+                    );
+                } finally {
+                    this.context.leaveRuntimeControlFlow();
+                }
+            });
+            const fallback = compiledFallback!;
+            const fallbackArm = (
+                type: DataType | undefined,
+                spell: () => string,
+            ): string => {
+                let cpp = "";
+                const lines = this.context.captureEmittedLines(() => {
+                    this.context.enterRuntimeControlFlow();
+                    try {
+                        cpp = spell();
+                    } finally {
+                        this.context.leaveRuntimeControlFlow();
+                    }
+                });
+                const arm = [...fallbackLines, ...lines];
+                const returned =
+                    type === undefined
+                        ? ""
+                        : ` -> ${this.context.dataTypes.cppType(type)}`;
+                return arm.length === 0
+                    ? cpp
+                    : `([&]()${returned} {\n${arm.join("\n")}\nreturn ${cpp};\n}())`;
+            };
             // A scalar element a bounds check found (`xs[0] ?? fallback`
             // through a span) selects its value or the fallback.
             if (
@@ -2165,10 +2201,13 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                     left.dataType.kind === "enum") &&
                 fallback.kind !== "json-null"
             ) {
-                const fallbackCpp = this.compileKnownValueForSink(
-                    fallback,
-                    left.dataType,
-                    expression.right,
+                const type = left.dataType;
+                const fallbackCpp = fallbackArm(type, () =>
+                    this.compileKnownValueForSink(
+                        fallback,
+                        type,
+                        expression.right,
+                    ),
                 );
                 return this.leafValue(
                     `(${leftFound} ? ${left.cpp} : ${fallbackCpp})`,
@@ -2224,11 +2263,12 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                 left.dataType?.kind === "struct" &&
                 fallback.kind === "record"
             ) {
+                const type = left.dataType;
                 return {
                     ...this.leafValue(
                         `(${leftFound} ? ${left.cpp} : ` +
-                            `${this.compileKnownValueForSink(fallback, left.dataType, expression.right)})`,
-                        left.dataType,
+                            `${fallbackArm(type, () => this.compileKnownValueForSink(fallback, type, expression.right))})`,
+                        type,
                     ),
                     freshData: true,
                 };
@@ -2248,7 +2288,7 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                         ...this.leafValue(
                             `(${leftFound} ? ` +
                                 `${this.compileKnownValueForSink(left, common, expression.left)} : ` +
-                                `${this.compileKnownValueForSink(fallback, common, expression.right)})`,
+                                `${fallbackArm(common, () => this.compileKnownValueForSink(fallback, common, expression.right))})`,
                             common,
                         ),
                         freshData: true,
@@ -2268,12 +2308,40 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
             // not-found guard then reads. Both operands are guarded
             // temporaries, so the select is safe either way.
             const fallbackFound = presenceFlagCpp(fallback);
-            const composedFound =
+            let selectedCpp = `(${leftFound} ? ${left.cpp} : ${fallbackArm(left.dataType, () => fallback.cpp)})`;
+            let composedFound =
                 fallbackFound !== undefined
                     ? `(${leftFound} || ${fallbackFound})`
                     : undefined;
+            let selectionCaptures: NativeCaptureBinding[] = [];
+            if (fallbackFound !== undefined && fallbackLines.length > 0) {
+                // The handle and its flag are both read after the select,
+                // while the fallback's preparation must run only on a miss:
+                // select both once, as a pair.
+                const selection =
+                    this.context.allocateTemporaryCppName("nullish_selection");
+                this.context.emit({
+                    kind: "declaration",
+                    type: "const auto",
+                    name: selection,
+                    initializer:
+                        `([&]() -> std::pair<std::remove_cvref_t<decltype(${left.cpp})>, bool> {\n` +
+                        `if (${leftFound}) return {${left.cpp}, true};\n` +
+                        `${fallbackLines.join("\n")}\n` +
+                        `return {${fallback.cpp}, ${fallbackFound}};\n}())`,
+                    attributes: "[[maybe_unused]] ",
+                });
+                selectionCaptures = [
+                    this.context.registerNativeConstBinding(selection),
+                ];
+                selectedCpp = `${selection}.first`;
+                composedFound = `${selection}.second`;
+            }
             return valueForKind(left.kind, {
-                cpp: `(${leftFound} ? ${left.cpp} : ` + `${fallback.cpp})`,
+                cpp: selectedCpp,
+                ...(selectionCaptures.length > 0
+                    ? { nativeBinding: true, nativeCaptures: selectionCaptures }
+                    : {}),
                 ...(left.dataType !== undefined
                     ? { dataType: left.dataType }
                     : {}),
