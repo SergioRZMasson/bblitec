@@ -4606,14 +4606,14 @@ const sceneInputs: readonly SceneInput[] = [
         title: "Babylon Lite Native - Platformer",
         parity: {
             referenceFrame: 180,
-            // Measured 0.773 / 0.773 SDL_GPU and 0.770 / 0.770 Dawn; the
-            // residual is text rasterization (docs/ui.md).
+            // Measured 0.803 / 0.803 on both backends; the residual is
+            // text rasterization (docs/ui.md).
             maxFullMad: 1.05,
             maxForegroundMad: 1.05,
-            // Canvas-only lane: 0.004 / 0.004 SDL_GPU and 0.000 / 0.000
-            // Dawn (docs/status.md row note); the sprite HUD's effect clock
+            // Canvas-only lane: 0.000 / 0.000 on both backends
+            // (docs/status.md row note); the sprite HUD's effect clock
             // carries the exact double delta.
-            canvasThresholds: { maxFullMad: 0.05, maxForegroundMad: 0.05 },
+            canvasThresholds: { maxFullMad: 0.002, maxForegroundMad: 0.002 },
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
             nativeEnvironment: fixedCaptureEnvironment(),
@@ -4722,8 +4722,11 @@ const sceneInputs: readonly SceneInput[] = [
         title: "Babylon Lite Native - Freeciv",
         parity: {
             referenceFrame: 180,
-            maxFullMad: 0.5,
-            maxForegroundMad: 0.5,
+            // Measured 0.115 / 0.113 on both backends: the map, its
+            // sprites and the wandering animals match, and the residual is
+            // the DOM city labels' text rasterization (docs/ui.md).
+            maxFullMad: 0.2,
+            maxForegroundMad: 0.2,
             backgroundColor: [38, 74, 115],
             backgroundThreshold: 30,
             nativeEnvironment: fixedCaptureEnvironment(),
@@ -4846,7 +4849,7 @@ const sceneInputs: readonly SceneInput[] = [
             referenceFrame: 180,
             maxFullMad: 1.2,
             maxForegroundMad: 1.2,
-            canvasThresholds: { maxFullMad: 0.01, maxForegroundMad: 0.01 },
+            canvasThresholds: { maxFullMad: 0.002, maxForegroundMad: 0.002 },
             backgroundColor: [179, 209, 235],
             backgroundThreshold: 30,
             nativeEnvironment: fixedCaptureEnvironment(),
@@ -4863,15 +4866,14 @@ const sceneInputs: readonly SceneInput[] = [
             // Both temporal effects accumulate 64 samples from a stable
             // view, so the convention's frame 180 is well past convergence
             // and the producer phase is the same on both sides. The
-            // canvas is within one count of the golden on SDL_GPU and
-            // byte-exact on Dawn; the 0.373 / 0.455 full-page residual is
-            // the three retained-UI toggle buttons (glyph rasterization,
-            // docs/ui.md), where the two backends agree to a thousandth,
-            // so one gate pair covers both.
+            // canvas is byte-exact on both backends; the 0.361 / 0.440
+            // full-page residual is the three retained-UI toggle buttons
+            // (glyph rasterization, docs/ui.md), where the two backends
+            // agree to a thousandth, so one gate pair covers both.
             referenceFrame: 180,
             maxFullMad: 0.41,
             maxForegroundMad: 0.5,
-            canvasThresholds: { maxFullMad: 0.01, maxForegroundMad: 0.01 },
+            canvasThresholds: { maxFullMad: 0.002, maxForegroundMad: 0.002 },
             // The demo clears to 0.025 grey, which is 6 in every channel;
             // the box's own darkest walls sit well above 14, so a tight
             // radius keeps them in the foreground.
