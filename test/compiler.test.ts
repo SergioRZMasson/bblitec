@@ -6524,7 +6524,7 @@ test("accumulates repeated metallic-reflectance setter fields", () => {
     );
 });
 
-test("refuses unsupported metallic-reflectance setter inputs", () => {
+test("accepts an sRGB metallic-reflectance map and refuses unsupported setter inputs", () => {
     const compileSetter = (textureSetup: string, options: string) =>
         compileSource(
             `
@@ -19431,11 +19431,18 @@ test("a mesh search by name selects at run time, with an indexed fallback and th
         result.cpp,
         /std::string\([^\n]*\.name\) == std::string\("hero"\)/,
     );
-    assert.match(result.cpp, /_found_\d+ \? \w*_match_\d+ : \w*_at_\d+/);
-    // ...and the fallback is the guarded element read whose flag
-    // composes into the scene's own not-found guard.
+    assert.match(
+        result.cpp,
+        /if \(\w*_found_\d+\) return std::pair<[^\n]*>\{\w*_match_\d+, true\};/,
+    );
+    // ...and the fallback is the guarded element read, prepared only on a
+    // miss, whose flag is selected with it for the scene's own guard.
     assert.match(result.cpp, /_present_\d+ = \w+ < v_scene\.meshes\.size\(\)/);
-    assert.match(result.cpp, /_found_\d+ \|\| \w*_present_\d+/);
+    assert.match(
+        result.cpp,
+        /return std::pair<[^\n]*>\{\w*_at_\d+, \w*_present_\d+\};/,
+    );
+    assert.match(result.cpp, /= v_bblite_nullish_selection_\d+\.second;/);
 });
 
 test("fuses a mesh-material map/find and replaces an asset occlusion texture before startup", () => {

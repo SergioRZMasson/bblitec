@@ -53,6 +53,7 @@ import { isJsonValue } from "./json-bridge.js";
 import { excludesObjectColour } from "./type-facts.js";
 import { conditionComparison } from "./comparisons.js";
 import type { EvaluationOrder } from "./evaluation-order.js";
+import type { DataLowerer } from "./data-lowering.js";
 import {
     isAssignmentExpression,
     isUpdateExpression,
@@ -152,6 +153,11 @@ export class StaticEvaluator {
         /** Reads a compiled number into a temporary where it stands. */
         private readonly pinNumber: (cpp: string) => string,
         private readonly evaluationOrder: EvaluationOrder,
+        /** Short-circuit arms whose preparation stays inside the arm. */
+        private readonly arms: Pick<
+            DataLowerer,
+            "compileArm" | "armExpression"
+        >,
     ) {}
 
     /**
@@ -666,12 +672,25 @@ export class StaticEvaluator {
                 );
             }
             if (unwrapped.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
-                // Numeric `a || b`: JavaScript falls through on 0 and NaN.
-                // Both operands evaluate eagerly (reached uses are pure).
-                const compiled = `bbl::js::or_number(${this.compileNumber(
-                    unwrapped.left,
-                    "double",
-                )}, ${this.compileNumber(unwrapped.right, "double")})`;
+                // Numeric `a || b`: JavaScript falls through on 0 and NaN,
+                // and evaluates the right operand only then.
+                const left = this.compileNumber(unwrapped.left, "double");
+                const right = this.arms.compileArm(() =>
+                    this.compileNumber(unwrapped.right, "double"),
+                );
+                const compiled =
+                    right.lines.length === 0
+                        ? `bbl::js::or_number(${left}, ${right.value})`
+                        : this.arms.armExpression(
+                              unwrapped.right,
+                              [
+                                  `const double left = ${left};`,
+                                  "if (bbl::js::number_truthy(left)) return left;",
+                                  ...right.lines,
+                              ],
+                              right.value,
+                              { kind: "number" },
+                          );
                 this.onJsData();
                 return precision === "float"
                     ? `static_cast<float>(${compiled})`
