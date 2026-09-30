@@ -228,6 +228,9 @@ void release(GpuState& state) {
     if (state.transmission_sampler) {
         SDL_ReleaseGPUSampler(state.device, state.transmission_sampler);
     }
+    if (state.transmission_grab_sampler) {
+        SDL_ReleaseGPUSampler(state.device, state.transmission_grab_sampler);
+    }
 #endif
     if (state.ground_sampler) {
         SDL_ReleaseGPUSampler(state.device, state.ground_sampler);
@@ -296,6 +299,9 @@ void release(GpuState& state) {
 #if BBLITE_RENDERER_TRANSMISSION
     if (state.image_processing_pipeline) {
         SDL_ReleaseGPUGraphicsPipeline(state.device, state.image_processing_pipeline);
+    }
+    if (state.transmission_grab_pipeline) {
+        SDL_ReleaseGPUGraphicsPipeline(state.device, state.transmission_grab_pipeline);
     }
 #endif
     for (SDL_GPUGraphicsPipeline* pipeline : state.depth_only_pipelines) {
@@ -787,6 +793,20 @@ public:
         auto& image_processing_fragment_shader = image_processing_fragment.shader;
         state.image_processing_params_slot =
             stage_uniform_slot(image_processing_fragment.slots, "p");
+        // The grab's own arms (transmission.ts getBlitPipeline), selected by
+        // the same sample count: `BLIT_MSAA_SHADER` loads and averages each
+        // texel's samples before its bilinear mix, `BLIT_SHADER` samples the
+        // single-sample colour through the bilinear sampler.
+        const std::string grab_stem =
+            per_sample_image_processing ? "transmission-grab" : "transmission-grab-single";
+        PinnedStage grab_vertex =
+            transmission_enabled
+                ? load_pinned_stage(state.device, grab_stem + ".vert", SDL_GPU_SHADERSTAGE_VERTEX)
+                : PinnedStage{};
+        PinnedStage grab_fragment =
+            transmission_enabled
+                ? load_pinned_stage(state.device, grab_stem + ".frag", SDL_GPU_SHADERSTAGE_FRAGMENT)
+                : PinnedStage{};
 #endif
         const upstream::RenderFeatures render_features =
             upstream::build_render_features(scene, engine);
@@ -993,6 +1013,39 @@ public:
                 state.device, image_processing_vertex_shader, &image_processing_info);
             if (!state.image_processing_pipeline) {
                 gpu_error("SDL_CreateGPUGraphicsPipeline image processing");
+            }
+        }
+        if (grab_vertex.shader && grab_fragment.shader) {
+            SDL_GPUColorTargetDescription grab_target{};
+            grab_target.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+            SDL_GPUGraphicsPipelineCreateInfo grab_info{};
+            grab_info.vertex_shader = grab_vertex.shader.get();
+            grab_info.fragment_shader = grab_fragment.shader.get();
+            grab_info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+            grab_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+            grab_info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+            grab_info.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
+            grab_info.target_info.color_target_descriptions = &grab_target;
+            grab_info.target_info.num_color_targets = 1;
+            state.transmission_grab_pipeline =
+                create_sdl_gpu_graphics_pipeline(state.device, grab_vertex.shader, &grab_info);
+            if (!state.transmission_grab_pipeline) {
+                gpu_error("SDL_CreateGPUGraphicsPipeline transmission grab");
+            }
+            if (!per_sample_image_processing) {
+                // resource/samplers.ts getBilinearSampler: linear filters,
+                // every other field the WebGPU default.
+                SDL_GPUSamplerCreateInfo bilinear{};
+                bilinear.min_filter = SDL_GPU_FILTER_LINEAR;
+                bilinear.mag_filter = SDL_GPU_FILTER_LINEAR;
+                bilinear.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+                bilinear.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+                bilinear.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+                bilinear.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+                bilinear.max_lod = 32.0f;
+                state.transmission_grab_sampler = SDL_CreateGPUSampler(state.device, &bilinear);
+                if (!state.transmission_grab_sampler)
+                    gpu_error("SDL_CreateGPUSampler transmission grab");
             }
         }
 #endif
@@ -3738,18 +3791,27 @@ public:
                         // the refraction texture with its mip chain, and
                         // resume loading what was stored.
                         pass.end();
-                        SDL_GPUBlitInfo transmission_blit{};
-                        transmission_blit.source = SDL_GPUBlitRegion{
-                            state.color, 0, 0, 0, 0, width, height,
-                        };
-                        transmission_blit.destination = SDL_GPUBlitRegion{
-                            state.transmission_color,  0, 0, 0, 0, state.transmission_width,
-                            state.transmission_height,
-                        };
-                        transmission_blit.load_op = SDL_GPU_LOADOP_DONT_CARE;
-                        transmission_blit.flip_mode = SDL_FLIP_NONE;
-                        transmission_blit.filter = SDL_GPU_FILTER_LINEAR;
-                        SDL_BlitGPUTexture(command, &transmission_blit);
+                        SDL_GPUColorTargetInfo grab_target{};
+                        grab_target.texture = state.transmission_color;
+                        grab_target.load_op = SDL_GPU_LOADOP_CLEAR;
+                        grab_target.store_op = SDL_GPU_STOREOP_STORE;
+                        {
+                            SdlRenderPass grab_pass{
+                                SDL_BeginGPURenderPass(command, &grab_target, 1, nullptr)};
+                            SDL_BindGPUGraphicsPipeline(grab_pass,
+                                                        state.transmission_grab_pipeline);
+                            if (multisampled) {
+                                // A Texture2DMS is Load()-ed and carries no
+                                // sampler: it binds as a storage texture.
+                                SDL_BindGPUFragmentStorageTextures(grab_pass, 0, &state.msaa_color,
+                                                                   1);
+                            } else {
+                                const SDL_GPUTextureSamplerBinding source{
+                                    state.color, state.transmission_grab_sampler};
+                                SDL_BindGPUFragmentSamplers(grab_pass, 0, &source, 1);
+                            }
+                            count_gpu_draw(SDL_DrawGPUPrimitives, grab_pass, 3, 1, 0, 0);
+                        }
                         generate_texture_mipmaps(state.device, command, state.transmission_color,
                                                  state.transmission_width,
                                                  state.transmission_height,
