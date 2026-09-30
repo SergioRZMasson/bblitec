@@ -4610,7 +4610,7 @@ const sceneInputs: readonly SceneInput[] = [
             // text rasterization (docs/ui.md).
             maxFullMad: 1.05,
             maxForegroundMad: 1.05,
-            // Canvas-only lane: 0.000 / 0.000 on both backends
+            // Canvas-only lane: pixel-perfect on both backends
             // (docs/status.md row note); the sprite HUD's effect clock
             // carries the exact double delta.
             canvasThresholds: { maxFullMad: 0.002, maxForegroundMad: 0.002 },
@@ -4642,12 +4642,12 @@ const sceneInputs: readonly SceneInput[] = [
         nativeHostUi: "ui/racer-host.json",
         parity: {
             referenceFrame: 180,
-            // Measured 0.654 / 0.654 on both backends, all of it retained
-            // HUD text (the canvas-only lane below is 0.003), so the gate
+            // Measured 0.466 / 0.466 on both backends, all of it retained
+            // HUD text (the canvas-only lane below is 0.004), so the gate
             // sits just above it.
             maxFullMad: 0.7,
             maxForegroundMad: 0.7,
-            // Canvas-only lane: 0.003 / 0.003 on both backends
+            // Canvas-only lane: 0.004 / 0.004 on both backends
             // (docs/status.md row note); the 0.5 pair is the canvas-golden
             // era's own enforced gate.
             canvasThresholds: { maxFullMad: 0.5, maxForegroundMad: 0.5 },

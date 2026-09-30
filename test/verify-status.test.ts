@@ -16,6 +16,7 @@ import {
     outOfOrderRows,
     parseCanvasCell,
     parsePublishedRows,
+    publishedPair,
     severityColor,
     verifyStatus,
 } from "../src/verify-status.js";
@@ -140,6 +141,38 @@ test("reads the canvas-only pair a coverage cell publishes, in both forms", () =
     assert.equal(parseCanvasCell("BoomBox PBR"), undefined);
 });
 
+test("an exact match publishes pixel-perfect, and a MAD that rounds to zero does not", () => {
+    assert.deepEqual(publishedPair(0, 0), ["pixel-perfect", "pixel-perfect"]);
+    assert.deepEqual(publishedPair(0.0003, 0.0004), ["0.000", "0.000"]);
+    assert.deepEqual(publishedPair(0, 0.0004), ["0.000", "0.000"]);
+    const [row] = parsePublishedRows(
+        '| 1 | <img src="images/scenes/scene1.png" alt="Scene 1" width="160"> | pixel-perfect | 0.000 / 0.001 | BoomBox PBR |',
+    );
+    assert.deepEqual(row?.values, [
+        "pixel-perfect",
+        "pixel-perfect",
+        "0.000",
+        "0.001",
+    ]);
+    assert.deepEqual(row?.colors, ["#1a7f37", "#1a7f37", "#1a7f37", "#1a7f37"]);
+    assert.deepEqual(
+        parseCanvasCell("canvas-only: pixel-perfect on both backends."),
+        {
+            sdl_gpu: ["pixel-perfect", "pixel-perfect"],
+            dawn: ["pixel-perfect", "pixel-perfect"],
+        },
+    );
+    assert.deepEqual(
+        parseCanvasCell(
+            "canvas-only MAD: SDL_GPU 0.000 / 0.000, Dawn pixel-perfect.",
+        ),
+        {
+            sdl_gpu: ["0.000", "0.000"],
+            dawn: ["pixel-perfect", "pixel-perfect"],
+        },
+    );
+});
+
 test("a numbered row's coverage cell carries the registry name, commentary after ; or .", () => {
     assert.ok(coverageMatches("BoomBox PBR", "Scene 1 - BoomBox PBR"));
     assert.ok(
@@ -223,7 +256,8 @@ test("verifyStatus returns the wobble-exempt cells with their newest values inst
         writeFileSync(
             statusPath,
             [
-                '| 3 | <img src="images/scenes/scene3.png" alt="Scene 3" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Fog Boxes |',
+                '| 2 | <img src="images/scenes/scene2.png" alt="Scene 2" width="160"> | 0.000 / 0.000 | pixel-perfect | Directional Light Sphere |',
+                '| 3 | <img src="images/scenes/scene3.png" alt="Scene 3" width="160"> | pixel-perfect | 0.000 / 0.000 | Fog Boxes |',
                 '| 126 | <img src="images/scenes/scene126.png" alt="Scene 126" width="160"> | 0.000 / 0.001 | 0.002 / 0.005 | Gaussian Splat Shader Plugin |',
             ].join("\n"),
         );
@@ -231,6 +265,7 @@ test("verifyStatus returns the wobble-exempt cells with their newest values inst
         for (const [id, values] of [
             ["scene126", [0.0004, 0.0012, 0.0016, 0.0012]],
             ["scene3", [0, 0, 0, 0.0007]],
+            ["scene2", [0, 0, 0.0001, 0.0002]],
         ] as const) {
             mkdirSync(join(parityRoot, id), { recursive: true });
             writeFileSync(
@@ -261,9 +296,15 @@ test("verifyStatus returns the wobble-exempt cells with their newest values inst
             exempt[3]!,
             /scene126 Dawn foreground: wobble-exempt, published 0.005, newest 0.001 \(differs\)/,
         );
-        // Scene 3 is compared, and its Dawn foreground moved.
+        // Scene 3 is compared, and its Dawn foreground moved. Scene 2 swapped
+        // its claims: the exact SDL_GPU capture must read pixel-perfect, and
+        // the Dawn one that merely rounds to 0.000 must not.
         assert.deepEqual(problems, [
-            `${statusPath}:1 scene3 Dawn foreground: published 0.000, measured 0.001`,
+            `${statusPath}:1 scene2 SDL_GPU full: published 0.000, measured pixel-perfect`,
+            `${statusPath}:1 scene2 SDL_GPU foreground: published 0.000, measured pixel-perfect`,
+            `${statusPath}:1 scene2 Dawn full: published pixel-perfect, measured 0.000`,
+            `${statusPath}:1 scene2 Dawn foreground: published pixel-perfect, measured 0.000`,
+            `${statusPath}:2 scene3 Dawn foreground: published 0.000, measured 0.001`,
         ]);
     } finally {
         rmSync(root, { recursive: true, force: true });

@@ -8,7 +8,9 @@
 // keep claiming a value the code does not produce. This turns the table
 // into data the pipeline checks rather than prose it trusts:
 //
-//   * every measured cell against the newest parity report, except the
+//   * every measured cell against the newest parity report (a backend
+//     that matches its reference exactly reads `pixel-perfect`, and one
+//     that does not never does, however small its MAD), except the
 //     cells of the scenes `scene-neutrality.ts` measures as wobbling —
 //     those are printed with their newest value instead, so the owner can
 //     mark them, and only their severity colour is checked (the wobble is
@@ -49,6 +51,37 @@ const GREEN = "#1a7f37";
 const YELLOW = "#9a6700";
 const RED = "#cf222e";
 
+/** A backend whose capture matches its reference exactly publishes this. */
+export const PIXEL_PERFECT = "pixel-perfect";
+
+/**
+ * How the table spells one backend's measured pair: `pixel-perfect` when
+ * both MADs are exactly zero, else each to three decimals -- so a MAD
+ * below 0.0005 still prints 0.000 rather than claiming an exact match.
+ */
+export function publishedPair(
+    fullMad: number,
+    foregroundMad: number,
+): [string, string] {
+    return fullMad === 0 && foregroundMad === 0
+        ? [PIXEL_PERFECT, PIXEL_PERFECT]
+        : [fullMad.toFixed(3), foregroundMad.toFixed(3)];
+}
+
+/** A published pair as the table writes it. */
+function pairText(pair: readonly [string, string]): string {
+    return pair[0] === PIXEL_PERFECT ? PIXEL_PERFECT : pair.join(" / ");
+}
+
+/** One backend's published pair: `pixel-perfect` or `full / foreground`. */
+const PAIR = `${PIXEL_PERFECT}|\\d+\\.\\d+ \\/ \\d+\\.\\d+`;
+
+function parsePair(text: string): [string, string] {
+    if (text === PIXEL_PERFECT) return [PIXEL_PERFECT, PIXEL_PERFECT];
+    const [full, foreground] = text.split(" / ");
+    return [full!, foreground!];
+}
+
 /** The severity bands documented above the table. */
 export function severityColor(value: number): string {
     if (value >= 1) return RED;
@@ -59,27 +92,27 @@ export function severityColor(value: number): string {
 /**
  * The canvas-only pair a coverage cell publishes, in either of the two
  * forms the table uses: one pair per backend, or one pair "on both
- * backends".
+ * backends". A pair is `full / foreground` or `pixel-perfect`, and the
+ * `MAD` after "canvas-only" is optional (it reads oddly before
+ * `pixel-perfect`).
  */
 export function parseCanvasCell(
     coverage: string,
 ): PublishedRow["canvas"] | undefined {
-    const perBackend =
-        /canvas-only MAD: SDL_GPU (\d+\.\d+) \/ (\d+\.\d+), Dawn (\d+\.\d+) \/ (\d+\.\d+)/.exec(
-            coverage,
-        );
+    const perBackend = new RegExp(
+        `canvas-only(?: MAD)?: SDL_GPU (${PAIR}), Dawn (${PAIR})`,
+    ).exec(coverage);
     if (perBackend) {
         return {
-            sdl_gpu: [perBackend[1]!, perBackend[2]!],
-            dawn: [perBackend[3]!, perBackend[4]!],
+            sdl_gpu: parsePair(perBackend[1]!),
+            dawn: parsePair(perBackend[2]!),
         };
     }
-    const both =
-        /canvas-only MAD: (\d+\.\d+) \/ (\d+\.\d+) on both backends/.exec(
-            coverage,
-        );
+    const both = new RegExp(
+        `canvas-only(?: MAD)?: (${PAIR}) on both backends`,
+    ).exec(coverage);
     if (both) {
-        const pair: [string, string] = [both[1]!, both[2]!];
+        const pair = parsePair(both[1]!);
         return { sdl_gpu: pair, dawn: pair };
     }
     return undefined;
@@ -93,21 +126,25 @@ export function parsePublishedRows(status: string): PublishedRow[] {
         if (!line.startsWith("|")) continue;
         const sceneId = /images\/scenes\/([A-Za-z0-9-]+)\.png/.exec(line)?.[1];
         if (!sceneId) continue;
-        // Two cell forms: a value in the green band prints plain, and a
-        // cell holding any yellow/red value keeps the colored math span.
-        // (GitHub stops rendering math expressions after a few hundred
-        // per page, so the table cannot colour its default state.)
+        // Three cell forms: an exact match prints `pixel-perfect`, a value
+        // in the green band prints plain, and a cell holding any
+        // yellow/red value keeps the colored math span. (GitHub stops
+        // rendering math expressions after a few hundred per page, so the
+        // table cannot colour its default state.)
         const colors: string[] = [];
         const values: string[] = [];
         for (const cell of line.matchAll(
-            /\| (?:([0-9.]+) \/ ([0-9.]+)|\$\\color\{(#[0-9a-f]{6})\}\{\\textsf\{([0-9.]+)\}\} \/ \\color\{(#[0-9a-f]{6})\}\{\\textsf\{([0-9.]+)\}\}\$)(?= \|)/g,
+            /\| (?:(pixel-perfect)|([0-9.]+) \/ ([0-9.]+)|\$\\color\{(#[0-9a-f]{6})\}\{\\textsf\{([0-9.]+)\}\} \/ \\color\{(#[0-9a-f]{6})\}\{\\textsf\{([0-9.]+)\}\}\$)(?= \|)/g,
         )) {
             if (cell[1] !== undefined) {
                 colors.push(GREEN, GREEN);
-                values.push(cell[1], cell[2]!);
+                values.push(PIXEL_PERFECT, PIXEL_PERFECT);
+            } else if (cell[2] !== undefined) {
+                colors.push(GREEN, GREEN);
+                values.push(cell[2], cell[3]!);
             } else {
-                colors.push(cell[3]!, cell[5]!);
-                values.push(cell[4]!, cell[6]!);
+                colors.push(cell[4]!, cell[6]!);
+                values.push(cell[5]!, cell[7]!);
             }
         }
         if (values.length !== 4) continue;
@@ -288,14 +325,14 @@ export function canvasProblems(
                 );
                 continue;
             }
-            const rendered: [string, string] = [
-                measuredPair.fullMad.toFixed(3),
-                measuredPair.foregroundMad.toFixed(3),
-            ];
+            const rendered = publishedPair(
+                measuredPair.fullMad,
+                measuredPair.foregroundMad,
+            );
             const published = row.canvas[backend];
             if (rendered[0] !== published[0] || rendered[1] !== published[1]) {
                 problems.push(
-                    `${statusPath}:${row.line} ${row.sceneId} canvas-only ${label}: published ${published.join(" / ")}, measured ${rendered.join(" / ")}`,
+                    `${statusPath}:${row.line} ${row.sceneId} canvas-only ${label}: published ${pairText(published)}, measured ${pairText(rendered)}`,
                 );
             }
         }
@@ -350,8 +387,14 @@ export function verifyStatus(options: VerifyStatusOptions = {}): StatusVerdict {
             );
             continue;
         }
+        const [sdlFull, sdlForeground, dawnFull, dawnForeground] =
+            result.values;
+        const renderedCells = [
+            ...publishedPair(sdlFull!, sdlForeground!),
+            ...publishedPair(dawnFull!, dawnForeground!),
+        ];
         result.values.forEach((value, index) => {
-            const rendered = value.toFixed(3);
+            const rendered = renderedCells[index]!;
             const column = columns[index]!;
             if (isWobblingCell(row.sceneId, column)) {
                 exempt.push(
