@@ -1,4 +1,5 @@
 import { journaled } from "./emission-transaction.js";
+import { staticScalarValue } from "./number-intrinsics.js";
 import type {
     LoweringServices,
     NativeReturnValueCompiler,
@@ -36,6 +37,7 @@ interface AsyncContext extends Pick<
     | "allocateTemporaryCppName"
     | "registerNativeBinding"
     | "registerNativeBindingType"
+    | "registerNativeTemporary"
     | "nativeEmission"
     | "emit"
     | "emitDiscardedValue"
@@ -44,6 +46,7 @@ interface AsyncContext extends Pick<
     | "libraryGlobal"
     | "browserErasure"
     | "options"
+    | "sharedClosures"
     | "useNativeValue"
     | "fail"
 > {}
@@ -195,10 +198,18 @@ export class AsyncLowerer {
                 false,
                 awaited.promiseType,
             );
-            if (awaited.promiseResult?.kind === "void")
+            const settled = awaited.promiseResult!;
+            if (settled.kind === "void")
                 return { kind: "json-null", cpp: "std::nullopt" };
+            // The settled data belongs to the expression awaiting it, so a
+            // declaration it initializes takes it rather than copying it.
+            if (settled.dataType !== undefined || settled.kind === "string")
+                context.registerNativeTemporary(
+                    temporary,
+                    settled.dataType ?? { kind: "string" },
+                );
             return {
-                ...this.resultAt(awaited.promiseResult!, temporary),
+                ...this.resultAt(settled, temporary),
                 nativeCaptures: [binding],
             };
         }
@@ -419,8 +430,12 @@ export class AsyncLowerer {
             return undefined;
         if (context.browserErasure.isBrowserOnlyLocalCall(node))
             return undefined;
-        const values = node.arguments.map((argument) =>
-            this.pinArgument(context.compileValue(argument)),
+        const values = node.arguments.map((argument, index) =>
+            this.pinArgument(
+                context.compileValue(argument),
+                "async_argument",
+                declaration.parameters[index],
+            ),
         );
         return this.activate(
             ts.isIdentifier(callee) ? callee : declaration,
@@ -443,15 +458,39 @@ export class AsyncLowerer {
                 )
         )
             return undefined;
-        const values = arguments_.map((value) => this.pinArgument(value));
+        const values = arguments_.map((value, index) =>
+            this.pinArgument(
+                value,
+                "async_argument",
+                declaration.parameters[index],
+            ),
+        );
         return this.activate(declaration, declaration, values, node);
     }
 
-    private pinArgument(value: Value, label = "async_argument"): Value {
+    private pinArgument(
+        value: Value,
+        label: string,
+        parameter?: ts.ParameterDeclaration,
+    ): Value {
         const context = this.context;
         if (!value.cpp) return value;
         if (value.kind === "engine")
             return context.bindings.pinValueToTemporary(value, label);
+        // A scalar folded at generation is its constant at the call: the
+        // activation takes it as a literal argument unless the callee
+        // rebinds that parameter. A shared call's result is scalar data.
+        const scalarKind = value.dataType?.kind ?? value.kind;
+        const constant =
+            parameter &&
+            !parameter.dotDotDotToken &&
+            ts.isIdentifier(parameter.name) &&
+            ["number", "boolean", "string"].includes(scalarKind) &&
+            (value.kind === scalarKind || value.kind === "data") &&
+            !context.sharedClosures.identifierIsRebound(parameter.name)
+                ? staticScalarValue(value, (text) => context.cppString(text))
+                : undefined;
+        if (constant) return constant;
         const temporary = context.allocateTemporaryCppName(label);
         const type = value.dataType
             ? context.dataTypes.cppType(value.dataType)

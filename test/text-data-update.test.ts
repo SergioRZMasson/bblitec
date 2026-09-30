@@ -120,7 +120,7 @@ test("text data bodies are lowered from the pin's own statements", () => {
                 "opts.layers",
             ),
         ).header(),
-        /bbl::js::Array<bbl::TextLayer> layers = opts\.layers;/,
+        /bbl::js::Array<bbl::TextLayer> layers = bbl::js::snapshot_value\(opts\.layers\);/,
     );
 });
 

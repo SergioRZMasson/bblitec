@@ -1,13 +1,12 @@
 import {
-    booleanValue,
     isStringValue,
     nativeDataMetadata,
     objectTruthinessCpp,
     optionalPresentCpp,
     optionalValueCpp,
     presenceFlagCpp,
+    readsNativeStorage,
     statedTruthinessCpp,
-    staticStringValue,
     valueForKind,
     withNativeMetadata,
 } from "./types.js";
@@ -55,7 +54,7 @@ import { pinOperand } from "./evaluation-order.js";
 import { sceneRelativeSourceLabel } from "../source-location.js";
 import { staticNumberValue } from "./option-helpers.js";
 import { typedArrayTable } from "./typed-array-tables.js";
-import { numberConstantValue } from "./number-intrinsics.js";
+import { numberConstantValue, staticScalarValue } from "./number-intrinsics.js";
 import {
     describeMathArity,
     MATH_MEMBERS,
@@ -210,6 +209,7 @@ interface DataLoweringContext extends Pick<
     | "admissions"
     | "asyncActivations"
     | "libraryGlobal"
+    | "hasStableNativeBinding"
     | "useNativeValue"
     | "registerNativeBinding"
     | "registerNativeConstBinding"
@@ -1050,9 +1050,8 @@ export class DataLowerer {
                 owner = {
                     ...owner,
                     nativeCaptures: [
-                        this.context.registerNativeBinding(
+                        this.context.registerNativeConstBinding(
                             temporary,
-                            false,
                             false,
                             `const ${this.context.dataTypes.cppType(owner.dataType!)}`,
                         ),
@@ -1779,14 +1778,10 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
 
     /** After the static sink proof, discard local spellings from namespace initializers. */
     private constantInitializerValue(value: Value): Value {
-        if (value.staticNumber !== undefined)
-            return numberConstantValue(value.staticNumber);
-        if (value.staticBoolean !== undefined)
-            return booleanValue(value.staticBoolean ? "true" : "false");
-        if (value.staticString !== undefined)
-            return staticStringValue(value.staticString, (text) =>
-                this.context.cppString(text),
-            );
+        const constant = staticScalarValue(value, (text) =>
+            this.context.cppString(text),
+        );
+        if (constant) return constant;
         if (value.kind === "tuple")
             return {
                 kind: "tuple",
@@ -2711,14 +2706,19 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
             type.kind === "tuple" ? type.arity : type.elements.length;
         if (!Number.isInteger(index) || index < 0 || index >= length)
             this.context.fail(node, `Tuple index ${index} is out of range.`);
-        return this.leafValue(
-            type.kind === "product"
-                ? `(${value.cpp}).template get<${index}>()`
-                : `${value.cpp}[${index}]`,
-            type.kind === "product"
-                ? type.elements[index]!
-                : { kind: "number" },
+        if (type.kind !== "product")
+            return this.leafValue(`${value.cpp}[${index}]`, {
+                kind: "number",
+            });
+        const lane = this.leafValue(
+            `(${value.cpp}).template get<${index}>()`,
+            type.elements[index]!,
         );
+        // A lane of a stable tuple is borrowed by what binds it, as the
+        // element object itself is.
+        return this.context.hasStableNativeBinding(value)
+            ? { ...lane, stableOwnerCpp: value.stableOwnerCpp ?? value.cpp }
+            : lane;
     }
 
     /** Rest binding creates fresh array storage, retaining the identity of its elements. */
@@ -2870,14 +2870,16 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
             };
         }
         if (dataType.kind === "product") {
+            // Each lane reads the owner once: a read of existing storage the
+            // index cannot change is read in place, anything else once into
+            // a receiver.
             const receiver =
-                this.context.allocateTemporaryCppName("indexed_tuple");
-            this.context.emit({
-                kind: "declaration",
-                type: "const auto",
-                name: receiver,
-                initializer: owner.cpp,
-            });
+                readsNativeStorage(owner) && !this.indexMayChangeOwner(access)
+                    ? owner.cpp
+                    : this.context.bindings.retainedValue(
+                          owner,
+                          "indexed_tuple",
+                      ).cpp;
             const index =
                 preparedIndex ??
                 this.context.compileValue(access.argumentExpression);
@@ -10004,6 +10006,11 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                 lowered ??
                 this.compileDataPath(operand, "read") ??
                 this.context.compileValue(operand);
+            // An operand `compileOperand` pinned is already its own snapshot.
+            const binding =
+                snapshot && lowered === undefined
+                    ? "const auto"
+                    : "const auto&";
             if (
                 expected.inner.kind === "handle" &&
                 value.kind === expected.inner.handle &&
@@ -10013,7 +10020,7 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                     this.context.allocateTemporaryCppName("optional_compare");
                 this.context.emit({
                     kind: "declaration",
-                    type: snapshot ? "const auto" : "const auto&",
+                    type: binding,
                     name: temporary,
                     initializer: value.optionalStorageCpp,
                 });
@@ -10079,7 +10086,7 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                 this.context.allocateTemporaryCppName("optional_compare");
             this.context.emit({
                 kind: "declaration",
-                type: snapshot ? "const auto" : "const auto&",
+                type: binding,
                 name: temporary,
                 initializer: this.compileKnownValueForSink(
                     value,

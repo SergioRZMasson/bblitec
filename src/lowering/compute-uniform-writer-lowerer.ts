@@ -298,7 +298,7 @@ function scope(
                         "Uniform staging storage",
                     );
                     return [
-                        `${indent}auto data = arena->buffer->data.value();`,
+                        `${indent}auto data = bbl::js::present(arena->buffer->data);`,
                     ];
                 }
                 if (id === "field") {

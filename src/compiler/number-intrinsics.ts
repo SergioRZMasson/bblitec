@@ -3,7 +3,12 @@ import ts from "typescript";
 import { doubleLiteral } from "../cpp-literals.js";
 import type { ExpressionContext } from "./expressions.js";
 import type { LibraryGlobal } from "./symbols.js";
-import { optionalPresentCpp, type Value } from "./types.js";
+import {
+    booleanValue,
+    optionalPresentCpp,
+    staticStringValue,
+    type Value,
+} from "./types.js";
 
 const constants: ReadonlyMap<string, number> = new EmissionMap([
     ["MAX_SAFE_INTEGER", Number.MAX_SAFE_INTEGER],
@@ -91,6 +96,20 @@ export function compileNumberPredicate(
         cpp = "false";
     }
     return { kind: "boolean", cpp, dataType: { kind: "boolean" } };
+}
+
+/** A scalar generation knows, as its own literal; undefined for any other value. */
+export function staticScalarValue(
+    value: Value,
+    cppString: (text: string) => string,
+): Value | undefined {
+    if (value.staticNumber !== undefined)
+        return numberConstantValue(value.staticNumber);
+    if (value.staticBoolean !== undefined)
+        return booleanValue(value.staticBoolean ? "true" : "false");
+    if (value.staticString !== undefined)
+        return staticStringValue(value.staticString, cppString);
+    return undefined;
 }
 
 export function numberConstantValue(value: number): Value {

@@ -42,6 +42,8 @@ import {
     isCompileTimeOnlyValue,
     isStringValue,
     presenceFlagCpp,
+    readsNativeStorage,
+    snapshotReadCpp,
     valueForKind,
     type Value,
     type VariableBinding,
@@ -69,6 +71,7 @@ interface BindingScopesContext extends Pick<
     | "reachJsData"
     | "registerNativeBindingType"
     | "registerNativeConstBinding"
+    | "registerNativeTemporary"
     | "symbols"
     | "takeNativeTemporary"
     | "useNativeValue"
@@ -946,10 +949,15 @@ export class BindingScopes {
             this.defineVariable(identifier, value);
             return;
         }
-        const platformEvent =
+        // A dispatched event is read in place for the listener's duration;
+        // a closure that keeps a custom event copies it as it escapes.
+        const borrowedEvent =
             value.kind === "platform-keyboard-event" ||
-            value.kind === "platform-mouse-event";
-        const nativeType = platformEvent
+            value.kind === "platform-mouse-event" ||
+            (value.kind === "custom-event" &&
+                readOnlyParameter &&
+                !reboundParameter);
+        const nativeType = borrowedEvent
             ? "const auto&"
             : reference
               ? "auto&"
@@ -1221,11 +1229,15 @@ export class BindingScopes {
      * mutable local and folds a static value into a literal; this one refuses
      * a folded value outright and keeps an owning binding. One line each, and
      * the difference is the contract rather than an accident.
+     *
+     * An `exclusive` value belongs to the expression that produced it, so a
+     * declaration it initializes takes its owning local rather than copying.
      */
     public pinValueToTemporary(
         value: Value,
         label: string,
         node?: ts.Expression,
+        exclusive = false,
     ): Value {
         if (value.parameterBinding) {
             // Writable parameters retain initial metadata for other lowering
@@ -1326,12 +1338,10 @@ export class BindingScopes {
                 kind: "declaration",
                 type: "auto",
                 name: cpp,
-                initializer:
-                    value.ownedCpp ??
-                    (value.nativeLvalue || cppIdentifierPattern.test(value.cpp)
-                        ? `bbl::js::snapshot_value(${value.cpp})`
-                        : value.cpp),
+                initializer: value.ownedCpp ?? snapshotReadCpp(value),
             });
+            if (exclusive)
+                this.context.registerNativeTemporary(cpp, value.dataType);
             const pinned = { ...value, cpp, nativeBinding: true as const };
             delete pinned.ownedCpp;
             for (const key of [
@@ -1360,10 +1370,7 @@ export class BindingScopes {
                 initializer:
                     value.kind === "engine"
                         ? value.cpp
-                        : value.nativeLvalue ||
-                            cppIdentifierPattern.test(value.cpp)
-                          ? `bbl::js::snapshot_value(${value.cpp})`
-                          : value.cpp,
+                        : snapshotReadCpp(value),
                 attributes: "[[maybe_unused]] ",
             });
             const pinned = {
@@ -1388,12 +1395,10 @@ export class BindingScopes {
                 kind: "declaration",
                 type: "auto",
                 name: cpp,
-                initializer:
-                    value.ownedCpp ??
-                    (value.nativeLvalue || cppIdentifierPattern.test(value.cpp)
-                        ? `bbl::js::snapshot_value(${value.cpp})`
-                        : value.cpp),
+                initializer: value.ownedCpp ?? snapshotReadCpp(value),
             });
+            if (exclusive)
+                this.context.registerNativeTemporary(cpp, value.dataType);
             const derived = this.context.dataLowerer.leafValue(
                 value.cpp,
                 value.dataType,
@@ -1452,9 +1457,7 @@ export class BindingScopes {
                     : undefined;
         if (!cppType) return value;
         const cppName = this.context.allocateTemporaryCppName(label);
-        const snapshot =
-            cppType === "std::string" &&
-            (value.nativeLvalue || cppIdentifierPattern.test(value.cpp));
+        const snapshot = cppType === "std::string" && readsNativeStorage(value);
         if (snapshot) this.context.reachJsData();
         this.context.emit({
             kind: "declaration",
@@ -1737,18 +1740,7 @@ export class BindingScopes {
     public bindCameraVector(value: Value): Value {
         const vector = value.cameraVector;
         if (!vector || vector.bound) return value;
-        const cpp = this.context.allocateTemporaryCppName(
-            "camera_vector_owner",
-        );
-        this.context.emit({
-            kind: "declaration",
-            type: "const auto",
-            name: cpp,
-            initializer: vector.owner.cpp,
-            attributes: "[[maybe_unused]] ",
-        });
-        const owner = { ...vector.owner, cpp };
-        this.context.describeNativeValue(owner);
+        const owner = this.retainedValue(vector.owner, "camera_vector_owner");
         const cameraVector = { ...vector, owner, bound: true as const };
         return {
             ...value,
@@ -1757,20 +1749,36 @@ export class BindingScopes {
         };
     }
 
-    /** Retain the handle, so vector aliases survive arena growth and source rebinding. */
-    public bindSceneNodeVector(value: Value): Value {
-        const vector = value.sceneNodeVector;
-        if (!vector || vector.bound) return value;
-        const cpp = this.context.allocateTemporaryCppName("vector_owner");
+    /**
+     * A value read once and used again, in a const home: a stable binding
+     * already is one; any other value is copied into a const local.
+     */
+    public retainedValue<T extends Value>(value: T, label: string): T {
+        if (this.context.hasStableNativeBinding(value)) {
+            this.context.useNativeValue(value);
+            return value;
+        }
+        const cpp = this.context.allocateTemporaryCppName(label);
+        if (readsNativeStorage(value)) this.context.reachJsData();
         this.context.emit({
             kind: "declaration",
             type: "const auto",
             name: cpp,
-            initializer: vector.owner.cpp,
+            initializer: snapshotReadCpp(value),
             attributes: "[[maybe_unused]] ",
         });
-        const owner = { ...vector.owner, cpp };
-        this.context.describeNativeValue(owner);
+        const binding = this.context.registerNativeConstBinding(cpp);
+        this.context.useNativeBinding(binding);
+        const retained: T = { ...value, cpp, nativeCaptures: [binding] };
+        this.context.describeNativeValue(retained);
+        return retained;
+    }
+
+    /** Retain the handle, so vector aliases survive arena growth and source rebinding. */
+    public bindSceneNodeVector(value: Value): Value {
+        const vector = value.sceneNodeVector;
+        if (!vector || vector.bound) return value;
+        const owner = this.retainedValue(vector.owner, "vector_owner");
         return {
             ...value,
             sceneNodeVector: { ...vector, owner, bound: true },

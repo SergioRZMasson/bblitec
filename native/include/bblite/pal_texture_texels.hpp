@@ -120,7 +120,10 @@ inline SharedImage shared_texture_texels(const TextureData& data) {
     if (data.loaded_texels)
         return data.loaded_texels->share(data);
     DecodedImage image = decode_texture_image(data);
-    return {image.width, image.height, share_texels(std::move(image.rgba))};
+    // The texels leave the image in their own statement, so the aggregate
+    // below reads only members that were never moved from.
+    auto texels = share_texels(std::move(image.rgba));
+    return {image.width, image.height, std::move(texels)};
 }
 
 /**

@@ -324,7 +324,7 @@ export function lowerConfigurableCameraControls(
             cpp = `std::vector<std::string>{${fallback.elements.map((element) => cppStringLiteral(ts.isStringLiteral(element) ? element.text : context.contractError(element, "Expected a literal key code."))).join(", ")}}`;
         }
         fields.push(
-            `    ${numeric ? "double" : "std::vector<std::string>"} ${name};`,
+            `    ${numeric ? "double" : "std::vector<std::string>"} ${name}{};`,
         );
         optionInitializers.push(
             `    state->${name} = options.${name}.value_or(${cpp});`,

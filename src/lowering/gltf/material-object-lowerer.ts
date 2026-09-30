@@ -235,8 +235,11 @@ export function lowerGltfMaterialObjectFunction(
                 const body = value(node.body, lowerer);
                 return `[&](${parameters.join(", ")}) { return ${body}; }`;
             }
+            // Each arm returns from a lambda, as the short-circuit operators
+            // below do: clang's analyzer loses the owner of a class prvalue
+            // selected by `?:` and reports its allocation as leaked.
             if (ts.isConditionalExpression(node))
-                return `(${value(node.condition, lowerer)}.truthy() ? ${value(node.whenTrue, lowerer)} : ${value(node.whenFalse, lowerer)})`;
+                return `[&]() -> GltfPbrValue { if (${value(node.condition, lowerer)}.truthy()) return ${value(node.whenTrue, lowerer)}; return ${value(node.whenFalse, lowerer)}; }()`;
             if (ts.isPrefixUnaryExpression(node)) {
                 const operand = value(node.operand, lowerer);
                 if (node.operator === ts.SyntaxKind.ExclamationToken)

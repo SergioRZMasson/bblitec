@@ -164,28 +164,66 @@ export const physicsDebugCatalogPath =
 export function renderPhysicsDebugCatalog(
     entries: readonly PhysicsDebugCatalogEntry[],
 ): string {
-    const descriptor = (input: PhysicsDebugDescriptor): string =>
-        `PhysicsDebugShapeDescriptor{${stringLiteral(input.type)}, {${input.parameters.map(float32Literal).join(",")}}, {${input.indices.join(",")}}, {${input.children.map(descriptor).join(",")}}}`;
+    // Every constructor input is constant data compared in place: nothing is
+    // allocated or initialized at run time, and a mesh collider's hundreds
+    // of thousands of lanes never pass through a stack temporary.
+    const constants: string[] = [];
+    const shapeView = (input: PhysicsDebugDescriptor): string => {
+        const children = input.children.map(shapeView);
+        const name = `shape_${constants.length / 3}`;
+        constants.push(
+            `constexpr std::array<float, ${input.parameters.length}> ${name}_parameters{${input.parameters.map(float32Literal).join(",")}};`,
+            `constexpr std::array<std::uint32_t, ${input.indices.length}> ${name}_indices{${input.indices.join(",")}};`,
+            `constexpr std::array<ShapeView, ${children.length}> ${name}_children{${children.join(",")}};`,
+        );
+        return `ShapeView{${stringLiteral(input.type)}, ${name}_parameters, ${name}_indices, ${name}_children.data(), ${name}_children.size()}`;
+    };
+    const catalog = entries.map(
+        (entry, index) =>
+            `CatalogEntry{${shapeView(entry.descriptor)}, positions_${index}, indices_${index}}`,
+    );
     return `// Generated opaque HP_Shape debug geometry. Constructor identity is validated in full.
 #include <bblite/pal_physics_debug.hpp>
+#include <algorithm>
 #include <array>
+#include <span>
 #include <stdexcept>
+#include <string_view>
 namespace bbl::pal {
 namespace {
+struct ShapeView {
+    std::string_view type;
+    std::span<const float> parameters;
+    std::span<const std::uint32_t> indices;
+    const ShapeView* children{};
+    std::size_t child_count{};
+};
+struct CatalogEntry {
+    ShapeView shape;
+    std::span<const float> positions;
+    std::span<const std::uint32_t> indices;
+};
+bool matches(const PhysicsDebugShapeDescriptor& descriptor, const ShapeView& shape) {
+    return descriptor.type == shape.type && std::ranges::equal(descriptor.parameters, shape.parameters) &&
+           std::ranges::equal(descriptor.indices, shape.indices) &&
+           std::ranges::equal(descriptor.children, std::span{shape.children, shape.child_count}, matches);
+}
 ${entries
     .map(
         (
             entry,
             index,
-        ) => `const auto shape_${index} = ${descriptor(entry.descriptor)};
-const std::array<float, ${entry.geometry.positions.length}> positions_${index}{${entry.geometry.positions.map(float32Literal).join(",")}};
-const std::array<std::uint32_t, ${entry.geometry.indices.length}> indices_${index}{${entry.geometry.indices.join(",")}};`,
+        ) => `constexpr std::array<float, ${entry.geometry.positions.length}> positions_${index}{${entry.geometry.positions.map(float32Literal).join(",")}};
+constexpr std::array<std::uint32_t, ${entry.geometry.indices.length}> indices_${index}{${entry.geometry.indices.join(",")}};`,
     )
     .join("\n")}
+${constants.join("\n")}
+constexpr std::array<CatalogEntry, ${catalog.length}> catalog{${catalog.join(",\n")}};
 } // namespace
 PhysicsDebugGeometry materialized_physics_debug_geometry(const PhysicsDebugShapeDescriptor& descriptor) {
     if (collect_physics_debug_descriptor(descriptor)) return {};
-${entries.map((_, index) => `    if (descriptor == shape_${index}) return {positions_${index}, indices_${index}};`).join("\n")}
+    for (const auto& entry : catalog)
+        if (matches(descriptor, entry.shape)) return {entry.positions, entry.indices};
     throw std::runtime_error("Physics debug geometry has no materialized match for the complete " + descriptor.type + " constructor inputs.");
 }
 } // namespace bbl::pal

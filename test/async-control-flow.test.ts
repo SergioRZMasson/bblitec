@@ -288,3 +288,40 @@ test("nested cleanup preserves exception identity and runs every finalizer after
     );
     runNative(result, directory, t);
 });
+
+// `resolveUrl(d.name)` over a constant record list is a shared call whose
+// string result is known at generation. The activation takes that constant
+// as its argument rather than a copy of the call's result the callee would
+// never read.
+test("an async activation takes a generation-known shared result as its constant", (t) => {
+    const directory = resolve("artifacts/async-argument-fold");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "worker.ts"), "self.close();");
+    const result = compileSource(
+        `
+        const worker=new Worker(new URL("./worker.ts",import.meta.url),{type:"module"});
+        worker.terminate();
+        interface Def { readonly name: string; }
+        const DEFS: readonly Def[] = [{ name: "alpha" }, { name: "beta" }];
+        async function measure(url: string): Promise<number> {
+            await Promise.resolve();
+            return url.length;
+        }
+        async function measureAll(resolveUrl: (name: string) => string): Promise<number[]> {
+            return Promise.all(DEFS.map((d) => measure(resolveUrl(d.name))));
+        }
+        void (async () => {
+            const lengths = await measureAll((name) => "/models/" + name);
+            if (lengths.join(",") !== "13,12") throw new Error("lengths");
+            globalThis.close();
+        })();
+    `,
+        { fileName: join(directory, "entry.ts") },
+    );
+    assert.equal(result.cpp.match(/v_bblite_shared_result_\d+ = /g)?.length, 2);
+    assert.doesNotMatch(
+        result.cpp,
+        /v_bblite_async_argument_\d+ = v_bblite_shared_result_\d+;/,
+    );
+    runNative(result, directory, t);
+});

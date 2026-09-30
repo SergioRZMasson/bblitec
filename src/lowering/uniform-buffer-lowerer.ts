@@ -330,7 +330,7 @@ function operation(
                 ],
                 [
                     "buffer._data!.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), byteOffset)",
-                    "std::copy(data.begin(), data.end(), buffer->data->begin() + static_cast<std::ptrdiff_t>(offset));",
+                    "std::copy(data.begin(), data.end(), bbl::js::present(buffer->data).begin() + static_cast<std::ptrdiff_t>(offset));",
                 ],
                 [
                     "buffer._buffer?.destroy()",

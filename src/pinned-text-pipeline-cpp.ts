@@ -170,19 +170,19 @@ export function textPipelineHeader(
 #include <array>
 #include <span>
 namespace bbl::upstream {
-struct ShaderStageConstant { std::uint32_t id; double value; };
-struct TextBindingInfo { std::uint32_t binding, visibility; const char* name; const char* kind; };
-struct TextVertexAttribute { std::uint32_t location, offset; const char* format; };
-struct TextVertexBuffer { std::uint32_t stride; const char* step_mode; std::span<const TextVertexAttribute> attributes; };
+struct ShaderStageConstant { std::uint32_t id{}; double value{}; };
+struct TextBindingInfo { std::uint32_t binding{}, visibility{}; const char* name{}; const char* kind{}; };
+struct TextVertexAttribute { std::uint32_t location{}, offset{}; const char* format{}; };
+struct TextVertexBuffer { std::uint32_t stride{}; const char* step_mode{}; std::span<const TextVertexAttribute> attributes; };
 struct TextPipelineInfo {
-    std::uint32_t sample_count;
-    bool has_depth, depth_write, alpha_to_coverage, weighted;
-    const char *vertex_shader, *fragment_shader, *vertex_entry, *fragment_entry;
+    std::uint32_t sample_count{};
+    bool has_depth{}, depth_write{}, alpha_to_coverage{}, weighted{};
+    const char *vertex_shader{}, *fragment_shader{}, *vertex_entry{}, *fragment_entry{};
     std::span<const ShaderStageConstant> vertex_constants, fragment_constants;
-    const char *topology, *cull_mode, *front_face;
-    DepthCompare depth_compare;
-    bool blend_enabled;
-    BlendFactors blend;
+    const char *topology{}, *cull_mode{}, *front_face{};
+    DepthCompare depth_compare{};
+    bool blend_enabled{};
+    BlendFactors blend{};
 };
 ${declarations.join("\n")}
 inline constexpr std::array<TextPipelineInfo, ${rows.length}> text_pipeline_rows{{

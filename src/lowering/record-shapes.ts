@@ -169,10 +169,17 @@ export class RecordRepresentation {
             : `bbl::pinned::truthy(${value})`;
     }
 
+    /** A local's own copy of the value read from storage. */
+    public snapshot(value: string, shape: RecordShape): string {
+        return shape.kind === "number" || shape.kind === "boolean"
+            ? value
+            : `bbl::js::snapshot_value(${value})`;
+    }
+
     /** Read an optional whose presence was established by source control flow. */
     public present(value: string, shape: RecordShape): string {
         return shape.kind === "optional" && !this.nullable(shape.value)
-            ? `bbl::pinned::present(${value})`
+            ? `bbl::js::present(${value})`
             : value;
     }
 }

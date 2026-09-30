@@ -2633,7 +2633,7 @@ ${thin ? `    if (!body.instance) { thin_for_each(physics_world_record(body.worl
 template <std::size_t N>
 std::array<double, N> physics_native_lanes(const js::Array<double>& values) {
     if (values.size() != N) throw std::runtime_error("Physics PAL vector has an invalid lane count.");
-    std::array<double, N> result;
+    std::array<double, N> result{};
     std::copy(values.begin(), values.end(), result.begin());
     return result;
 }

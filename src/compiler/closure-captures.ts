@@ -225,6 +225,9 @@ export class ClosureCaptures {
             .update(JSON.stringify(members))
             .digest("hex")
             .slice(0, 16)}`;
+        // An owned capture is value-initialized; references and borrowed
+        // wrappers are bound wherever the struct is built.
+        const initialized = concrete && !references;
         return (this.struct = {
             name,
             concrete,
@@ -236,7 +239,8 @@ export class ClosureCaptures {
                       ]),
                 `struct ${name} {`,
                 ...members.map(
-                    (member) => `    ${member.type} ${member.name};`,
+                    (member) =>
+                        `    ${member.type} ${member.name}${initialized && !member.borrowed ? "{}" : ""};`,
                 ),
                 `    void gc_trace([[maybe_unused]] const bbl::js::TraceVisitor& visitor) const {`,
                 ...members

@@ -1163,6 +1163,11 @@ template <typename T>
     return target[index];
 }
 
+/** JavaScript refuses a read through null or undefined. */
+[[noreturn]] inline void throw_nullish_access() {
+    throw std::runtime_error("Cannot access a nullish value.");
+}
+
 template <typename T> class Nullable {
 public:
     Nullable() = default;
@@ -1242,7 +1247,7 @@ private:
     /** JavaScript refuses a property read through null or undefined. */
     template <typename Self> static auto& require_owned(Self& self) {
         if (!self.owned_)
-            throw std::runtime_error("Cannot access a nullish value.");
+            throw_nullish_access();
         return *self.owned_;
     }
 
@@ -1255,6 +1260,8 @@ template <typename T> struct Traceable<Nullable<T>> : Traceable<T> {};
 
 template <typename T> struct IsNullable : std::false_type {};
 template <typename T> struct IsNullable<Nullable<T>> : std::true_type {};
+template <typename T> struct IsOptional : std::false_type {};
+template <typename T> struct IsOptional<std::optional<T>> : std::true_type {};
 
 /**
  * Own the JavaScript value selected by a borrowed native expression.
@@ -1267,6 +1274,20 @@ template <typename T>
 }
 template <typename T> [[nodiscard]] Nullable<T> snapshot_value(const Nullable<T>& value) {
     return value.has_value() ? Nullable<T>{*value} : Nullable<T>{};
+}
+
+/**
+ * A value the source proves present (`x!`, a read under its own presence
+ * guard). JavaScript throws reading through null or undefined; an absent
+ * value refuses by name, never dereferencing empty storage.
+ */
+template <typename Storage>
+    requires IsNullable<std::remove_cvref_t<Storage>>::value ||
+             IsOptional<std::remove_cvref_t<Storage>>::value
+[[nodiscard]] decltype(auto) present(Storage&& value) {
+    if (!value.has_value())
+        throw_nullish_access();
+    return *std::forward<Storage>(value);
 }
 
 [[nodiscard]] inline std::u16string string_code_units(const std::string& value);

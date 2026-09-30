@@ -678,7 +678,9 @@ function lowerBrdfImage(context: LoweringContext): string {
                         node.tryBlock.statements,
                         indent + "    ",
                     ),
-                    `${indent}} catch(...) {}`,
+                    // The pin's empty handler: an undecodable image falls
+                    // through to the refusal below.
+                    `${indent}} catch(...) { bbl::discard_exception(); }`,
                 ];
             }
             if (ts.isReturnStatement(node))

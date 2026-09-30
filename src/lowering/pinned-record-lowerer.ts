@@ -37,6 +37,7 @@ import { posix } from "node:path";
 import {
     cppIdentifier,
     doubleLiteral,
+    lazyStaticAccessor,
     snakeCase,
     stringLiteral,
 } from "../cpp-literals.js";
@@ -47,7 +48,7 @@ import type {
     TransportSchema,
     TransportShape,
 } from "../pinned-record-transport.js";
-import type { LoweringContext } from "./context.js";
+import { unwrapExpression, type LoweringContext } from "./context.js";
 import { cppPrimary, type RenderedCpp } from "./pinned-numeric-expression.js";
 import {
     PinnedNumericLowerer,
@@ -1830,6 +1831,11 @@ export class PinnedRecordModel {
         return `${entry.namespace}::${entry.cpp}`;
     }
 
+    /** A realm variable's storage: its own name, or its constructed object's accessor. */
+    public variableCpp(variable: ModuleVariable): string {
+        return `${this.qualified(variable)}${variable.initializer === undefined ? "" : "()"}`;
+    }
+
     /**
      * Register a pinned module-scope `let` a body reads or writes, or a
      * `const` holding a constructed object; `initialize` lowers its
@@ -2013,7 +2019,17 @@ export class PinnedRecordModel {
                             initializer,
                             "Pinned module state starts from null or undefined only.",
                         );
-                    return `// ${this.context.provenance(modulePathOf(variable.declaration.getSourceFile()), variable.declaration.name.getText(), "realm state")}\ninline thread_local ${this.cppType(variable.shape)} ${variable.cpp}${variable.initializer !== undefined ? ` = ${variable.initializer}` : "{}"};`;
+                    const provenance = `// ${this.context.provenance(modulePathOf(variable.declaration.getSourceFile()), variable.declaration.name.getText(), "realm state")}`;
+                    const type = this.cppType(variable.shape);
+                    return variable.initializer === undefined
+                        ? `${provenance}\ninline thread_local ${type} ${variable.cpp}{};`
+                        : `${provenance}\n${lazyStaticAccessor({
+                              name: variable.cpp,
+                              type,
+                              initializer: variable.initializer,
+                              storage: "thread_local",
+                              inline: true,
+                          })}`;
                 },
             ),
             grouped(
@@ -3434,7 +3450,7 @@ class RecordBodyLowerer extends PinnedNumericLowerer {
                         this.convert(declaration.initializer!, shape),
                     );
                     return this.narrowed(
-                        this.model.qualified(variable),
+                        this.model.variableCpp(variable),
                         variable.shape,
                         node,
                     );
@@ -3455,7 +3471,7 @@ class RecordBodyLowerer extends PinnedNumericLowerer {
             }
             const variable = this.model.variable(declaration);
             return this.narrowed(
-                this.model.qualified(variable),
+                this.model.variableCpp(variable),
                 variable.shape,
                 node,
             );
@@ -4854,7 +4870,7 @@ class RecordBodyLowerer extends PinnedNumericLowerer {
                 ts.isSourceFile(declaration.parent.parent.parent)
             ) {
                 const variable = this.model.variable(declaration);
-                const cpp = this.model.qualified(variable);
+                const cpp = this.model.variableCpp(variable);
                 return {
                     cpp,
                     storage: variable.shape,
@@ -5029,12 +5045,34 @@ class RecordBodyLowerer extends PinnedNumericLowerer {
                     : `${indent}${this.localCpp(captured)} = ${value};`,
             ];
         const cpp = this.declare(declaration.name, storage);
+        const owned = initializer
+            ? this.ownedRead(initializer, value, storage)
+            : value;
         return [
-            `${indent}${this.mayBeUnread(declaration.name) ? "[[maybe_unused]] " : ""}${this.cpp(storage)} ${cpp} = ${value};`,
+            `${indent}${this.mayBeUnread(declaration.name) ? "[[maybe_unused]] " : ""}${this.cpp(storage)} ${cpp} = ${owned};`,
             ...(storage.kind === "string"
                 ? this.stringViewLines(declaration, cpp, indent)
                 : []),
         ];
+    }
+
+    /**
+     * A local initialized by reading existing storage -- a name, a member,
+     * an element -- holds its own copy of what is stored there, as the
+     * JavaScript binding does.
+     */
+    private ownedRead(
+        source: ts.Expression,
+        value: string,
+        storage: RecordShape,
+    ): string {
+        const read = unwrapExpression(source);
+        return !this.isAbsentLiteral(read) &&
+            (ts.isIdentifier(read) ||
+                ts.isPropertyAccessExpression(read) ||
+                ts.isElementAccessExpression(read))
+            ? this.model.representations.snapshot(value, storage)
+            : value;
     }
 
     /** A local's storage: its erased annotation, its initializer's shape, or its type's. */
@@ -5296,13 +5334,17 @@ class RecordBodyLowerer extends PinnedNumericLowerer {
         }
         const shape = this.ownerShape(iterated);
         const range = this.temporary("range");
-        const prefix = [`auto ${range} = ${this.presentValue(iterated)};`];
+        // The loop keeps the collection it started from, and each binding
+        // its own element, as JavaScript's iteration does.
+        const prefix = [
+            `auto ${range} = ${this.ownedRead(iterated, this.presentValue(iterated), shape)};`,
+        ];
         const bind = (name: ts.Identifier, value: string): string => {
             const storage = this.model.shapeOf(
                 this.checker.getTypeAtLocation(name),
                 name,
             );
-            return `${this.cpp(storage)} ${this.declare(name, storage)} = ${value};`;
+            return `${this.cpp(storage)} ${this.declare(name, storage)} = ${this.model.representations.snapshot(value, storage)};`;
         };
         if (shape.kind === "array") {
             if (!ts.isIdentifier(binding))

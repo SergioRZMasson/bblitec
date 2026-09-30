@@ -1485,6 +1485,23 @@ export class PinnedNumericLowerer {
         );
     }
 
+    /** Whether the function declaring `declaration` assigns `source`'s storage. */
+    private storageReassigned(
+        declaration: ts.VariableDeclaration,
+        source: ts.Expression,
+    ): boolean {
+        const text = source.getText();
+        return (
+            findAnalysisNode(
+                enclosingFunction(declaration),
+                (node) =>
+                    ts.isBinaryExpression(node) &&
+                    node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+                    unwrapExpression(node.left).getText() === text,
+            ) !== undefined
+        );
+    }
+
     private declarations(
         list: ts.VariableDeclarationList,
         indent: string,
@@ -1808,19 +1825,25 @@ export class PinnedNumericLowerer {
                 lines.push(`${indent}${listStorage(shape)!} ${cpp};`);
                 continue;
             }
-            // `let pathArray = options.pathArray` -- a mutable copy of a
-            // list the caller owns. A `const` would alias, but the pin
-            // reseats this one, so it copies the way JavaScript's own
-            // assignment of the reference then reassignment does.
-            const listSource = this.binding(unwrapExpression(source));
+            // `const path = options.path` -- a second name for a list the
+            // caller owns, which JavaScript aliases: a reference, with the
+            // source's own constness. `let pathArray = options.pathArray`,
+            // which the pin reseats, copies the way JavaScript's own
+            // assignment of the reference then reassignment does; so does
+            // a name whose source is reseated, which keeps the old list.
+            const listNode = unwrapExpression(source);
+            const listSource = this.binding(listNode);
             if (listSource && isListShape(listSource.type)) {
                 this.bindLocal(declaration.name, {
                     cpp,
                     type: listSource.type,
                 });
                 lines.push(
-                    `${indent}${listStorage(listSource.type)!} ` +
-                        `${cpp} = ${listSource.cpp};`,
+                    (isConst || !this.reassigned(declaration, name)) &&
+                        !this.storageReassigned(declaration, listNode)
+                        ? `${indent}auto&& ${cpp} = ${listSource.cpp};`
+                        : `${indent}${listStorage(listSource.type)!} ` +
+                              `${cpp} = ${listSource.cpp};`,
                 );
                 continue;
             }

@@ -40,6 +40,7 @@ import {
     cppArrayDeclaration,
     doubleLiteral,
     floatLiteral,
+    lazyStaticAccessor,
     snakeCase,
 } from "../cpp-literals.js";
 import { LoweringContext } from "./context.js";
@@ -2040,7 +2041,16 @@ ${this.functions.join("\n\n")}
 
 ${simulation}
 
-${this.snapshot ? this.snapshotState(this.snapshot) : `State state(${this.capacity}u);`}
+${
+    this.snapshot
+        ? this.snapshotState(this.snapshot)
+        : lazyStaticAccessor({
+              name: "state",
+              type: "State",
+              initializer: `State(${this.capacity}u)`,
+              storage: "static",
+          })
+}
 
 } // namespace ${this.namespace}`;
     }

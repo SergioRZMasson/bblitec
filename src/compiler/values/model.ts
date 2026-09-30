@@ -1,3 +1,4 @@
+import { cppIdentifierPattern } from "../../cpp-literals.js";
 import type { ValueBase, ValueFields, ValueKind } from "../types.js";
 import type { ValuePayloads } from "./payloads.js";
 import {
@@ -61,6 +62,22 @@ export function withNativeMetadata(
         ...nativeDataMetadata(source),
         ...value,
     });
+}
+
+/** Whether a value's spelling reads storage that already exists. */
+export function readsNativeStorage(value: Value): boolean {
+    return (
+        value.nativeLvalue === true ||
+        value.sharedStorageCpp !== undefined ||
+        cppIdentifierPattern.test(value.cpp)
+    );
+}
+
+/** The initializer of a local that owns `value`: a snapshot of existing storage. */
+export function snapshotReadCpp(value: Value): string {
+    return readsNativeStorage(value)
+        ? `bbl::js::snapshot_value(${value.cpp})`
+        : value.cpp;
 }
 
 /** The native test that an optional expression holds a value. */

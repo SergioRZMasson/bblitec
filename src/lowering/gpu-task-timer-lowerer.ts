@@ -32,7 +32,7 @@ const activeSchema = pinnedRecordSchema("GpuActiveTaskTiming", {
     dropped: "dropped",
 });
 /** The active task's timing; every read follows the pin's own presence guard. */
-const active = "active_task_timing.value()";
+const active = "bbl::js::present(active_task_timing)";
 /** `bigint | null` locals of the readback envelope. */
 const envelope = new Set(["earliestBegin", "latestEnd"]);
 /** Boolean fields of the timer and its active task timing. */
@@ -455,9 +455,11 @@ export function lowerGpuTaskTimer(context: LoweringContext): string {
                                 );
                                 // The source clears its records before any
                                 // statement reads them again (asserted
-                                // below), so the frame's copy takes them.
+                                // below), so the frame's copy takes them and
+                                // leaves records empty; the reserve restores
+                                // the capacity.
                                 return [
-                                    `${indent}auto frame_records = std::move(records);`,
+                                    `${indent}auto frame_records = std::exchange(records, {});`,
                                     `${indent}records.reserve(frame_records.size());`,
                                 ];
                             }

@@ -5445,7 +5445,9 @@ test("compiles generated mesh data and the file-texture contract", () => {
     for (const [index, field] of ["positions", "normals", "indices"].entries())
         assert.match(
             result.cpp,
-            new RegExp(`auto ${mesh[index + 1]} = v_cube\\.${field};`),
+            new RegExp(
+                `auto ${mesh[index + 1]} = bbl::js::snapshot_value\\(v_cube\\.${field}\\);`,
+            ),
         );
     assert.match(
         result.cpp,

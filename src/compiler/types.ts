@@ -11,6 +11,8 @@ export {
     optionalValueCpp,
     presenceCpp,
     presenceFlagCpp,
+    readsNativeStorage,
+    snapshotReadCpp,
     statedTruthinessCpp,
     valueForKind,
     withNativeMetadata,

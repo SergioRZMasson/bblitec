@@ -129,7 +129,7 @@ test("typed captures name a concrete environment struct", () => {
     assert.equal(capture.environmentType, `bblscene::${struct.name}`);
     assert.deepEqual(struct.lines.slice(0, 4), [
         `struct ${struct.name} {`,
-        "    std::decay_t<double> capture0;",
+        "    std::decay_t<double> capture0{};",
         "    std::reference_wrapper<bbl::Engine> capture1;",
         "    void gc_trace([[maybe_unused]] const bbl::js::TraceVisitor& visitor) const {",
     ]);

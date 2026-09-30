@@ -200,6 +200,24 @@ export function cppArrayDeclaration(
 }
 
 /**
+ * An accessor returning a function-local object.
+ *
+ * The object is constructed at its first use, where a throwing initializer
+ * reaches the caller; at namespace scope it would be built during static
+ * initialization, where any exception terminates the process.
+ */
+export function lazyStaticAccessor(options: {
+    readonly name: string;
+    readonly type: string;
+    readonly initializer: string;
+    readonly storage: "static" | "thread_local";
+    readonly inline?: boolean;
+}): string {
+    const { name, type, initializer, storage } = options;
+    return `${options.inline ? "inline " : ""}${type}& ${name}() {\n    ${storage} ${type} value = ${initializer};\n    return value;\n}`;
+}
+
+/**
  * A whole string that is exactly one C++ identifier.
  *
  * The one spelling every consumer shares — emitted-C++ identifier checks
