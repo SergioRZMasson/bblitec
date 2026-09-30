@@ -31,7 +31,7 @@ import {
 } from "./data-types.js";
 import { MATH_MEMBERS, mathMemberCall } from "./math-intrinsics.js";
 import { classMemberTable, classMethod } from "./class-members.js";
-import type { Value } from "./types.js";
+import { readsNativeStorage, type Value } from "./types.js";
 import {
     bindingIsOnlyCalledDirectly,
     borrowsReferenceParameter,
@@ -880,9 +880,7 @@ export class NativeFunctionLowerer {
                     dataTypesEqual(value.dataType, dataType)
                 ) {
                     if (
-                        (value.nativeLvalue ||
-                            value.sharedStorageCpp !== undefined ||
-                            cppIdentifierPattern.test(value.cpp)) &&
+                        readsNativeStorage(value) &&
                         directKernel !== undefined &&
                         this.directKernelCannotRunUserCode(directKernel) &&
                         laterArguments.every(

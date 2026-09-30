@@ -1166,6 +1166,24 @@ test("pushes a record onto a record list by its C++ spelling", () => {
     assert.doesNotMatch(emitted, /object Object/);
 });
 
+// `const path = options.path` is a second name for the caller's list, as
+// JavaScript's alias is, so it binds by reference with the source's own
+// constness; a `let` the body reseats keeps its own copy.
+test("binds a list alias by reference and copies one that a reseat would part", () => {
+    const bindings: [string, PinnedBinding][] = [
+        ["ar1", { cpp: "ar1", type: "vec3-list" }],
+        ["path", { cpp: "path_points", type: "vec3-list" }],
+        ["i", { cpp: "i", type: "scalar" }],
+    ];
+    const aliased = lower("const p = path; ar1.push(p[i]);", bindings);
+    assert.match(aliased, /auto&& p = path_points;/);
+    assert.match(aliased, /ar1\.push_back\(p\[[^\]]*i[^\]]*\]\);/);
+    const reseated = lower("let q = path; q = ar1; ar1.push(q[i]);", bindings);
+    assert.match(reseated, /std::vector<[^>]+> q = path_points;/);
+    const kept = lower("const r = path; path = ar1; ar1.push(r[i]);", bindings);
+    assert.match(kept, /std::vector<[^>]+> r = path_points;/);
+});
+
 // `createCapsuleData` declares `let x: number; let y: number;` once and
 // then writes `for (y = 0; ...)` four times -- the loop variable the rest
 // of the builder family spells inline, hoisted because two of its loops

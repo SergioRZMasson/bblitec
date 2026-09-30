@@ -619,7 +619,7 @@ test("the region phases keep the pin's own order", () => {
             "std::shared_ptr<PhysicsRegion> get_or_create_region(",
             reachingModules.source,
         ),
-        /physics_world_create\(\);\n {4}pal::physics_world_set_gravity\(newWorld, world\.fo->gravity\);\n[\s\S]*?physics_world_get_speed_limit\(world\.handle\);\n {4}pal::physics_world_set_speed_limit\(/,
+        /physics_world_create\(\);\n {4}pal::physics_world_set_gravity\(newWorld, bbl::js::present\(world\.fo\)\.gravity\);\n[\s\S]*?physics_world_get_speed_limit\(world\.handle\);\n {4}pal::physics_world_set_speed_limit\(/,
     );
 });
 
@@ -627,7 +627,10 @@ test("a migrating body carries its velocity and the 20% margin", () => {
     const body = emittedBody("void re_region_body(", reachingModules.source);
     // `const margin = fo.radius * 1.2` and the squared test it feeds: the
     // hysteresis is what stops a body on a boundary re-regioning every step.
-    assert.match(body, /const double margin = \(world\.fo->radius \* 1\.2\);/);
+    assert.match(
+        body,
+        /const double margin = \(bbl::js::present\(world\.fo\)\.radius \* 1\.2\);/,
+    );
     // `HP_World_AddBody` does not carry velocity, so the pin reads both
     // vectors before the move and writes them back after it.
     assert.match(

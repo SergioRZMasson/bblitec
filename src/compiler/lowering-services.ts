@@ -222,6 +222,7 @@ export interface LoweringServices {
     registerNativeConstBinding(
         name: string,
         allowReference?: boolean,
+        cppType?: string,
     ): NativeCaptureBinding;
     takeNativeTemporary(cpp: string, boundary: number): string;
     /** Whether a value names a native binding nothing reassigns. */
@@ -245,6 +246,10 @@ export interface LoweringServices {
         expression: ts.Expression,
         kind: TypedArrayKind,
     ): string;
+    heldTypedArrayValue(
+        expression: ts.Expression,
+        kind: TypedArrayKind,
+    ): Value | undefined;
     compileForDataSink(expression: ts.Expression, dataType: DataType): string;
     compileSpriteAtlasRecord(value: Value, node: ts.Node): string | undefined;
     compileSpriteAtlas(expression: ts.Expression): Value;

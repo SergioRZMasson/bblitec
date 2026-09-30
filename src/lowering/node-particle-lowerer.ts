@@ -1150,8 +1150,8 @@ struct BakedParticle {
     Vec3 position;
     Vec2 size_world;
     Vec4 color;
-    float rotation;
-    float frame;
+    float rotation{};
+    float frame{};
 };
 
 struct BakedSystem {
@@ -2079,28 +2079,29 @@ void sync_native_particle_billboard(Engine& engine, BillboardSystemHandle billbo
     }
 }
 
-template <auto& state>
+/** One system's operations, over the state its namespace's accessor owns. */
+template <auto state>
 struct NativeParticleOps {
     static void init(const bbl::js::Callback<bbl::js::F32Array()>& provider, const std::array<float, 16>& snapshot) {
-        state.emitter_provider = bbl::js::make_closure(provider, [](auto& callback) {
+        state().emitter_provider = bbl::js::make_closure(provider, [](auto& callback) {
             return sample_node_particle_emitter(callback);
         });
-        initialize(state, snapshot);
+        initialize(state(), snapshot);
     }
-    static void start() { start_particle_system(state); }
-    static void stop() { stop_particle_system(state); }
-    static void animate(double ratio) { animate_particle_system(state, ratio); }
+    static void start() { start_particle_system(state()); }
+    static void stop() { stop_particle_system(state()); }
+    static void animate(double ratio) { animate_particle_system(state(), ratio); }
     static void scalar(const char* name, double value) {
         const std::string_view field(name);
-        if (field == "emitRate") state.emit_rate = value;
-        else if (field == "updateSpeed") state.update_speed = value;
-        else if (field == "targetStopDuration") state.target_stop_duration = value;
+        if (field == "emitRate") state().emit_rate = value;
+        else if (field == "updateSpeed") state().update_speed = value;
+        else if (field == "targetStopDuration") state().target_stop_duration = value;
         else throw std::runtime_error("Unknown native particle scalar.");
     }
-    static double alive() { return state.alive; }
-    static double capacity() { return state.capacity; }
+    static double alive() { return state().alive; }
+    static double capacity() { return state().capacity; }
     static void sync(Engine& engine, BillboardSystemHandle billboard) {
-        sync_native_particle_billboard(engine, billboard, state);
+        sync_native_particle_billboard(engine, billboard, state());
     }
 };
 
@@ -2342,14 +2343,14 @@ void sync_live_bridge(
  * The four operations of one lowered system over its own state; the
  * system's namespace supplies the functions through the state's type.
  */
-template <auto& state>
+template <auto state>
 struct LiveOps {
-    static void animate(double ratio) { animate_particle_system(state, ratio); }
+    static void animate(double ratio) { animate_particle_system(state(), ratio); }
     static void sync(Engine& engine, const LiveMapping& mapping) {
-        sync_live_bridge(engine, mapping, state);
+        sync_live_bridge(engine, mapping, state());
     }
-    static void start() { start_particle_system(state); }
-    static double alive() { return state.alive; }
+    static void start() { start_particle_system(state()); }
+    static double alive() { return state().alive; }
 };
 
 LiveMapping live_mappings[] = {

@@ -148,7 +148,7 @@ allocate_compute_texture(const std::shared_ptr<OffscreenRun>& run,
 
 // Texture-pool storage representation. The generated disposer chooses the count.
 inline void release_compute_texture_owner(const std::shared_ptr<ComputeStorageTexture>& resource) {
-    auto& image = *resource->sampled_texture->data.gpu_source;
+    auto& image = *js::present(resource->sampled_texture).data.gpu_source;
     image.release(image);
 }
 inline void

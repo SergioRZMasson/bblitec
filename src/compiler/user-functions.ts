@@ -1785,6 +1785,7 @@ export class UserFunctionLowerer {
                     result,
                     "shared_result",
                     ts.isExpression(call) ? call : undefined,
+                    true,
                 );
             if (
                 returnType &&
@@ -5574,13 +5575,10 @@ export class UserFunctionLowerer {
                 value.dataType &&
                 value.cpp
             ) {
-                const name = context.allocateTemporaryCppName("call_argument");
-                context.emit({
-                    kind: "declaration",
-                    type: "const auto",
-                    name: name,
-                    initializer: value.cpp,
-                });
+                const name = context.bindings.retainedValue(
+                    value,
+                    "call_argument",
+                ).cpp;
                 sink.push(
                     withNativeMetadata(
                         context.dataValue(name, value.dataType),

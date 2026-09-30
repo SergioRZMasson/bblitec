@@ -163,19 +163,28 @@ function bodyMembers(pinned: string, cpp: string): [string, PinnedBinding][] {
     ];
 }
 
+/** The world's floating-origin context; an absent one throws where the pin's read would. */
+const FLOATING_ORIGIN = "bbl::js::present(world.fo)";
+
 /** The world record's members the module reads. */
 function worldMembers(): [string, PinnedBinding][] {
     const fo = (pinned: string): [string, PinnedBinding][] => [
         [
             pinned,
-            { cpp: "(*world.fo)", type: "opaque", absentCpp: "!world.fo" },
+            { cpp: FLOATING_ORIGIN, type: "opaque", absentCpp: "!world.fo" },
         ],
-        [`${pinned}.radius`, scalar("world.fo->radius")],
-        [`${pinned}.gravity`, { cpp: "world.fo->gravity", type: "f64-buffer" }],
-        [`${pinned}.regions`, { cpp: "world.fo->regions", type: "opaque" }],
+        [`${pinned}.radius`, scalar(`${FLOATING_ORIGIN}.radius`)],
+        [
+            `${pinned}.gravity`,
+            { cpp: `${FLOATING_ORIGIN}.gravity`, type: "f64-buffer" },
+        ],
+        [
+            `${pinned}.regions`,
+            { cpp: `${FLOATING_ORIGIN}.regions`, type: "opaque" },
+        ],
         [
             `${pinned}.regions.length`,
-            scalar("static_cast<double>(world.fo->regions.size())"),
+            scalar(`static_cast<double>(${FLOATING_ORIGIN}.regions.size())`),
         ],
     ];
     return [
@@ -205,7 +214,7 @@ function contextMembers(): [string, PinnedBinding][] {
 /** The record lists the bodies index, by their native spelling. */
 const RECORD_LISTS: ReadonlyMap<string, "body" | "region"> = new Map([
     ["world.bodies", "body" as const],
-    ["world.fo->regions", "region" as const],
+    [`${FLOATING_ORIGIN}.regions`, "region" as const],
     ["fo.regions", "region" as const],
 ]);
 

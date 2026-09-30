@@ -736,6 +736,10 @@ export class ClassLowerer {
                 kind: "comment",
                 code: "    // The prebuilt all-null instance is the source fallback.",
             });
+            this.context.emit({
+                kind: "expression",
+                code: "    bbl::discard_exception();",
+            });
             this.context.emit({ kind: "close", code: "}" });
             return instance;
         } finally {

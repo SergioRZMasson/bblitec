@@ -122,8 +122,12 @@ test(
         if (first.scaling.z !== 4) throw new Error("scaling alias lost");
     `,
         );
-        assert.match(cpp, /const auto \w+vector_owner\w* =/);
-        assert.match(cpp, /mark_mesh_dirty\([^;]*vector_owner/);
+        // The owner is read once into a const local that every write and
+        // dirty mark through the alias addresses.
+        assert.match(
+            cpp,
+            /const auto (\w+_owner_\d+) = [^;]+;[\s\S]*mark_mesh_dirty\(v_engine, \1\)/,
+        );
     },
 );
 
@@ -160,7 +164,10 @@ test("exact scene106 lowers enum array sinks and its physics-step vector alias",
     const { cpp } = compileSource(source, { fileName });
     assert.match(cpp, /static_cast<bbl::upstream::PhysicsMotionType>\(/);
     assert.match(cpp, /static_cast<bbl::upstream::PhysicsPrestepType>\(/);
-    assert.match(cpp, /mark_mesh_dirty\([^;]*vector_owner/);
+    assert.match(
+        cpp,
+        /const auto (\w+_owner_\d+) = [^;]+;[\s\S]*mark_mesh_dirty\(v_engine, \1\)/,
+    );
     assert.throws(
         () =>
             compileSource(source.replace("motions[motion]!", "Math.random()"), {

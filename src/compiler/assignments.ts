@@ -1895,15 +1895,10 @@ export function emitPropertyAssignment(
             const engine = context.requireEngine(mesh, expression);
             if (mesh.kind === "scene-node") {
                 context.reachFeature("scene:node-transforms", expression);
-                const target = context.allocateTemporaryCppName(
+                const target = context.bindings.retainedValue(
+                    mesh,
                     "scene_node_transform_target",
-                );
-                context.emit({
-                    kind: "declaration",
-                    type: "const auto",
-                    name: target,
-                    initializer: mesh.cpp,
-                });
+                ).cpp;
                 let previous: string | undefined;
                 if (operator !== "=") {
                     previous = context.allocateTemporaryCppName(

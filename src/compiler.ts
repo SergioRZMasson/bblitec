@@ -3700,6 +3700,29 @@ class Compiler implements LoweringServices {
         return this.dataLowerer.compileForSink(expression, { kind });
     }
 
+    /**
+     * A typed-array argument the source already holds -- a name, a member,
+     * an element -- as the value of its storage, where it is of `kind`.
+     */
+    public heldTypedArrayValue(
+        expression: ts.Expression,
+        kind: TypedArrayKind,
+    ): Value | undefined {
+        const read = this.unwrap(expression);
+        if (
+            !ts.isIdentifier(read) &&
+            !ts.isPropertyAccessExpression(read) &&
+            !ts.isElementAccessExpression(read)
+        )
+            return undefined;
+        return this.probeEmission(() => {
+            const value = this.compileValue(expression);
+            return value.kind === "data" && value.dataType?.kind === kind
+                ? value
+                : undefined;
+        });
+    }
+
     public compileForDataSink(
         expression: ts.Expression,
         dataType: DataType,
@@ -4914,8 +4937,14 @@ class Compiler implements LoweringServices {
     public registerNativeConstBinding(
         name: string,
         allowReference = false,
+        cppType?: string,
     ): NativeCaptureBinding {
-        const binding = this.registerNativeBinding(name, false, allowReference);
+        const binding = this.registerNativeBinding(
+            name,
+            false,
+            allowReference,
+            cppType,
+        );
         this.nativeConstBindings.add(binding);
         return binding;
     }

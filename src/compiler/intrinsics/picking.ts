@@ -69,6 +69,8 @@ export function compilePickingIntrinsic(
             context.expectArgumentCount(call, 5, 5);
             context.reachJsData();
             context.reachFeature("picking:ray", call);
+            // The call reads the matrix and keeps none of it, so that
+            // argument binds where its value already lives.
             const argumentsCpp = call.arguments.map((argument, index) =>
                 index === 2
                     ? context.compileTypedArrayArgument(argument, "f32array")
@@ -98,7 +100,7 @@ export function compilePickingIntrinsic(
                     argumentsCpp
                         .map(
                             (cpp, index) =>
-                                `const auto ${names[index]} = ${cpp};`,
+                                `const auto${index === 2 ? "&" : ""} ${names[index]} = ${cpp};`,
                         )
                         .join(" ") +
                     ` const auto ${ray} = bbl::upstream::picking_ray::create_picking_ray_array(${names.join(", ")});`,

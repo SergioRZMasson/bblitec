@@ -290,7 +290,7 @@ function scope(
                 )
             )
                 return [
-                    `${indent}std::copy(data.begin(), data.end(), arena->buffer->data->begin() + static_cast<std::ptrdiff_t>(start));`,
+                    `${indent}std::copy(data.begin(), data.end(), bbl::js::present(arena->buffer->data).begin() + static_cast<std::ptrdiff_t>(start));`,
                 ];
             if (
                 context.expressionMatchesShape(
@@ -299,7 +299,7 @@ function scope(
                 )
             )
                 return [
-                    `${indent}arena->buffer->run->device().write_buffer(handle, start, {arena->buffer->data->data() + static_cast<std::size_t>(start), static_cast<std::size_t>(size)});`,
+                    `${indent}arena->buffer->run->device().write_buffer(handle, start, {bbl::js::present(arena->buffer->data).data() + static_cast<std::size_t>(start), static_cast<std::size_t>(size)});`,
                 ];
             return undefined;
         },

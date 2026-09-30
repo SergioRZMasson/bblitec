@@ -3672,18 +3672,13 @@ export class StatementLowerer {
             if (target.kind === "scene-node") {
                 context.reachFeature("scene:node-transforms", call);
             }
-            let targetCpp = target.cpp;
-            if (target.kind === "scene-node") {
-                targetCpp = context.allocateTemporaryCppName(
-                    "scene_node_transform_target",
-                );
-                context.emit({
-                    kind: "declaration",
-                    type: "const auto",
-                    name: targetCpp,
-                    initializer: target.cpp,
-                });
-            }
+            const targetCpp =
+                target.kind === "scene-node"
+                    ? context.bindings.retainedValue(
+                          target,
+                          "scene_node_transform_target",
+                      ).cpp
+                    : target.cpp;
             const vector = `${transform.cppType}{${this.setCallComponents(
                 context,
                 call,

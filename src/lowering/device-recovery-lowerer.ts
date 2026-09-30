@@ -654,7 +654,7 @@ std::shared_ptr<DeviceRecoveryRegistration> enable_device_lost_scene_recovery(En
         throw std::runtime_error("Cannot register recovery on a disposed engine.");
     auto registration = std::make_shared<DeviceRecoveryRegistration>();
     registration->kind = ${stringLiteral(kind.initializer.text)};
-    return enable_device_lost_recovery(engine, std::move(registration));
+    return enable_device_lost_recovery(engine, registration);
 }`;
 }
 

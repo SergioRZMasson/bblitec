@@ -574,7 +574,8 @@ function disposalCpp(context: LoweringContext): string {
     const calls = new Map<string, PinnedCallSpelling>();
     calls.set(
         "_textureOwners",
-        () => "resource->sampled_texture->data.gpu_source->owners",
+        () =>
+            "bbl::js::present(resource->sampled_texture).data.gpu_source->owners",
     );
     calls.set(
         "releaseTexture",

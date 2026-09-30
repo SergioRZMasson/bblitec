@@ -131,6 +131,7 @@ ${lowerPinnedBody(file, declaration.body!.statements, {
         bind("group._additive", "group.additive", "bool");
         bind("additive", "group.additive", "bool");
         bind("additive.referenceTime", "group.additive_reference_time");
+        bind("node._matrix", "node.matrix.has_value()", "bool");
         for (const name of ["n", "node"])
             for (const member of [
                 "tx",
@@ -238,8 +239,6 @@ ${lowerPinnedBody(file, declaration.body!.statements, {
                     )
                 )
                     return "target.has_bone_overrides";
-                if (context.expressionMatchesShape(node, "node._matrix"))
-                    return "node.matrix.has_value()";
                 if (
                     context.expressionMatchesShape(
                         node,

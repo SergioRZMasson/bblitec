@@ -108,6 +108,7 @@ export interface MeshIntrinsicContext
             | "resolveStaticExpression"
             | "symbols"
             | "handleCollections"
+            | "heldTypedArrayValue"
             | "fail"
         > {}
 
@@ -1270,11 +1271,13 @@ function compileMeshStream(
     kind: "f32array" | "u32array",
     label: string,
 ): string {
+    // A held stream is pinned as the storage it reads.
     return context.bindings.pinValueToTemporary(
-        context.dataLowerer.leafValue(
-            context.compileTypedArrayArgument(expression, kind),
-            { kind },
-        ),
+        context.heldTypedArrayValue(expression, kind) ??
+            context.dataLowerer.leafValue(
+                context.compileTypedArrayArgument(expression, kind),
+                { kind },
+            ),
         label,
         expression,
     ).cpp;

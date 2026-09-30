@@ -49,6 +49,8 @@ import {
     optionalPresentCpp,
     optionalValueCpp,
     presenceFlagCpp,
+    readsNativeStorage,
+    snapshotReadCpp,
     statedTruthinessCpp,
     valueForKind,
     withNativeMetadata,
@@ -970,26 +972,28 @@ export class DeclarationLowerer {
                 );
             const boundCpp = sharedDataBinding ? `(*${cppName})` : cppName;
             const selectedCpp = narrowed.ownedCpp ?? narrowed.cpp;
-            const transferredCpp = narrowed.borrowedData
-                ? selectedCpp
-                : selectedCpp === narrowed.cpp
-                  ? this.context.takeNativeTemporary(
-                        selectedCpp,
-                        initializerBoundary,
-                    )
-                  : selectedCpp;
+            // A borrowing local reads its owner; only an owning one takes a
+            // temporary.
+            const transferredCpp =
+                !narrowed.borrowedData &&
+                !stableOwnerAlias &&
+                selectedCpp === narrowed.cpp
+                    ? this.context.takeNativeTemporary(
+                          selectedCpp,
+                          initializerBoundary,
+                      )
+                    : selectedCpp;
             let initializerCpp = transferredCpp;
             if (
                 !stableOwnerAlias &&
                 !narrowed.borrowedData &&
                 narrowed.ownedCpp === undefined &&
                 transferredCpp === selectedCpp &&
-                (narrowed.nativeLvalue ||
-                    cppIdentifierPattern.test(selectedCpp)) &&
+                readsNativeStorage(narrowed) &&
                 (wrapperCopiesIdentity || referenceStruct)
             ) {
                 this.context.reachJsData();
-                initializerCpp = `bbl::js::snapshot_value(${selectedCpp})`;
+                initializerCpp = snapshotReadCpp(narrowed);
             }
             const slotFoundCpp = this.pinSlotFound(
                 narrowed.slotFoundCpp,
@@ -1144,14 +1148,21 @@ export class DeclarationLowerer {
         // compileValue already emits a JS number at double precision.
         // Compiling the initializer again is observably wrong for calls and
         // other expressions that materialize temporaries.
+        const stableOwnerAlias = this.borrowsConstBinding(declaration, value);
+        // A borrowing local reads its owner; only an owning one takes a
+        // temporary.
         let initializerCpp =
             value.ownedCpp ??
-            this.context.takeNativeTemporary(value.cpp, initializerBoundary);
-        const stableOwnerAlias = this.borrowsConstBinding(declaration, value);
+            (stableOwnerAlias
+                ? value.cpp
+                : this.context.takeNativeTemporary(
+                      value.cpp,
+                      initializerBoundary,
+                  ));
         if (
             !stableOwnerAlias &&
             initializerCpp === value.cpp &&
-            (value.nativeLvalue || cppIdentifierPattern.test(value.cpp)) &&
+            readsNativeStorage(value) &&
             ![
                 "number",
                 "boolean",
@@ -1163,7 +1174,7 @@ export class DeclarationLowerer {
             ].includes(value.kind)
         ) {
             this.context.reachJsData();
-            initializerCpp = `bbl::js::snapshot_value(${value.ownedCpp ?? value.cpp})`;
+            initializerCpp = snapshotReadCpp(value);
         }
         const sharedBinding =
             sharedClosureStorage &&

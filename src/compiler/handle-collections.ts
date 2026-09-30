@@ -69,6 +69,7 @@ interface HandleCollectionLoopContext extends Pick<
     | "increaseIndent"
     | "decreaseIndent"
     | "bindings"
+    | "registerNativeConstBinding"
 > {}
 
 /**
@@ -108,17 +109,35 @@ export function emitHandleCollectionLoop<
     context.increaseIndent();
     context.bindings.pushScope(context.allocateBlockPrefix());
     try {
+        const declaration = binding.parent;
+        // `for (const x of ...)`: the source name is the loop's own const
+        // element, as JavaScript's per-iteration binding is.
+        const loopElement =
+            ts.isVariableDeclaration(declaration) &&
+            ts.isVariableDeclarationList(declaration.parent) &&
+            ts.isForOfStatement(declaration.parent.parent) &&
+            (declaration.parent.flags & ts.NodeFlags.Const) !== 0;
         const value = valueForKind(target.elementKind, {
             cpp: item,
             engineCpp: target.engineCpp,
+            ...(loopElement
+                ? {
+                      nativeCaptures: [
+                          context.registerNativeConstBinding(
+                              item,
+                              false,
+                              `const ${target.elementCppType}`,
+                          ),
+                      ],
+                  }
+                : {}),
             ...(extraBinding ?? {}),
         });
-        context.bindings.bindLocalValue(
-            binding,
-            target.elementTemplate
-                ? withNativeMetadata(value, target.elementTemplate)
-                : value,
-        );
+        const bound = target.elementTemplate
+            ? withNativeMetadata(value, target.elementTemplate)
+            : value;
+        if (loopElement) context.bindings.defineVariable(binding, bound);
+        else context.bindings.bindLocalValue(binding, bound);
         emitBody(context);
     } finally {
         context.bindings.popScope();

@@ -60,12 +60,6 @@ template <class T> [[nodiscard]] bool truthy(const js::Nullable<T>& value) {
     return value.has_value() && truthy(*value);
 }
 
-/** A value the pin proved present (`x!`, a guarded optional). */
-template <class T> [[nodiscard]] T& present(js::Nullable<T>& value) { return value.value(); }
-template <class T> [[nodiscard]] const T& present(const js::Nullable<T>& value) {
-    return value.value();
-}
-
 /** `left ?? right`, with `right` evaluated only when `left` is absent. */
 template <class R, class L, class F> [[nodiscard]] R nullish(const L& left, F right) {
     if constexpr (js::IsNullable<L>::value)

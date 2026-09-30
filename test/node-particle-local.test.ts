@@ -232,7 +232,7 @@ for (const provider of [false, true])
             ] as const;
             for (const [name, values] of columns) {
                 checks.push(`{ const std::array<double, ${system.buffer.alive}> expected{${Array.from(values).slice(0, system.buffer.alive).join(",")}};
-            for (std::size_t i = 0; i < expected.size(); ++i) assert(static_cast<double>(npe_0_0::state.${name}[i]) == expected[i]); }`);
+            for (std::size_t i = 0; i < expected.size(); ++i) assert(static_cast<double>(npe_0_0::state().${name}[i]) == expected[i]); }`);
             }
             const output = resolve(
                 `artifacts/node-particle-local-check${provider ? "-provider" : ""}`,
@@ -267,52 +267,52 @@ int main() {
         return snapshot;
     };
     const auto snapshot = sample();
-    npe_0_0::state.emitter_provider = sample;
-    npe_0_0::initialize(npe_0_0::state, snapshot);
+    npe_0_0::state().emitter_provider = sample;
+    npe_0_0::initialize(npe_0_0::state(), snapshot);
     assert(provider_calls == 1);
-    assert(npe_0_0::state.emitter_world_matrix == snapshot);
-    assert(npe_0_0::state.emitter.x == ${facts.emitter[0]});
-    assert(npe_0_0::state.emitter.y == ${facts.emitter[1]});
-    assert(npe_0_0::state.emitter.z == ${facts.emitter[2]});
-    npe_0_0::animate_particle_system(npe_0_0::state, 1.0);
+    assert(npe_0_0::state().emitter_world_matrix == snapshot);
+    assert(npe_0_0::state().emitter.x == ${facts.emitter[0]});
+    assert(npe_0_0::state().emitter.y == ${facts.emitter[1]});
+    assert(npe_0_0::state().emitter.z == ${facts.emitter[2]});
+    npe_0_0::animate_particle_system(npe_0_0::state(), 1.0);
     assert(provider_calls == 1);
     `
             : ""
     }
-    npe_0_0::start_particle_system(npe_0_0::state);
+    npe_0_0::start_particle_system(npe_0_0::state());
     for (std::size_t frame = 1; frame <= 180; ++frame) {
         ${provider ? "std::copy(matrices[frame].begin(), matrices[frame].end(), matrix.begin());" : ""}
-        npe_0_0::animate_particle_system(npe_0_0::state, 1.0);
+        npe_0_0::animate_particle_system(npe_0_0::state(), 1.0);
     }
     ${
         provider
             ? `
-    npe_0_0::state.update_speed = 0;
+    npe_0_0::state().update_speed = 0;
     for (std::size_t frame = 181; frame <= 182; ++frame) {
-        if (frame == 182) npe_0_0::stop_particle_system(npe_0_0::state);
+        if (frame == 182) npe_0_0::stop_particle_system(npe_0_0::state());
         std::copy(matrices[frame].begin(), matrices[frame].end(), matrix.begin());
-        npe_0_0::animate_particle_system(npe_0_0::state, 1.0);
+        npe_0_0::animate_particle_system(npe_0_0::state(), 1.0);
     }
     assert(provider_calls == 183);
-    assert(npe_0_0::state.emitter_world_matrix == matrices.back());
-    const auto stable = npe_0_0::state.emitter_world_matrix;
-    const auto alive = npe_0_0::state.alive;
+    assert(npe_0_0::state().emitter_world_matrix == matrices.back());
+    const auto stable = npe_0_0::state().emitter_world_matrix;
+    const auto alive = npe_0_0::state().alive;
     matrix.resize(15);
     bool invalid_length = false;
-    try { npe_0_0::animate_particle_system(npe_0_0::state, 1.0); }
+    try { npe_0_0::animate_particle_system(npe_0_0::state(), 1.0); }
     catch (const std::runtime_error&) { invalid_length = true; }
     assert(invalid_length);
     matrix.resize(16);
     matrix[3] = std::numeric_limits<float>::quiet_NaN();
     bool invalid_value = false;
-    try { npe_0_0::animate_particle_system(npe_0_0::state, 1.0); }
+    try { npe_0_0::animate_particle_system(npe_0_0::state(), 1.0); }
     catch (const std::runtime_error&) { invalid_value = true; }
     assert(invalid_value);
-    assert(npe_0_0::state.emitter_world_matrix == stable && npe_0_0::state.alive == alive);
+    assert(npe_0_0::state().emitter_world_matrix == stable && npe_0_0::state().alive == alive);
     `
             : ""
     }
-    assert(npe_0_0::state.alive == ${system.buffer.alive});
+    assert(npe_0_0::state().alive == ${system.buffer.alive});
     assert(next == ${next});
     ${checks.join("\n")}
 }
