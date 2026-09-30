@@ -112,10 +112,7 @@ export function browserCaptureStaleness(
                     scene.source,
                     seekSeconds,
                     scene.parity?.referenceAnimationGroups,
-                    goldenFixedFrame(
-                        scene,
-                        captureUiEnabled() && usesRetainedUi(scene),
-                    ),
+                    goldenFixedFrame(scene, usesRetainedUi(scene)),
                 ),
         },
     );
@@ -367,10 +364,7 @@ export async function runInstrumentedCapture(
     // byte-identity check below compares two different conventions,
     // which is how every retained-UI scene once read DIFFERS forever.
     const captureUi = captureUiEnabled();
-    const referenceFrame = goldenFixedFrame(
-        scene,
-        captureUi && usesRetainedUi(scene),
-    );
+    const referenceFrame = goldenFixedFrame(scene, usesRetainedUi(scene));
     const outputDirectory = resolve(
         options.outputDirectory ?? defaultCaptureDirectory(scene.id),
     );

@@ -97,13 +97,12 @@ test("derives the instrumented capture's fixed frame exactly as the golden captu
     assert.equal(goldenFixedFrame(pinned, true), 7);
     assert.equal(goldenFixedFrame(pinned, false), 7);
     // A retained-UI application without one takes the native gate's
-    // BBLITE_SCREENSHOT_FRAME — in the full-page mode only, which is
-    // exactly when the golden derives it.
+    // BBLITE_SCREENSHOT_FRAME in every capture mode, full page or
+    // canvas-only; a scene without retained UI derives nothing.
     const application = applicationScene({
         nativeEnvironment: { BBLITE_SCREENSHOT_FRAME: "181" },
     });
     assert.equal(goldenFixedFrame(application, true), 181);
-    assert.equal(goldenFixedFrame(application, false), undefined);
     assert.equal(goldenFixedFrame(application, false), undefined);
     // A non-positive or non-numeric native frame derives nothing.
     assert.equal(

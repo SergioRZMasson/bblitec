@@ -3007,8 +3007,7 @@ WGPURenderPipeline depth_only_pipeline_for(DawnState& state, bool double_sided,
 void encode_transmission_grab(DawnState& state, WGPUCommandEncoder encoder);
 
 // The pinned final pass: per-sample image processing of the linear
-// multisampled frame straight into the surface (the payoff SDL_GPU
-// could not express — it had to process the resolved pixel once).
+// multisampled frame straight into the surface.
 void encode_image_processing(DawnState& state, WGPUCommandEncoder encoder,
                              WGPUTextureView surface_view, const Scene& scene);
 

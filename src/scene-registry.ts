@@ -109,8 +109,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene1.ts",
         title: "Babylon Lite Native - BoomBox",
         parity: {
-            maxFullMad: 0.002,
-            maxForegroundMad: 0.015,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
             attribution: {
@@ -139,8 +139,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene6.ts",
         title: "Babylon Lite Native - PBR Gold Sphere",
         parity: {
-            maxFullMad: 0.005,
-            maxForegroundMad: 0.02,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [53, 53, 82],
             backgroundThreshold: 30,
         },
@@ -151,9 +151,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene14.ts",
         title: "Babylon Lite Native - Flight Helmet",
         parity: {
-            maxFullMad: 0.015,
-            maxForegroundMad: 0.01,
-            dawnThresholds: { maxFullMad: 0.015, maxForegroundMad: 0.007 },
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [61, 61, 94],
             backgroundThreshold: 30,
         },
@@ -164,13 +163,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene24.ts",
         title: "Babylon Lite Native - Hill Valley",
         parity: {
-            maxFullMad: 0.007,
-            maxForegroundMad: 0.008,
-            // Dawn sits at the golden since the .babylon camera reads at
-            // the pin's JavaScript-number width (measured 0.000014 full
-            // and foreground); the ceiling guards the next regression at
-            // well under one display step.
-            dawnThresholds: { maxFullMad: 0.0002, maxForegroundMad: 0.0002 },
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [174, 129, 107],
             backgroundThreshold: 30,
         },
@@ -181,8 +175,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene28.ts",
         title: "Babylon Lite Native - Clearcoat glTF",
         parity: {
-            maxFullMad: 0.05,
-            maxForegroundMad: 0.3,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -194,7 +188,7 @@ const sceneInputs: readonly SceneInput[] = [
         title: "Babylon Lite Native - Sheen Cloth glTF",
         parity: {
             maxFullMad: 0.001,
-            maxForegroundMad: 0.01,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -205,8 +199,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene31.ts",
         title: "Babylon Lite Native - Emissive Strength",
         parity: {
-            maxFullMad: 0.01,
-            maxForegroundMad: 0.03,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -218,8 +212,7 @@ const sceneInputs: readonly SceneInput[] = [
         title: "Babylon Lite Native - Punctual Lights",
         parity: {
             maxFullMad: 0.001,
-            maxForegroundMad: 0.012,
-            dawnThresholds: { maxFullMad: 0.001, maxForegroundMad: 0.008 },
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -286,8 +279,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene178.ts",
         title: "Babylon Lite Native - Iridescence Abalone",
         parity: {
-            maxFullMad: 0.05,
-            maxForegroundMad: 0.05,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [160, 160, 160],
             backgroundThreshold: 30,
         },
@@ -310,9 +303,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene212.ts",
         title: "Babylon Lite Native - Dispersion Test",
         parity: {
-            maxFullMad: 0.03,
-            maxForegroundMad: 0.035,
-            dawnThresholds: { maxFullMad: 0.025, maxForegroundMad: 0.03 },
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [255, 255, 255],
             backgroundThreshold: 30,
         },
@@ -324,8 +316,8 @@ const sceneInputs: readonly SceneInput[] = [
         title: "Babylon Lite Native - Morph Stress Test",
         parity: {
             referenceTimeSeconds: 0.5,
-            maxFullMad: 0.01,
-            maxForegroundMad: 0.02,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -349,8 +341,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene247.ts",
         title: "Babylon Lite Native - Teapots Galore",
         parity: {
-            maxFullMad: 0.01,
-            maxForegroundMad: 0.05,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -374,8 +366,8 @@ const sceneInputs: readonly SceneInput[] = [
         title: "Babylon Lite Native - Animation Sampler Type",
         parity: {
             referenceTimeSeconds: 2,
-            maxFullMad: 0.01,
-            maxForegroundMad: 0.01,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -399,8 +391,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene258.ts",
         title: "Babylon Lite Native - Interleaved Buffer",
         parity: {
-            maxFullMad: 0.01,
-            maxForegroundMad: 0.01,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -423,8 +415,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene265.ts",
         title: "Babylon Lite Native - Environment Test",
         parity: {
-            maxFullMad: 0.01,
-            maxForegroundMad: 0.1,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -518,8 +510,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene13.ts",
         title: "Babylon Lite Native - PBR Spheres Grid",
         parity: {
-            maxFullMad: 0.02,
-            maxForegroundMad: 0.1,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
             attribution: {
@@ -632,8 +624,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene164.ts",
         title: "Babylon Lite Native - Device Loss Recovery",
         parity: {
-            maxFullMad: 0.03,
-            maxForegroundMad: 0.03,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
             nativeEnvironment: {
@@ -1020,8 +1012,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene168.ts",
         title: "Babylon Lite Native - Mirrored Double-Sided Winding",
         parity: {
-            maxFullMad: 0.08,
-            maxForegroundMad: 0.45,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [13, 15, 23],
             backgroundThreshold: 30,
             attribution: {
@@ -1038,9 +1030,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene176.ts",
         title: "Babylon Lite Native - Mosquito In Amber",
         parity: {
-            maxFullMad: 0.018,
-            maxForegroundMad: 0.018,
-            dawnThresholds: { maxFullMad: 0.016, maxForegroundMad: 0.016 },
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
             attribution: {
@@ -1216,8 +1207,8 @@ const sceneInputs: readonly SceneInput[] = [
             referenceSearch: "?seekTime=2",
             // The source seeks and pauses its groups on callback ten.
             nativeEnvironment: { BBLITE_SCREENSHOT_FRAME: "10" },
-            maxFullMad: 0.003,
-            maxForegroundMad: 0.01,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
         },
@@ -1237,13 +1228,8 @@ const sceneInputs: readonly SceneInput[] = [
             nativeEnvironment: {
                 BBLITE_SCREENSHOT_FRAME: "10",
             },
-            // Measured 0.004 / 0.003 (SDL_GPU / Dawn), 99% exact and every
-            // region pixel within one count on both backends — the
-            // texture-interpolation floor of a fully textured cityscape.
-            // Dawn's full-image max is 1; SDL_GPU's masked border carries
-            // a few antialiased sky-dome edge pixels up to 22.
-            maxFullMad: 0.005,
-            maxForegroundMad: 0.005,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
         },
@@ -1748,8 +1734,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene146.ts",
         title: "Babylon Lite Native - PBR Geometry Outputs",
         parity: {
-            maxFullMad: 0.016,
-            maxForegroundMad: 0.014,
+            maxFullMad: 0.002,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
         },
@@ -1791,8 +1777,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene249.ts",
         title: "Babylon Lite Native - Vertex Alpha Clip",
         parity: {
-            maxFullMad: 0.01,
-            maxForegroundMad: 0.05,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
             attribution: {
@@ -1809,8 +1795,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene257.ts",
         title: "Babylon Lite Native - Node Negative Scale",
         parity: {
-            maxFullMad: 0.01,
-            maxForegroundMad: 0.02,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
             attribution: {
@@ -1827,8 +1813,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene266.ts",
         title: "Babylon Lite Native - Negative Scale Spheres",
         parity: {
-            maxFullMad: 0.17,
-            maxForegroundMad: 0.32,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
             attribution: {
@@ -1869,8 +1855,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene269.ts",
         title: "Babylon Lite Native - Mirrored Transform Reparenting",
         parity: {
-            maxFullMad: 0.002,
-            maxForegroundMad: 0.01,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
         },
@@ -1893,12 +1879,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene30.ts",
         title: "Babylon Lite Native - Volume Testing",
         parity: {
-            // SDL_GPU carries the transmission scene's per-sample
-            // image-processing gap (the same one scene 33 measures), so it
-            // gates looser than Dawn, which runs the pinned pass.
-            maxFullMad: 0.055,
-            maxForegroundMad: 0.07,
-            dawnThresholds: { maxFullMad: 0.05, maxForegroundMad: 0.065 },
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -1909,8 +1891,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene256.ts",
         title: "Babylon Lite Native - Normal Tangent Test",
         parity: {
-            maxFullMad: 0.01,
-            maxForegroundMad: 0.09,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -1969,7 +1951,7 @@ const sceneInputs: readonly SceneInput[] = [
             // rounding.
             referenceTimeSeconds: 6.5,
             maxFullMad: 0.001,
-            maxForegroundMad: 0.01,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -1984,14 +1966,8 @@ const sceneInputs: readonly SceneInput[] = [
             // freezes the animated intensity at one and skips the
             // per-frame writer. Both sides read the same query.
             referenceSearch: "?seekTime=0",
-            // Measured 0.002 / 0.017 on both backends, every differing
-            // pixel within one byte and all of them on the sphere. A
-            // mirror-metal material samples the specular cube at mip 0
-            // through a derivative-derived reflection, which resolves a
-            // last-bit difference in the interpolated frame as a
-            // one-step colour difference.
-            maxFullMad: 0.003,
-            maxForegroundMad: 0.02,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [53, 53, 82],
             backgroundThreshold: 30,
         },
@@ -2381,13 +2357,8 @@ const sceneInputs: readonly SceneInput[] = [
             // 2*PI*(1 - t/4). They rotate in opposite directions, so a single
             // shared material transform cannot produce this frame.
             referenceTimeSeconds: 1.0,
-            maxFullMad: 0.002,
-            maxForegroundMad: 0.02,
-            // The SDL_GPU column carries the recorded per-sample image
-            // processing gap on a multisampled transmission target, which is
-            // why its residual sits on the dome's edges; Dawn runs the pinned
-            // per-sample pass and lands within one channel step everywhere.
-            dawnThresholds: { maxFullMad: 0.002, maxForegroundMad: 0.015 },
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -2415,23 +2386,8 @@ const sceneInputs: readonly SceneInput[] = [
             // animates at once: node transforms, light colour and cone, and
             // the material factors and extensions.
             referenceTimeSeconds: 1.0,
-            // The Transparency sphere's double-applied alpha is closed — an
-            // animated base colour factor with no base colour image bakes a
-            // white texel upstream, not the factor — which took Dawn from
-            // 0.086/1.328 to 0.002/0.030 and SDL_GPU from 0.128/1.936 to
-            // 0.047/0.681.
-            //
-            // What that uncovers is a backend split this scene did not show
-            // before: the two backends agreed to one channel step while the
-            // alpha defect dominated both, and now disagree at MAD 0.044.
-            // Scene 33 documents the same shape — SDL_GPU cannot sample a
-            // multisampled texture, so its transmission pass processes the
-            // resolved pixel once where the pin processes each sample — and
-            // this scene transmits, so the SDL_GPU threshold stays looser
-            // than Dawn's for that reason rather than for a defect.
-            maxFullMad: 0.005,
-            maxForegroundMad: 0.04,
-            dawnThresholds: { maxFullMad: 0.005, maxForegroundMad: 0.035 },
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -2589,7 +2545,7 @@ const sceneInputs: readonly SceneInput[] = [
         parity: {
             referenceTimeSeconds: 1.0,
             maxFullMad: 0.001,
-            maxForegroundMad: 0.01,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -2603,8 +2559,8 @@ const sceneInputs: readonly SceneInput[] = [
             // The frame is a photographic HDR skybox behind a cloth, so
             // almost every pixel is foreground and the two figures track each
             // other.
-            maxFullMad: 0.02,
-            maxForegroundMad: 0.02,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
         },
@@ -2831,8 +2787,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene177.ts",
         title: "Babylon Lite Native - Iridescence Sphere",
         parity: {
-            maxFullMad: 0.025,
-            maxForegroundMad: 0.025,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -3226,8 +3182,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene68.ts",
         title: "Babylon Lite Native - NME PBR Clearcoat",
         parity: {
-            maxFullMad: 0.002,
-            maxForegroundMad: 0.005,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [0, 0, 0],
             backgroundThreshold: 30,
         },
@@ -3238,8 +3194,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene69.ts",
         title: "Babylon Lite Native - NME PBR Sheen",
         parity: {
-            maxFullMad: 0.002,
-            maxForegroundMad: 0.01,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [0, 0, 0],
             backgroundThreshold: 30,
         },
@@ -3250,8 +3206,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene70.ts",
         title: "Babylon Lite Native - NME PBR Anisotropy",
         parity: {
-            maxFullMad: 0.002,
-            maxForegroundMad: 0.025,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [0, 0, 0],
             backgroundThreshold: 30,
         },
@@ -3262,8 +3218,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene71.ts",
         title: "Babylon Lite Native - NME PBR Subsurface",
         parity: {
-            maxFullMad: 0.002,
-            maxForegroundMad: 0.01,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [0, 0, 0],
             backgroundThreshold: 30,
         },
@@ -3589,8 +3545,8 @@ const sceneInputs: readonly SceneInput[] = [
         // the exported resolver clamps first, so the two agree only inside
         // the unit square, and this port emits the clamping one.
         parity: {
-            maxFullMad: 0.01,
-            maxForegroundMad: 0.02,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [0, 0, 0],
             backgroundThreshold: 30,
         },
@@ -3638,8 +3594,8 @@ const sceneInputs: readonly SceneInput[] = [
         // through the attach trace. MEASURED 0.001/0.004 on both backends,
         // max 1, and within one count of each other.
         parity: {
-            maxFullMad: 0.005,
-            maxForegroundMad: 0.01,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [20, 23, 31],
             backgroundThreshold: 30,
         },
@@ -4225,8 +4181,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene144.ts",
         title: "Babylon Lite Native - Bloom",
         parity: {
-            maxFullMad: 0.01,
-            maxForegroundMad: 0.03,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -4268,10 +4224,8 @@ const sceneInputs: readonly SceneInput[] = [
             // its first before-render callback freeze before rotating any of
             // the 2,500 parented spheres. The compiler folds the same search.
             referenceSearch: "?seekTime=0",
-            // 0.001978 / 0.006782 on SDL_GPU and 0.001976 / 0.006774
-            // on Dawn, with every differing channel within one count.
-            maxFullMad: 0.003,
-            maxForegroundMad: 0.008,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 76],
             backgroundThreshold: 30,
         },
@@ -4339,10 +4293,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene72.ts",
         title: "Babylon Lite Native - NME PBR Full",
         parity: {
-            // 0.001272 / 0.010768 on SDL_GPU and 0.001272 / 0.010775
-            // on Dawn; every differing channel is within two counts.
-            maxFullMad: 0.002,
-            maxForegroundMad: 0.012,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [153, 204, 255],
             backgroundThreshold: 30,
         },
@@ -4365,8 +4317,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene186.ts",
         title: "Babylon Lite Native - Local Cubemap Blending",
         parity: {
-            maxFullMad: 0.005,
-            maxForegroundMad: 0.005,
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [6, 8, 11],
             backgroundThreshold: 30,
         },
@@ -4587,8 +4539,10 @@ const sceneInputs: readonly SceneInput[] = [
             // the published measurement.
             maxFullMad: 1.3,
             maxForegroundMad: 1.1,
-            // Canvas-only lane: 0.093 / 0.101 on both backends
-            // (docs/status.md row note). The gate is the exact pair the
+            // Canvas-only lane: 0.080 / 0.086 on both backends
+            // (docs/status.md row note): the demo reports a doubled
+            // `devicePixelRatio` so the browser renders 2x and scales the
+            // canvas down, and the port erases that override. The gate is the exact pair the
             // canvas-golden era enforced before the full-page promotion,
             // so a 3D regression cannot hide under the UI font residual
             // the composite thresholds above must absorb.
@@ -4958,12 +4912,9 @@ const sceneInputs: readonly SceneInput[] = [
             // camera, the studio HDR as IBL plus a blurred PBR skybox and
             // the frame-graph scene-texture transmission copy. Nothing
             // animates, so the convention's frame 180 is the settled load.
-            // Both backends measure what scene 176 measures (0.016 SDL_GPU,
-            // 0.014 Dawn), so the gates are that scene's.
             referenceFrame: 180,
-            maxFullMad: 0.018,
-            maxForegroundMad: 0.018,
-            dawnThresholds: { maxFullMad: 0.016, maxForegroundMad: 0.016 },
+            maxFullMad: 0.001,
+            maxForegroundMad: 0.002,
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
             nativeEnvironment: fixedCaptureEnvironment(),
