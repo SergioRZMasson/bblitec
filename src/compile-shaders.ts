@@ -62,10 +62,23 @@ import { repositoryModuleClosure } from "./bake-cache.js";
  * sidecar the native loader reads; DXC compiles the HLSL to DXIL.
  */
 
-/** DXC's DXIL product: the one binary bblite-tint does not write. */
+/**
+ * DXC's DXIL product: the one binary bblite-tint does not write. The flags
+ * are the ones the pinned Dawn's `GetDXCArguments` (d3d/ShaderUtils.cpp)
+ * passes for a default render or compute pipeline: the loop-exit
+ * structurizer it disables, IEEE strictness, level 3 and row-major packing.
+ * Without `-Gis` DXC applies float optimizations the reference device's
+ * compile forbids. The HLSL version stays the one bblite-tint writes.
+ */
 const dxil = {
     extension: ".dxil",
-    flags: ["-O3"],
+    flags: [
+        "-opt-disable",
+        "structurize-loop-exits-for-unroll",
+        "-Gis",
+        "-O3",
+        "-Zpr",
+    ],
     magic: [0x44, 0x58, 0x42, 0x43],
 } as const;
 

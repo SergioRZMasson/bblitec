@@ -54,7 +54,8 @@ on a worker thread; SDL waits for submission fences. Promise reactions stay on t
 
 - bblite-tint (`tools/tint-sdl`) drives the pinned Tint's HLSL, MSL and SPIR-V writers with SDL's
   slots as their binding options and writes the `.slots` sidecar from the same assignment; DXC
-  compiles the HLSL to DXIL. Slots cover the resources the lowered entry point reaches.
+  compiles the HLSL to DXIL with the arguments Dawn passes for a default pipeline, IEEE
+  strictness included. Slots cover the resources the lowered entry point reaches.
   Sidecars specify stage visibility, resource kind, slot order and uniform size. Large uniform
   blocks may use read-only storage.
 - Each render stage's `.slots` sidecar opens with `@entry <entry point>` and ends with
