@@ -5,8 +5,8 @@ import { inlineCpp } from "./generated-cpp.js";
  * The five hand-kept copies — both backends' upload selection, the two
  * pinned name maps and Dawn's slot-order comment — collapse into the one
  * table `materialTextureSlotsHeader` emits, so what this asserts is the
- * contract those copies used to restate: the base slots and their sRGB and
- * fallback rules, the extension append order, the pinned binding names per
+ * contract those copies used to restate: the base slots and their fallback
+ * rules, the extension append order, the pinned binding names per
  * slot, and the generation-time refusal of a pinned name no row serves.
  */
 import assert from "node:assert/strict";

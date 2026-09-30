@@ -228,9 +228,6 @@ void release(GpuState& state) {
     if (state.transmission_sampler) {
         SDL_ReleaseGPUSampler(state.device, state.transmission_sampler);
     }
-    if (state.transmission_grab_sampler) {
-        SDL_ReleaseGPUSampler(state.device, state.transmission_grab_sampler);
-    }
 #endif
     if (state.ground_sampler) {
         SDL_ReleaseGPUSampler(state.device, state.ground_sampler);
@@ -779,34 +776,25 @@ public:
         // run takes the pin's single-sample arm.
         const bool per_sample_image_processing =
             transmission_enabled && state.sample_count != SDL_GPU_SAMPLECOUNT_1;
-        const std::string image_processing_stem =
-            per_sample_image_processing ? "image-processing" : "image-processing-single";
-        PinnedStage image_processing_vertex =
-            transmission_enabled ? load_pinned_stage(state.device, image_processing_stem + ".vert",
-                                                     SDL_GPU_SHADERSTAGE_VERTEX)
-                                 : PinnedStage{};
-        PinnedStage image_processing_fragment =
-            transmission_enabled ? load_pinned_stage(state.device, image_processing_stem + ".frag",
-                                                     SDL_GPU_SHADERSTAGE_FRAGMENT)
-                                 : PinnedStage{};
-        auto& image_processing_vertex_shader = image_processing_vertex.shader;
-        auto& image_processing_fragment_shader = image_processing_fragment.shader;
+        // A fullscreen pass's vertex and fragment stages, loaded only when
+        // the scene reaches transmission.
+        const auto load_stage_pair = [&](const std::string& stem) {
+            return transmission_enabled ? std::pair{load_pinned_stage(state.device, stem + ".vert",
+                                                                      SDL_GPU_SHADERSTAGE_VERTEX),
+                                                    load_pinned_stage(state.device, stem + ".frag",
+                                                                      SDL_GPU_SHADERSTAGE_FRAGMENT)}
+                                        : std::pair<PinnedStage, PinnedStage>{};
+        };
+        auto [image_processing_vertex, image_processing_fragment] = load_stage_pair(
+            per_sample_image_processing ? "image-processing" : "image-processing-single");
         state.image_processing_params_slot =
             stage_uniform_slot(image_processing_fragment.slots, "p");
         // The grab's own arms (transmission.ts getBlitPipeline), selected by
         // the same sample count: `BLIT_MSAA_SHADER` loads and averages each
         // texel's samples before its bilinear mix, `BLIT_SHADER` samples the
         // single-sample colour through the bilinear sampler.
-        const std::string grab_stem =
-            per_sample_image_processing ? "transmission-grab" : "transmission-grab-single";
-        PinnedStage grab_vertex =
-            transmission_enabled
-                ? load_pinned_stage(state.device, grab_stem + ".vert", SDL_GPU_SHADERSTAGE_VERTEX)
-                : PinnedStage{};
-        PinnedStage grab_fragment =
-            transmission_enabled
-                ? load_pinned_stage(state.device, grab_stem + ".frag", SDL_GPU_SHADERSTAGE_FRAGMENT)
-                : PinnedStage{};
+        auto [grab_vertex, grab_fragment] = load_stage_pair(
+            per_sample_image_processing ? "transmission-grab" : "transmission-grab-single");
 #endif
         const upstream::RenderFeatures render_features =
             upstream::build_render_features(scene, engine);
@@ -996,57 +984,36 @@ public:
         pipeline_info.target_info.depth_stencil_format = state.depth_format;
         pipeline_info.target_info.has_depth_stencil_target = true;
 #if BBLITE_RENDERER_TRANSMISSION
-        if (image_processing_vertex_shader && image_processing_fragment_shader) {
-            SDL_GPUColorTargetDescription image_processing_target{};
-            image_processing_target.format = swapchain_format;
-            SDL_GPUGraphicsPipelineCreateInfo image_processing_info{};
-            image_processing_info.vertex_shader = image_processing_vertex_shader.get();
-            image_processing_info.fragment_shader = image_processing_fragment_shader.get();
-            image_processing_info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-            image_processing_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-            image_processing_info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
-            image_processing_info.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
-            image_processing_info.target_info.color_target_descriptions = &image_processing_target;
-            image_processing_info.target_info.num_color_targets = 1;
+        // A single-sample fullscreen triangle into one colour target.
+        const auto fullscreen_pipeline = [&](const PinnedStage& vertex, const PinnedStage& fragment,
+                                             SDL_GPUTextureFormat format, const char* label) {
+            SDL_GPUColorTargetDescription target{};
+            target.format = format;
+            SDL_GPUGraphicsPipelineCreateInfo info{};
+            info.vertex_shader = vertex.shader.get();
+            info.fragment_shader = fragment.shader.get();
+            info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+            info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+            info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+            info.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
+            info.target_info.color_target_descriptions = &target;
+            info.target_info.num_color_targets = 1;
+            SDL_GPUGraphicsPipeline* pipeline =
+                create_sdl_gpu_graphics_pipeline(state.device, vertex.shader, &info);
+            if (!pipeline)
+                gpu_error(label);
+            return pipeline;
+        };
+        if (image_processing_vertex.shader && image_processing_fragment.shader) {
             state.per_sample_image_processing = per_sample_image_processing;
-            state.image_processing_pipeline = create_sdl_gpu_graphics_pipeline(
-                state.device, image_processing_vertex_shader, &image_processing_info);
-            if (!state.image_processing_pipeline) {
-                gpu_error("SDL_CreateGPUGraphicsPipeline image processing");
-            }
+            state.image_processing_pipeline = fullscreen_pipeline(
+                image_processing_vertex, image_processing_fragment, swapchain_format,
+                "SDL_CreateGPUGraphicsPipeline image processing");
         }
         if (grab_vertex.shader && grab_fragment.shader) {
-            SDL_GPUColorTargetDescription grab_target{};
-            grab_target.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
-            SDL_GPUGraphicsPipelineCreateInfo grab_info{};
-            grab_info.vertex_shader = grab_vertex.shader.get();
-            grab_info.fragment_shader = grab_fragment.shader.get();
-            grab_info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-            grab_info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-            grab_info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
-            grab_info.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
-            grab_info.target_info.color_target_descriptions = &grab_target;
-            grab_info.target_info.num_color_targets = 1;
-            state.transmission_grab_pipeline =
-                create_sdl_gpu_graphics_pipeline(state.device, grab_vertex.shader, &grab_info);
-            if (!state.transmission_grab_pipeline) {
-                gpu_error("SDL_CreateGPUGraphicsPipeline transmission grab");
-            }
-            if (!per_sample_image_processing) {
-                // resource/samplers.ts getBilinearSampler: linear filters,
-                // every other field the WebGPU default.
-                SDL_GPUSamplerCreateInfo bilinear{};
-                bilinear.min_filter = SDL_GPU_FILTER_LINEAR;
-                bilinear.mag_filter = SDL_GPU_FILTER_LINEAR;
-                bilinear.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
-                bilinear.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-                bilinear.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-                bilinear.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-                bilinear.max_lod = 32.0f;
-                state.transmission_grab_sampler = SDL_CreateGPUSampler(state.device, &bilinear);
-                if (!state.transmission_grab_sampler)
-                    gpu_error("SDL_CreateGPUSampler transmission grab");
-            }
+            state.transmission_grab_pipeline = fullscreen_pipeline(
+                grab_vertex, grab_fragment, SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,
+                "SDL_CreateGPUGraphicsPipeline transmission grab");
         }
 #endif
         for (std::size_t index = 0; use_no_color_material && depth_only_fragment_shader &&
@@ -3709,19 +3676,19 @@ public:
                                  clear_color.a}
                     : SDL_FColor{clear_color.r, clear_color.g, clear_color.b, clear_color.a};
             color_info.load_op = SDL_GPU_LOADOP_CLEAR;
-            // Resolve opaque color for transmission sampling while preserving
-            // the multisample attachment so transmissive draws can resume it.
-            // An overlay layer preserves it for the same reason the pin's own
-            // overlay does: "both scenes must use the base task's MSAA colour
-            // texture before the overlay can load its pixels and resolve the
+            // Transmission reads the multisampled attachment itself (its
+            // grab and its per-sample image processing load each sample), so
+            // that frame stores the samples and resolves nothing. An overlay
+            // layer preserves them for the same reason the pin's own overlay
+            // does: "both scenes must use the base task's MSAA colour texture
+            // before the overlay can load its pixels and resolve the
             // composited result" (scene/swapchain-overlay.ts).
-            color_info.store_op = multisampled ? transmission_enabled || !overlay_plans.empty()
-                                                     ? SDL_GPU_STOREOP_RESOLVE_AND_STORE
-                                                     : SDL_GPU_STOREOP_RESOLVE
-                                               : SDL_GPU_STOREOP_STORE;
+            const bool resolves = multisampled && !transmission_enabled;
+            color_info.store_op = !resolves                ? SDL_GPU_STOREOP_STORE
+                                  : !overlay_plans.empty() ? SDL_GPU_STOREOP_RESOLVE_AND_STORE
+                                                           : SDL_GPU_STOREOP_RESOLVE;
             color_info.resolve_texture =
-                multisampled ? capture_frame || transmission_enabled ? state.color : swapchain
-                             : nullptr;
+                resolves ? capture_frame ? state.color : swapchain : nullptr;
             SDL_GPUDepthStencilTargetInfo depth_info{};
             depth_info.texture = state.depth;
             depth_info.clear_depth = upstream::pinned_depth_clear;
@@ -3737,8 +3704,8 @@ public:
             bool scene_matrix_bound = true;
 #if BBLITE_RENDERER_TRANSMISSION
             // The pin's transmission grab fires once, before the first
-            // transmissive draw: the opaque scene colour resolved so far is
-            // blitted into the 1024x1024 mip-chained refraction texture the
+            // transmissive draw: the opaque scene colour drawn so far is
+            // grabbed into the 1024x1024 mip-chained refraction texture the
             // composed fragments sample.
             bool transmission_copied = false;
 #endif
@@ -3786,9 +3753,9 @@ public:
 #if BBLITE_RENDERER_TRANSMISSION
                     if (transmission_enabled && !transmission_copied &&
                         transmissive_draw_material(material)) {
-                        // executePassWithTransmission: end the pass (which
-                        // resolves the multisampled colour), copy it into
-                        // the refraction texture with its mip chain, and
+                        // executePassWithTransmission: end the pass, draw
+                        // the pinned grab from the colour stored so far into
+                        // the refraction texture, build its mip chain, and
                         // resume loading what was stored.
                         pass.end();
                         SDL_GPUColorTargetInfo grab_target{};
@@ -3806,8 +3773,8 @@ public:
                                 SDL_BindGPUFragmentStorageTextures(grab_pass, 0, &state.msaa_color,
                                                                    1);
                             } else {
-                                const SDL_GPUTextureSamplerBinding source{
-                                    state.color, state.transmission_grab_sampler};
+                                const SDL_GPUTextureSamplerBinding source{state.color,
+                                                                          state.ground_sampler};
                                 SDL_BindGPUFragmentSamplers(grab_pass, 0, &source, 1);
                             }
                             count_gpu_draw(SDL_DrawGPUPrimitives, grab_pass, 3, 1, 0, 0);
@@ -3817,10 +3784,8 @@ public:
                                                  state.transmission_height,
                                                  transmission_grab_mip_count());
                         color_info.load_op = SDL_GPU_LOADOP_LOAD;
-                        // Image processing reads the multisample attachment after
-                        // this pass. Resolving alone discards its updated samples.
-                        color_info.store_op = multisampled ? SDL_GPU_STOREOP_RESOLVE_AND_STORE
-                                                           : SDL_GPU_STOREOP_STORE;
+                        // Image processing reads what this pass stores.
+                        color_info.store_op = SDL_GPU_STOREOP_STORE;
                         depth_info.load_op = SDL_GPU_LOADOP_LOAD;
                         pass = SDL_BeginGPURenderPass(command, &color_info, 1, &depth_info);
                         // A restarted pass starts at the whole target

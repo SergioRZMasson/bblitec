@@ -182,13 +182,7 @@ static FileTexture bound_node_texture(const StoredTexture& texture) {
             return stored;
         } else {
             FileTexture normalized;
-            normalized.data.bytes = stored.rgba;
-            normalized.data.rgba_width = stored.width;
-            normalized.data.rgba_height = stored.height;
-            normalized.data.sampler = stored.sampler;
-            normalized.data.uv_transform = stored.uv_transform;
-            normalized.data.uv_invert_y = stored.uv_invert_y;
-            normalized.data.srgb = stored.srgb;
+            normalized.data = pixels_texture_data(stored);
             normalized.width = stored.width;
             normalized.height = stored.height;
             normalized.identity = stored.identity;
@@ -579,13 +573,7 @@ void set_shader_pixels_texture(
     std::uint32_t slot,
     const PixelsTexture& texture) {
     FileTexture normalized;
-    normalized.data.bytes = texture.rgba;
-    normalized.data.rgba_width = texture.width;
-    normalized.data.rgba_height = texture.height;
-    normalized.data.sampler = texture.sampler;
-    normalized.data.uv_transform = texture.uv_transform;
-    normalized.data.uv_invert_y = texture.uv_invert_y;
-    normalized.data.srgb = texture.srgb;
+    normalized.data = pixels_texture_data(texture);
     set_shader_texture(engine, material, slot, std::move(normalized));
 }
 
@@ -1583,14 +1571,7 @@ void set_standard_diffuse_pixels_texture(
     Engine& engine,
     MaterialHandle material,
     const PixelsTexture& texture) {
-    TextureData& slot = take_standard_diffuse_slot(engine, material);
-    slot.bytes = texture.rgba;
-    slot.rgba_width = texture.width;
-    slot.rgba_height = texture.height;
-    slot.sampler = texture.sampler;
-    slot.uv_transform = texture.uv_transform;
-    slot.uv_invert_y = texture.uv_invert_y;
-    slot.srgb = texture.srgb;
+    take_standard_diffuse_slot(engine, material) = pixels_texture_data(texture);
     standard_slot_material(engine, material).source_albedo_texture = texture;
 }
 `
@@ -1731,18 +1712,9 @@ void add_material_plugin_pixels_texture(
     const PixelsTexture& texture,
     std::string texture_name,
     std::string sampler_name) {
-    MaterialPluginTexture entry;
-    entry.data.bytes = texture.rgba;
-    entry.data.rgba_width = texture.width;
-    entry.data.rgba_height = texture.height;
-    entry.data.sampler = texture.sampler;
-    entry.data.uv_transform = texture.uv_transform;
-    entry.data.uv_invert_y = texture.uv_invert_y;
-    entry.data.srgb = texture.srgb;
-    entry.texture_name = std::move(texture_name);
-    entry.sampler_name = std::move(sampler_name);
     standard_slot_material(engine, material)
-        .plugin_textures.push_back(entry);
+        .plugin_textures.push_back(MaterialPluginTexture{
+            pixels_texture_data(texture), std::move(texture_name), std::move(sampler_name)});
 }
 
 // The same binding filled by a loaded image. The texture object travels

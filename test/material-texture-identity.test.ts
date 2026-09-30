@@ -12,7 +12,6 @@ import {
     cppFunction,
     optionalNativeFixtureTools,
     runNativeFixtureCompiler,
-    sharedGpuSource,
 } from "./native-fixture.js";
 
 const scenePath = "corpus/babylon-lite/lab/lite/src/lite/scene149.ts";
@@ -161,8 +160,6 @@ test("native material getters retain producer variants, replacement aliases and 
 #include <cassert>
 #include <cmath>
 namespace bbl {
-namespace upstream { enum class MaterialTextureFallback { white, black, flat_normal, white_or_flat_normal, base_color_record, orm_record, white_or_emissive_factor }; }
-${cppFunction(sharedGpuSource(), "bool material_slot_srgb(")}
 Engine create_engine(EngineOptions) {return {};}
 ${functions}
 PixelsTexture create_texture_2d_from_pixels(Engine& engine,const js::U8Array& pixels,double width,double height,PixelsTextureOptions options) {
@@ -193,10 +190,8 @@ int main() {
     assert(bbl::material_source_texture(engine,pbr,bbl::MaterialTextureSlot::base_color)==bbl::StoredTexture{file});
     bbl::set_standard_diffuse_texture(engine,b,bbl::material_source_texture(engine,pbr,bbl::MaterialTextureSlot::base_color));
     assert(bbl::material_source_texture(engine,b,bbl::MaterialTextureSlot::diffuse)==bbl::StoredTexture{file});
-    const auto diffuse_srgb=[&]{
-        const auto& record=engine.materials[b.value];
-        return bbl::material_slot_srgb(&record.base_color_texture,bbl::upstream::MaterialTextureFallback::base_color_record,&record,true);
-    };
+    // The diffuse slot samples through the bound texture's own encoding.
+    const auto diffuse_srgb=[&]{ return engine.materials[b.value].base_color_texture.srgb; };
     assert(diffuse_srgb());
     bbl::set_standard_diffuse_texture(engine,b,old);
     assert(!diffuse_srgb());

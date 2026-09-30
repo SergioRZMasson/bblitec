@@ -95,7 +95,7 @@ std::vector<std::uint16_t> decode_rgbd(const TextureData& texture_data, int& wid
     // rounds toward zero (float_to_half_toward_zero).
     if (texture_data.bytes.empty()) {
         width = height = 1;
-        return {0, 0, 0, float_to_half(1.0f)};
+        return {0, 0, 0, float_to_half_toward_zero(1.0f)};
     }
     const DecodedImage image = decode_image(js::ArrayBuffer(texture_data.bytes));
     width = image.width;

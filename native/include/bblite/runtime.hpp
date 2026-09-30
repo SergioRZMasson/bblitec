@@ -1889,6 +1889,19 @@ struct PixelsTexture {
     bool uv_invert_y = false;
 };
 
+/** The texture record a `PixelsTexture` binds as: its texels, sampler, transform and encoding. */
+inline TextureData pixels_texture_data(const PixelsTexture& texture) {
+    TextureData data;
+    data.bytes = texture.rgba;
+    data.rgba_width = texture.width;
+    data.rgba_height = texture.height;
+    data.sampler = texture.sampler;
+    data.uv_transform = texture.uv_transform;
+    data.uv_invert_y = texture.uv_invert_y;
+    data.srgb = texture.srgb;
+    return data;
+}
+
 inline bool operator==(const FileTexture& left, const FileTexture& right) {
     return left.identity == right.identity;
 }

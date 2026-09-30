@@ -126,7 +126,7 @@ SDL_GPUTexture* upload_cube_texture(SDL_GPUDevice* device,
     SDL_GPUTextureCreateInfo texture_info{};
     texture_info.type = SDL_GPU_TEXTURETYPE_CUBE;
     texture_info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-    texture_info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+    texture_info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
     texture_info.width = static_cast<Uint32>(width);
     texture_info.height = static_cast<Uint32>(height);
     texture_info.layer_count_or_depth = 6;
@@ -143,31 +143,18 @@ SDL_GPUTexture* upload_cube_texture(SDL_GPUDevice* device,
     // SDL blit from a cube source samples through a direction lookup that
     // filters across the face's edges, so each face's chain is built in a 2D
     // texture of its own and copied into its face.
-    SDL_GPUTextureCreateInfo face_info = texture_info;
-    face_info.type = SDL_GPU_TEXTURETYPE_2D;
-    face_info.layer_count_or_depth = 1;
     std::array<OwnedSdlTexture, 6> faces{};
+    for (std::size_t index = 0; index < images.size(); ++index) {
+        faces[index] = OwnedSdlTexture{
+            upload_2d_texture(device, images[index].rgba.data(), images[index].rgba.size(),
+                              texture_info.width, texture_info.height, texture_info.format,
+                              "SDL_CreateGPUTexture reflection cube face", texture_info.num_levels),
+            {device}};
+    }
     SdlGpuCommand command{SDL_AcquireGPUCommandBuffer(device)};
     if (!command) {
         gpu_error("SDL_AcquireGPUCommandBuffer reflection cube");
     }
-    SdlCopyPass copy{SDL_BeginGPUCopyPass(command)};
-    std::vector<OwnedSdlTransfer> transfers;
-    transfers.reserve(images.size());
-    for (std::size_t index = 0; index < images.size(); ++index) {
-        faces[index] = OwnedSdlTexture{SDL_CreateGPUTexture(device, &face_info), {device}};
-        if (!faces[index])
-            gpu_error("SDL_CreateGPUTexture reflection cube face");
-        const SDL_GPUTextureRegion region{faces[index].get(), 0, 0, 0, 0, 0, 0, 0, 1};
-        SdlCopyTextureDestination destination{device, copy, region, transfers};
-        SdlGpuWriteDevice{device}.write_texture(
-            destination, images[index].rgba, {},
-            {static_cast<Uint32>(width), static_cast<Uint32>(height), 1});
-    }
-    copy.end();
-    for (const OwnedSdlTexture& face : faces)
-        generate_texture_mipmaps(device, command, face.get(), face_info.width, face_info.height,
-                                 face_info.num_levels);
     SdlCopyPass levels{SDL_BeginGPUCopyPass(command)};
     for (std::size_t index = 0; index < faces.size(); ++index) {
         for (Uint32 level = 0; level < texture_info.num_levels; ++level) {
@@ -175,8 +162,8 @@ SDL_GPUTexture* upload_cube_texture(SDL_GPUDevice* device,
             const SDL_GPUTextureLocation target{texture, level, static_cast<Uint32>(index),
                                                 0,       0,     0};
             SDL_CopyGPUTextureToTexture(levels, &source, &target,
-                                        std::max(1u, face_info.width >> level),
-                                        std::max(1u, face_info.height >> level), 1, false);
+                                        std::max(1u, texture_info.width >> level),
+                                        std::max(1u, texture_info.height >> level), 1, false);
         }
     }
     levels.end();

@@ -54,23 +54,21 @@ int main() {
     }
     generate_texture_mipmaps(&device, &command, &texture, 5, 3, 1);
     assert(generated == 0 && blits.empty());
-    generate_texture_mipmaps(&device, &command, &texture, 5, 3, 3, 2);
-    assert(generated == 0 && blits.size() == 4);
-    for (std::uint32_t layer = 0; layer < 2; ++layer) {
-        for (std::uint32_t mip = 1; mip < 3; ++mip) {
-            const auto& blit = blits[layer * 2 + mip - 1];
-            assert(blit.source.texture == &texture && blit.destination.texture == &texture);
-            assert(blit.source.mip_level == mip - 1 && blit.destination.mip_level == mip);
-            assert(blit.source.layer_or_depth_plane == layer && blit.destination.layer_or_depth_plane == layer);
-            assert(blit.source.w == (mip == 1 ? 5u : 2u));
-            assert(blit.source.h == (mip == 1 ? 3u : 1u));
-            assert(blit.destination.w == (mip == 1 ? 2u : 1u));
-            assert(blit.destination.h == 1);
-            assert(blit.source.x == 0 && blit.source.y == 0);
-            assert(blit.destination.x == 0 && blit.destination.y == 0);
-            assert(blit.filter == SDL_GPU_FILTER_LINEAR && blit.flip_mode == SDL_FLIP_NONE);
-            assert(blit.load_op == SDL_GPU_LOADOP_DONT_CARE && !blit.cycle);
-        }
+    generate_texture_mipmaps(&device, &command, &texture, 5, 3, 3);
+    assert(generated == 0 && blits.size() == 2);
+    for (std::uint32_t mip = 1; mip < 3; ++mip) {
+        const auto& blit = blits[mip - 1];
+        assert(blit.source.texture == &texture && blit.destination.texture == &texture);
+        assert(blit.source.mip_level == mip - 1 && blit.destination.mip_level == mip);
+        assert(blit.source.layer_or_depth_plane == 0 && blit.destination.layer_or_depth_plane == 0);
+        assert(blit.source.w == (mip == 1 ? 5u : 2u));
+        assert(blit.source.h == (mip == 1 ? 3u : 1u));
+        assert(blit.destination.w == (mip == 1 ? 2u : 1u));
+        assert(blit.destination.h == 1);
+        assert(blit.source.x == 0 && blit.source.y == 0);
+        assert(blit.destination.x == 0 && blit.destination.y == 0);
+        assert(blit.filter == SDL_GPU_FILTER_LINEAR && blit.flip_mode == SDL_FLIP_NONE);
+        assert(blit.load_op == SDL_GPU_LOADOP_DONT_CARE && !blit.cycle);
     }
     device.driver = "direct3d12";
     const auto color = gpu_clear_color(&device, SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM, fractional);
@@ -78,7 +76,7 @@ int main() {
     generate_texture_mipmaps(&device, &command, &texture, 5, 3, 3);
     device.driver = "vulkan";
     generate_texture_mipmaps(&device, &command, &texture, 5, 3, 3);
-    assert(generated == 2 && blits.size() == 4);
+    assert(generated == 2 && blits.size() == 2);
 }
 `,
         );

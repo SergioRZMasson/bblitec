@@ -88,11 +88,9 @@ export function usesSeededRandom(scene: SceneDefinition): boolean {
     );
 }
 
-/** Whether the compiled scene actually carries the retained native UI.
- *  The instrumented capture reads this to compose the same page the
- *  golden capture composed (`runParity` derives the same predicate from
- *  its already-read manifest at its `retainedUi` binding). */
-export function usesRetainedUi(scene: SceneDefinition): boolean {
+/** Whether the compiled scene actually carries the retained native UI:
+ *  what decides the fixed frame `goldenFixedFrame` pins. */
+function usesRetainedUi(scene: SceneDefinition): boolean {
     return readCompiledSceneManifest(scene.output, scene.id).features.includes(
         "ui:rml",
     );
@@ -105,15 +103,16 @@ export function usesRetainedUi(scene: SceneDefinition): boolean {
  * from, so the golden and every capture, full page or canvas-only, freeze
  * the page on the frame the native run renders. This is the one home for
  * that rule; the golden, canvas-lane and instrumented captures all read it.
+ * `retainedUi` defaults to what the compiled manifest records.
  */
 export function goldenFixedFrame(
     scene: SceneDefinition,
-    retainedUi: boolean,
+    retainedUi?: boolean,
 ): number | undefined {
     if (scene.parity?.referenceFrame !== undefined) {
         return scene.parity.referenceFrame;
     }
-    if (!retainedUi) return undefined;
+    if (!(retainedUi ?? usesRetainedUi(scene))) return undefined;
     const configuredNativeFrame = Number.parseInt(
         scene.parity?.nativeEnvironment?.BBLITE_SCREENSHOT_FRAME ?? "",
         10,
@@ -942,7 +941,6 @@ async function runSceneParity(
         pose,
     );
     const compiledManifest = readCompiledSceneManifest(scene.output, scene.id);
-    const retainedUi = compiledManifest.features.includes("ui:rml");
     const reference =
         canvasOnly || seekedPose
             ? resolve(
@@ -1001,7 +999,7 @@ async function runSceneParity(
     const recaptureReference =
         run.recaptureReference ||
         ((canvasOnly || seekedPose) && !existsSync(reference));
-    const browserReferenceFrame = goldenFixedFrame(scene, retainedUi);
+    const browserReferenceFrame = goldenFixedFrame(scene);
     validateReferenceCapture(scene, reference, recaptureReference);
     // What both browser captures share: the seeded-random stub, the
     // companion DOM and the registry's pose search. The DOM is present in

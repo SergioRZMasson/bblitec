@@ -774,10 +774,10 @@ struct GpuState : SdlGpuDevice {
     // The pin's transmission grab and its image-processing resolve, the
     // same gate the Dawn backend compiles them behind.
     SDL_GPUGraphicsPipeline* image_processing_pipeline = nullptr;
-    // The grab's pinned pipeline (transmission.ts getBlitPipeline) and the
-    // bilinear sampler its single-sample arm reads the colour through.
+    // The grab's pinned pipeline (transmission.ts getBlitPipeline); its
+    // single-sample arm reads the colour through `ground_sampler`, the
+    // bilinear sampler.
     SDL_GPUGraphicsPipeline* transmission_grab_pipeline = nullptr;
-    SDL_GPUSampler* transmission_grab_sampler = nullptr;
     bool per_sample_image_processing = false;
     // Where the compaction left the pin's parameter block `p`.
     int image_processing_params_slot = -1;

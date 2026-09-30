@@ -363,12 +363,13 @@ int main() {
                     assert(target.texture == (sampled                    ? &msaa
                                               : transmission || captured ? &resolved
                                                                          : &swapchain));
+                    // Transmission reads the multisampled attachment itself.
+                    const bool resolves = sampled && !transmission;
                     assert(target.resolve_texture ==
-                           (sampled ? transmission || captured ? &resolved : &swapchain : nullptr));
-                    assert(target.store_op == (!sampled ? SDL_GPU_STOREOP_STORE
-                                               : transmission || overlay
-                                                   ? SDL_GPU_STOREOP_RESOLVE_AND_STORE
-                                                   : SDL_GPU_STOREOP_RESOLVE));
+                           (resolves ? captured ? &resolved : &swapchain : nullptr));
+                    assert(target.store_op == (!resolves ? SDL_GPU_STOREOP_STORE
+                                               : overlay ? SDL_GPU_STOREOP_RESOLVE_AND_STORE
+                                                         : SDL_GPU_STOREOP_RESOLVE));
                 }
     DawnStages dawn;
     for (bool sprites : {true, false}) {

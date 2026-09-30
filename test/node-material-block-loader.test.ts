@@ -598,10 +598,7 @@ test("retains node texture producers until deferred binding normalizes pixels me
         source,
         /const PixelsTexture& texture\) \{\s*return NodeMaterialTexture\{std::move\(name\), texture\};/,
     );
-    assert.match(
-        source,
-        /normalized\.data\.sampler = stored\.sampler;\s*normalized\.data\.uv_transform = stored\.uv_transform;\s*normalized\.data\.uv_invert_y = stored\.uv_invert_y;/,
-    );
+    assert.match(source, /normalized\.data = pixels_texture_data\(stored\);/);
     assert.match(
         source,
         /const StoredTexture& texture\) \{\s*return NodeMaterialTexture\{std::move\(name\), texture\};/,

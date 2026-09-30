@@ -163,8 +163,8 @@ const sceneInputs: readonly SceneInput[] = [
         source: "corpus/babylon-lite/lab/lite/src/lite/scene24.ts",
         title: "Babylon Lite Native - Hill Valley",
         parity: {
-            maxFullMad: 0.001,
-            maxForegroundMad: 0.002,
+            maxFullMad: 0.0002,
+            maxForegroundMad: 0.0002,
             backgroundColor: [174, 129, 107],
             backgroundThreshold: 30,
         },

@@ -618,7 +618,6 @@ function compileLoadTexture2D(
         textureObjectInvertY: false,
         cpp: `bbl::load_file_texture(${loadArguments})`,
         textureFile: {
-            srgb,
             ...(url === undefined
                 ? {}
                 : {
@@ -690,7 +689,7 @@ function compileLoadKtxTexture2D(
             `bbl::${assets.length === 1 ? "load_compressed_texture" : "load_compressed_texture_variants"}(${engine.cpp}, ` +
             `${assets.length === 1 ? paths[0] : `{${paths.join(", ")}}`}, ` +
             `${basis ? "true" : "false"})`,
-        textureFile: { srgb: false },
+        textureFile: {},
         engineCpp: engine.engineCpp ?? engine.cpp,
     };
 }
