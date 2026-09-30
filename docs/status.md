@@ -13,45 +13,45 @@ Physics rows measure Bullet against Havok: their residuals are solver deltas, no
 
 | Scene | Preview | SDL_GPU | Dawn | Coverage |
 | ---: | :---: | ---: | ---: | --- |
-| 1 | <img src="images/scenes/scene1.png" alt="Scene 1 BoomBox rendering" width="160"> | 0.001 / 0.007 | 0.001 / 0.007 | BoomBox PBR |
+| 1 | <img src="images/scenes/scene1.png" alt="Scene 1 BoomBox rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | BoomBox PBR |
 | 2 | <img src="images/scenes/scene2.png" alt="Scene 2 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Directional Light Sphere |
 | 3 | <img src="images/scenes/scene3.png" alt="Scene 3 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Fog Boxes |
 | 4 | <img src="images/scenes/scene4.png" alt="Scene 4 rendering" width="160"> | 0.042 / 0.042 | 0.042 / 0.042 | ESM Directional and PCF Spot Shadows |
 | 5 | <img src="images/scenes/scene5.png" alt="Scene 5 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Alien Morph and Skeleton |
-| 6 | <img src="images/scenes/scene6.png" alt="Scene 6 rendering" width="160"> | 0.001 / 0.013 | 0.001 / 0.013 | PBR Gold Sphere |
-| 7 | <img src="images/scenes/scene7.png" alt="Scene 7 ChibiRex rendering" width="160"> | 0.001 / 0.010 | 0.001 / 0.010 | ChibiRex Default Camera |
+| 6 | <img src="images/scenes/scene6.png" alt="Scene 6 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PBR Gold Sphere |
+| 7 | <img src="images/scenes/scene7.png" alt="Scene 7 ChibiRex rendering" width="160"> | 0.001 / 0.008 | 0.001 / 0.008 | ChibiRex Default Camera |
 | 8 | <img src="images/scenes/scene8.png" alt="Scene 8 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | HDR Glass Sphere |
 | 9 | <img src="images/scenes/scene9.png" alt="Scene 9 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Sponza |
 | 10 | <img src="images/scenes/scene10.png" alt="Scene 10 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PBR Rough Sphere |
 | 11 | <img src="images/scenes/scene11.png" alt="Scene 11 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Spec-Gloss Shark |
-| 12 | <img src="images/scenes/scene12.png" alt="Scene 12 rendering" width="160"> | 0.000 / 0.003 | 0.000 / 0.003 | PBR Shader Balls |
-| 13 | <img src="images/scenes/scene13.png" alt="Scene 13 rendering" width="160"> | 0.001 / 0.006 | 0.001 / 0.006 | PBR Spheres Grid |
-| 14 | <img src="images/scenes/scene14.png" alt="Scene 14 rendering" width="160"> | 0.000 / 0.005 | 0.000 / 0.005 | Flight Helmet |
+| 12 | <img src="images/scenes/scene12.png" alt="Scene 12 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PBR Shader Balls |
+| 13 | <img src="images/scenes/scene13.png" alt="Scene 13 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PBR Spheres Grid |
+| 14 | <img src="images/scenes/scene14.png" alt="Scene 14 rendering" width="160"> | 0.000 / 0.005 | 0.000 / 0.000 | Flight Helmet |
 | 15 | <img src="images/scenes/scene15.png" alt="Scene 15 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Two Spot Lights |
 | 16 | <img src="images/scenes/scene16.png" alt="Scene 16 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Thin Instances |
 | 17 | <img src="images/scenes/scene17.png" alt="Scene 17 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PBR and Standard Thin Instances |
 | 18 | <img src="images/scenes/scene18.png" alt="Scene 18 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PCF Spotlight Shadows |
 | 19 | <img src="images/scenes/scene19.png" alt="Scene 19 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PBR Clearcoat |
-| 20 | <img src="images/scenes/scene20.png" alt="Scene 20 rendering" width="160"> | 0.002 / 0.007 | 0.002 / 0.007 | PBR Emissive Sphere Grid |
-| 21 | <img src="images/scenes/scene21.png" alt="Scene 21 rendering" width="160"> | 0.330 / 0.330 | 0.330 / 0.330 | PBR Sheen Cloth |
+| 20 | <img src="images/scenes/scene20.png" alt="Scene 20 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PBR Emissive Sphere Grid |
+| 21 | <img src="images/scenes/scene21.png" alt="Scene 21 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PBR Sheen Cloth |
 | 22 | <img src="images/scenes/scene22.png" alt="Scene 22 rendering" width="160"> | 0.040 / 0.040 | 0.040 / 0.040 | PBR Shadow Receiver |
-| 23 | <img src="images/scenes/scene23.png" alt="Scene 23 rendering" width="160"> | 0.002 / 0.017 | 0.002 / 0.017 | PBR Anisotropy |
-| 24 | <img src="images/scenes/scene24.png" alt="Scene 24 rendering" width="160"> | 0.004 / 0.004 | 0.000 / 0.000 | Hill Valley |
+| 23 | <img src="images/scenes/scene23.png" alt="Scene 23 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PBR Anisotropy |
+| 24 | <img src="images/scenes/scene24.png" alt="Scene 24 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Hill Valley |
 | 25 | <img src="images/scenes/scene25.png" alt="Scene 25 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | KTX Compressed Texture |
 | 26 | <img src="images/scenes/scene26.png" alt="Scene 26 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PBR Subsurface |
 | 27 | <img src="images/scenes/scene27.png" alt="Scene 27 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Material Variants |
-| 28 | <img src="images/scenes/scene28.png" alt="Scene 28 rendering" width="160"> | 0.001 / 0.006 | 0.001 / 0.006 | Clearcoat glTF |
-| 29 | <img src="images/scenes/scene29.png" alt="Scene 29 rendering" width="160"> | 0.000 / 0.006 | 0.000 / 0.006 | Sheen Cloth glTF |
-| 30 | <img src="images/scenes/scene30.png" alt="Scene 30 rendering" width="160"> | 0.007 / 0.010 | 0.003 / 0.005 | Volume Testing |
-| 31 | <img src="images/scenes/scene31.png" alt="Scene 31 rendering" width="160"> | 0.000 / 0.003 | 0.000 / 0.003 | Emissive Strength |
+| 28 | <img src="images/scenes/scene28.png" alt="Scene 28 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Clearcoat glTF |
+| 29 | <img src="images/scenes/scene29.png" alt="Scene 29 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Sheen Cloth glTF |
+| 30 | <img src="images/scenes/scene30.png" alt="Scene 30 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Volume Testing |
+| 31 | <img src="images/scenes/scene31.png" alt="Scene 31 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Emissive Strength |
 | 32 | <img src="images/scenes/scene32.png" alt="Scene 32 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Unlit glTF |
-| 33 | <img src="images/scenes/scene33.png" alt="Scene 33 rendering" width="160"> | 0.000 / 0.007 | 0.000 / 0.004 | Punctual Lights |
+| 33 | <img src="images/scenes/scene33.png" alt="Scene 33 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Punctual Lights |
 | 34 | <img src="images/scenes/scene34.png" alt="Scene 34 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Node Visibility |
 | 35 | <img src="images/scenes/scene35.png" alt="Scene 35 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Simple Instancing |
 | 36 | <img src="images/scenes/scene36.png" alt="Scene 36 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Basis Universal Texture |
 | 37 | <img src="images/scenes/scene37.png" alt="Scene 37 rendering" width="160"> | 0.001 / 0.005 | 0.001 / 0.006 | Sheen Wood Leather Sofa |
 | 38 | <img src="images/scenes/scene38.png" alt="Scene 38 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Mesh Builder Gallery |
-| 39 | <img src="images/scenes/scene39.png" alt="Scene 39 rendering" width="160"> | 0.000 / 0.001 | 0.000 / 0.001 | Animated Waterfall |
+| 39 | <img src="images/scenes/scene39.png" alt="Scene 39 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Animated Waterfall |
 | 40 | <img src="images/scenes/scene40.png" alt="Scene 40 rendering" width="160"> | 0.003 / 0.006 | 0.003 / 0.006 | Havok Sphere Drop; Bullet on Havok's sub-steps, speculative landing and rebound |
 | 41 | <img src="images/scenes/scene41.png" alt="Scene 41 rendering" width="160"> | 0.215 / 0.284 | 0.215 / 0.284 | Physics Shape Debug Viewer; Mesh, hull and compound bodies with retained debug overlays; free fall |
 | 42 | <img src="images/scenes/scene42.png" alt="Scene 42 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Physics Clone Pre-Step |
@@ -79,13 +79,13 @@ Physics rows measure Bullet against Havok: their residuals are solver deltas, no
 | 64 | <img src="images/scenes/scene64.png" alt="Scene 64 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME Morph Targets |
 | 65 | <img src="images/scenes/scene65.png" alt="Scene 65 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Node Material Shadow Receiver |
 | 66 | <img src="images/scenes/scene66.png" alt="Scene 66 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME Full Playground |
-| 67 | <img src="images/scenes/scene67.png" alt="Scene 67 rendering" width="160"> | 0.000 / 0.002 | 0.000 / 0.002 | NME PBR Core |
-| 68 | <img src="images/scenes/scene68.png" alt="Scene 68 rendering" width="160"> | 0.000 / 0.004 | 0.000 / 0.004 | NME PBR Clearcoat |
-| 69 | <img src="images/scenes/scene69.png" alt="Scene 69 rendering" width="160"> | 0.000 / 0.008 | 0.000 / 0.008 | NME PBR Sheen |
-| 70 | <img src="images/scenes/scene70.png" alt="Scene 70 rendering" width="160"> | 0.001 / 0.021 | 0.001 / 0.021 | NME PBR Anisotropy |
-| 71 | <img src="images/scenes/scene71.png" alt="Scene 71 rendering" width="160"> | 0.000 / 0.008 | 0.000 / 0.008 | NME PBR Subsurface |
-| 72 | <img src="images/scenes/scene72.png" alt="Scene 72 rendering" width="160"> | 0.001 / 0.011 | 0.001 / 0.011 | NME PBR Full |
-| 73 | <img src="images/scenes/scene73.png" alt="Scene 73 rendering" width="160"> | 0.003 / 0.012 | 0.003 / 0.012 | Split-Viewport NME Comparison |
+| 67 | <img src="images/scenes/scene67.png" alt="Scene 67 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME PBR Core |
+| 68 | <img src="images/scenes/scene68.png" alt="Scene 68 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME PBR Clearcoat |
+| 69 | <img src="images/scenes/scene69.png" alt="Scene 69 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME PBR Sheen |
+| 70 | <img src="images/scenes/scene70.png" alt="Scene 70 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME PBR Anisotropy |
+| 71 | <img src="images/scenes/scene71.png" alt="Scene 71 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME PBR Subsurface |
+| 72 | <img src="images/scenes/scene72.png" alt="Scene 72 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME PBR Full |
+| 73 | <img src="images/scenes/scene73.png" alt="Scene 73 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Split-Viewport NME Comparison |
 | 74 | <img src="images/scenes/scene74.png" alt="Scene 74 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Effect Renderer |
 | 75 | <img src="images/scenes/scene75.png" alt="Scene 75 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Effect Render Target |
 | 76 | <img src="images/scenes/scene76.png" alt="Scene 76 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Effect Texture |
@@ -99,7 +99,7 @@ Physics rows measure Bullet against Havok: their residuals are solver deltas, no
 | 84 | <img src="images/scenes/scene84.png" alt="Scene 84 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME Fragment Depth |
 | 85 | <img src="images/scenes/scene85.png" alt="Scene 85 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME Matrix Blocks |
 | 86 | <img src="images/scenes/scene86.png" alt="Scene 86 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME Scene and Mesh State |
-| 87 | <img src="images/scenes/scene87.png" alt="Scene 87 rendering" width="160"> | 0.000 / 0.001 | 0.000 / 0.001 | NME Iridescence and Image Processing |
+| 87 | <img src="images/scenes/scene87.png" alt="Scene 87 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME Iridescence and Image Processing |
 | 88 | <img src="images/scenes/scene88.png" alt="Scene 88 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME Loop Block |
 | 89 | <img src="images/scenes/scene89.png" alt="Scene 89 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NME Storage Blocks |
 | 90 | <img src="images/scenes/scene90.png" alt="Scene 90 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | CSG Operations |
@@ -121,7 +121,7 @@ Physics rows measure Bullet against Havok: their residuals are solver deltas, no
 | 106 | <img src="images/scenes/scene106.png" alt="Scene 106 rendering" width="160"> | 0.019 / 0.104 | 0.019 / 0.104 | Physics Motion and Prestep Grid; geometry and solver residual at frame 20. |
 | 110 | <img src="images/scenes/scene110.png" alt="Scene 110 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Render Target Diffuse Texture |
 | 111 | <img src="images/scenes/scene111.png" alt="Scene 111 rendering" width="160"> | 0.000 / 0.001 | 0.000 / 0.001 | Scene-Wide Light UBO Stress |
-| 112 | <img src="images/scenes/scene112.png" alt="Scene 112 rendering" width="160"> | 0.000 / 0.001 | 0.000 / 0.001 | Flight Helmet KTX2 |
+| 112 | <img src="images/scenes/scene112.png" alt="Scene 112 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Flight Helmet KTX2 |
 | 113 | <img src="images/scenes/scene113.png" alt="Scene 113 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Picking Precision |
 | 114 | <img src="images/scenes/scene114.png" alt="Scene 114 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Morph and Skeleton Picking |
 | 115 | <img src="images/scenes/scene115.png" alt="Scene 115 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Alien Picking at Frame 100 |
@@ -142,9 +142,9 @@ Physics rows measure Bullet against Havok: their residuals are solver deltas, no
 | 141 | <img src="images/scenes/scene141.png" alt="Scene 141 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Node, Standard and PBR ESM Casters |
 | 142 | <img src="images/scenes/scene142.png" alt="Scene 142 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Post-Process Viewports |
 | 143 | <img src="images/scenes/scene143.png" alt="Scene 143 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Post-Process Chain |
-| 144 | <img src="images/scenes/scene144.png" alt="Scene 144 rendering" width="160"> | 0.003 / 0.017 | 0.003 / 0.017 | Bloom |
-| 145 | <img src="images/scenes/scene145.png" alt="Scene 145 rendering" width="160"> | 0.022 / 0.021 | 0.010 / 0.009 | Standard Geometry Outputs |
-| 146 | <img src="images/scenes/scene146.png" alt="Scene 146 rendering" width="160"> | 0.003 / 0.003 | 0.003 / 0.003 | PBR Geometry Outputs |
+| 144 | <img src="images/scenes/scene144.png" alt="Scene 144 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Bloom |
+| 145 | <img src="images/scenes/scene145.png" alt="Scene 145 rendering" width="160"> | 0.016 / 0.015 | 0.010 / 0.009 | Standard Geometry Outputs |
+| 146 | <img src="images/scenes/scene146.png" alt="Scene 146 rendering" width="160"> | 0.001 / 0.001 | 0.001 / 0.001 | PBR Geometry Outputs |
 | 147 | <img src="images/scenes/scene147.png" alt="Scene 147 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Circle of Confusion |
 | 148 | <img src="images/scenes/scene148.png" alt="Scene 148 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Depth of Field |
 | 149 | <img src="images/scenes/scene149.png" alt="Scene 149 rendering" width="160"> | 0.007 / 0.009 | 0.000 / 0.000 | Node Material Geometry Outputs |
@@ -162,24 +162,24 @@ Physics rows measure Bullet against Havok: their residuals are solver deltas, no
 | 161 | <img src="images/scenes/scene161.png" alt="Scene 161 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Shader Custom Uniforms |
 | 162 | <img src="images/scenes/scene162.png" alt="Scene 162 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Shader Defines |
 | 163 | <img src="images/scenes/scene163.png" alt="Scene 163 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Shader Alpha Cutout |
-| 164 | <img src="images/scenes/scene164.png" alt="Scene 164 rendering" width="160"> | 0.016 / 0.017 | 0.016 / 0.017 | Device Loss Recovery |
+| 164 | <img src="images/scenes/scene164.png" alt="Scene 164 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Device Loss Recovery |
 | 165 | <img src="images/scenes/scene165.png" alt="Scene 165 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Shader Material Thin Instances |
 | 166 | <img src="images/scenes/scene166.png" alt="Scene 166 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Clustered Sponza Spot Lights |
 | 167 | <img src="images/scenes/scene167.png" alt="Scene 167 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PBR Lightmap |
-| 168 | <img src="images/scenes/scene168.png" alt="Scene 168 rendering" width="160"> | 0.000 / 0.002 | 0.000 / 0.002 | Mirrored Double-Sided Winding |
+| 168 | <img src="images/scenes/scene168.png" alt="Scene 168 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Mirrored Double-Sided Winding |
 | 170 | <img src="images/scenes/scene170.png" alt="Scene 170 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Navigation Crowd |
 | 171 | <img src="images/scenes/scene171.png" alt="Scene 171 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Navigation Crowd Path |
 | 172 | <img src="images/scenes/scene172.png" alt="Scene 172 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Navigation Tile Cache Obstacles |
 | 173 | <img src="images/scenes/scene173.png" alt="Scene 173 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Navigation Obstacle Toggle |
 | 174 | <img src="images/scenes/scene174.png" alt="Scene 174 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Navigation Off-Mesh Connections |
 | 175 | <img src="images/scenes/scene175.png" alt="Scene 175 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Navigation Raycast |
-| 176 | <img src="images/scenes/scene176.png" alt="Mosquito in Amber" width="160"> | 0.016 / 0.016 | 0.014 / 0.014 | Mosquito In Amber |
-| 177 | <img src="images/scenes/scene177.png" alt="Scene 177 rendering" width="160"> | 0.021 / 0.021 | 0.021 / 0.021 | Iridescence Sphere |
-| 178 | <img src="images/scenes/scene178.png" alt="Scene 178 rendering" width="160"> | 0.018 / 0.016 | 0.018 / 0.016 | Iridescence Abalone |
+| 176 | <img src="images/scenes/scene176.png" alt="Mosquito in Amber" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Mosquito In Amber |
+| 177 | <img src="images/scenes/scene177.png" alt="Scene 177 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Iridescence Sphere |
+| 178 | <img src="images/scenes/scene178.png" alt="Scene 178 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Iridescence Abalone |
 | 179 | <img src="images/scenes/scene179.png" alt="Scene 179 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Clustered Sponza Lights |
 | 180 | <img src="images/scenes/scene180.png" alt="Scene 180 rendering" width="160"> | 0.020 / 0.455 | 0.020 / 0.455 | Standalone Text Renderer |
 | 181 | <img src="images/scenes/scene181.png" alt="Scene 181 rendering" width="160"> | 0.002 / 0.028 | 0.002 / 0.028 | Live Text Editor |
-| 186 | <img src="images/scenes/scene186.png" alt="Scene 186 rendering" width="160"> | 0.002 / 0.004 | 0.002 / 0.004 | Local Cubemap Blending |
+| 186 | <img src="images/scenes/scene186.png" alt="Scene 186 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Local Cubemap Blending |
 | 187 | <img src="images/scenes/scene187.png" alt="Scene 187 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Subpixel Morphological Anti-Aliasing |
 | 200 | <img src="images/scenes/scene200.png" alt="Scene 200 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | High-Precision Matrix Off |
 | 201 | <img src="images/scenes/scene201.png" alt="Scene 201 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | High-Precision Matrix On |
@@ -192,7 +192,7 @@ Physics rows measure Bullet against Havok: their residuals are solver deltas, no
 | 209 | <img src="images/scenes/scene209.png" alt="Scene 209 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Floating Origin Havok Physics; Floating Origin Physics Regions |
 | 210 | <img src="images/scenes/scene210.png" alt="Scene 210 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | XMP Metadata Rounded Cube |
 | 211 | <img src="images/scenes/scene211.png" alt="Scene 211 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | BrainStem Meshopt |
-| 212 | <img src="images/scenes/scene212.png" alt="Scene 212 rendering" width="160"> | 0.014 / 0.016 | 0.010 / 0.011 | Dispersion Test |
+| 212 | <img src="images/scenes/scene212.png" alt="Scene 212 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Dispersion Test |
 | 213 | <img src="images/scenes/scene213.png" alt="Scene 213 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Grid Material Ordering |
 | 214 | <img src="images/scenes/scene214.png" alt="Scene 214 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Cascaded Shadow Torus Knots |
 | 215 | <img src="images/scenes/scene215.png" alt="Scene 215 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Cascaded Shadows On A PBR Receiver |
@@ -200,7 +200,7 @@ Physics rows measure Bullet against Havok: their residuals are solver deltas, no
 | 217 | <img src="images/scenes/scene217.png" alt="Scene 217 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Material Plugins |
 | 218 | <img src="images/scenes/scene218.png" alt="Scene 218 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | VAT Shark |
 | 219 | <img src="images/scenes/scene219.png" alt="Scene 219 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Instanced VAT Shark |
-| 220 | <img src="images/scenes/scene220.png" alt="Scene 220 rendering" width="160"> | 0.001 / 0.002 | 0.001 / 0.002 | Quantized Duck |
+| 220 | <img src="images/scenes/scene220.png" alt="Scene 220 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Quantized Duck |
 | 221 | <img src="images/scenes/scene221.png" alt="Scene 221 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Pointer Drags |
 | 222 | <img src="images/scenes/scene222.png" alt="Scene 222 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Composite Gizmos |
 | 223 | <img src="images/scenes/scene223.png" alt="Scene 223 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Camera And Light Gizmos |
@@ -212,35 +212,35 @@ Physics rows measure Bullet against Havok: their residuals are solver deltas, no
 | 229 | <img src="images/scenes/scene229.png" alt="Scene 229 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Triangle Without Indices |
 | 231 | <img src="images/scenes/scene231.png" alt="Scene 231 rendering" width="160"> | 0.000 / 0.001 | 0.000 / 0.000 | Standard Material Deform Features |
 | 240 | <img src="images/scenes/scene240.png" alt="Scene 240 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Animated Triangle |
-| 241 | <img src="images/scenes/scene241.png" alt="Scene 241 rendering" width="160"> | 0.001 / 0.005 | 0.001 / 0.005 | Animation Pointer UVs |
-| 242 | <img src="images/scenes/scene242.png" alt="Scene 242 rendering" width="160"> | 0.000 / 0.004 | 0.000 / 0.004 | Emissive Fireflies |
-| 243 | <img src="images/scenes/scene243.png" alt="Scene 243 rendering" width="160"> | 0.000 / 0.005 | 0.000 / 0.005 | Morph Stress Test |
-| 244 | <img src="images/scenes/scene244.png" alt="Scene 244 rendering" width="160"> | 0.001 / 0.011 | 0.001 / 0.011 | Pot of Coals |
+| 241 | <img src="images/scenes/scene241.png" alt="Scene 241 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Animation Pointer UVs |
+| 242 | <img src="images/scenes/scene242.png" alt="Scene 242 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Emissive Fireflies |
+| 243 | <img src="images/scenes/scene243.png" alt="Scene 243 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Morph Stress Test |
+| 244 | <img src="images/scenes/scene244.png" alt="Scene 244 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Pot of Coals |
 | 245 | <img src="images/scenes/scene245.png" alt="Scene 245 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Recursive Skeletons |
 | 246 | <img src="images/scenes/scene246.png" alt="Scene 246 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Simple Skin |
-| 247 | <img src="images/scenes/scene247.png" alt="Scene 247 rendering" width="160"> | 0.001 / 0.009 | 0.001 / 0.009 | Teapots Galore |
+| 247 | <img src="images/scenes/scene247.png" alt="Scene 247 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Teapots Galore |
 | 248 | <img src="images/scenes/scene248.png" alt="Scene 248 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Texture Settings |
-| 249 | <img src="images/scenes/scene249.png" alt="Scene 249 rendering" width="160"> | 0.000 / 0.004 | 0.000 / 0.004 | Vertex Alpha Clip |
-| 250 | <img src="images/scenes/scene250.png" alt="Scene 250 rendering" width="160"> | 0.004 / 0.004 | 0.003 / 0.003 | VirtualCity Cameras |
+| 249 | <img src="images/scenes/scene249.png" alt="Scene 249 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Vertex Alpha Clip |
+| 250 | <img src="images/scenes/scene250.png" alt="Scene 250 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | VirtualCity Cameras |
 | 251 | <img src="images/scenes/scene251.png" alt="Scene 251 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Animation Group Mask |
 | 252 | <img src="images/scenes/scene252.png" alt="Scene 252 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Standard Morph Target |
-| 253 | <img src="images/scenes/scene253.png" alt="Scene 253 rendering" width="160"> | 0.000 / 0.001 | 0.000 / 0.001 | Animate All The Things |
-| 254 | <img src="images/scenes/scene254.png" alt="Scene 254 rendering" width="160"> | 0.001 / 0.003 | 0.001 / 0.003 | Animation Sampler Type |
+| 253 | <img src="images/scenes/scene253.png" alt="Scene 253 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Animate All The Things |
+| 254 | <img src="images/scenes/scene254.png" alt="Scene 254 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Animation Sampler Type |
 | 255 | <img src="images/scenes/scene255.png" alt="Scene 255 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Animation Skin Type |
-| 256 | <img src="images/scenes/scene256.png" alt="Scene 256 rendering" width="160"> | 0.000 / 0.005 | 0.000 / 0.005 | Normal Tangent Test |
-| 257 | <img src="images/scenes/scene257.png" alt="Scene 257 rendering" width="160"> | 0.001 / 0.005 | 0.001 / 0.005 | Node Negative Scale |
-| 258 | <img src="images/scenes/scene258.png" alt="Scene 258 rendering" width="160"> | 0.002 / 0.004 | 0.002 / 0.004 | Interleaved Buffer |
+| 256 | <img src="images/scenes/scene256.png" alt="Scene 256 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Normal Tangent Test |
+| 257 | <img src="images/scenes/scene257.png" alt="Scene 257 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Node Negative Scale |
+| 258 | <img src="images/scenes/scene258.png" alt="Scene 258 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Interleaved Buffer |
 | 259 | <img src="images/scenes/scene259.png" alt="Scene 259 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Material Texture |
 | 260 | <img src="images/scenes/scene260.png" alt="Scene 260 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Triangle Strip Primitive |
 | 261 | <img src="images/scenes/scene261.png" alt="Scene 261 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Temporal Anti-Aliasing |
 | 262 | <img src="images/scenes/scene262.png" alt="Scene 262 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NPE Particle Size |
 | 263 | <img src="images/scenes/scene263.png" alt="Scene 263 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NPE Particle Gravity |
 | 264 | <img src="images/scenes/scene264.png" alt="Scene 264 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NPE Particle Sphere Emitter |
-| 265 | <img src="images/scenes/scene265.png" alt="Scene 265 rendering" width="160"> | 0.000 / 0.007 | 0.000 / 0.007 | Environment Test |
-| 266 | <img src="images/scenes/scene266.png" alt="Scene 266 rendering" width="160"> | 0.001 / 0.002 | 0.001 / 0.002 | Negative Scale Spheres |
+| 265 | <img src="images/scenes/scene265.png" alt="Scene 265 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Environment Test |
+| 266 | <img src="images/scenes/scene266.png" alt="Scene 266 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Negative Scale Spheres |
 | 267 | <img src="images/scenes/scene267.png" alt="Scene 267 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Standard Vertex Colors |
 | 268 | <img src="images/scenes/scene268.png" alt="Scene 268 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Orthographic Camera |
-| 269 | <img src="images/scenes/scene269.png" alt="Scene 269 rendering" width="160"> | 0.001 / 0.006 | 0.001 / 0.006 | Mirrored Transform Reparenting |
+| 269 | <img src="images/scenes/scene269.png" alt="Scene 269 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Mirrored Transform Reparenting |
 | 270 | <img src="images/scenes/scene270.png" alt="Scene 270 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Mirrored Standard Meshes |
 | 271 | <img src="images/scenes/scene271.png" alt="Scene 271 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Shadow Light Rebuild |
 | 272 | <img src="images/scenes/scene272.png" alt="Scene 272 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Runtime Mesh Swap |
@@ -261,7 +261,7 @@ Physics rows measure Bullet against Havok: their residuals are solver deltas, no
 | 301 | <img src="images/scenes/scene301.png" alt="Scene 301 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NPE Sprite2D Blend Modes |
 | 302 | <img src="images/scenes/scene302.png" alt="Scene 302 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NPE Moving Emitter |
 | 303 | <img src="images/scenes/scene303.png" alt="Scene 303 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Sprite2D Renderer-Native Y-Sort |
-| 304 | <img src="images/scenes/scene304.png" alt="Scene 304 rendering" width="160"> | 0.001 / 0.004 | 0.001 / 0.004 | Calculator KHR_interactivity |
+| 304 | <img src="images/scenes/scene304.png" alt="Scene 304 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Calculator KHR_interactivity |
 | 305 | <img src="images/scenes/scene305.png" alt="Scene 305 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | NPE Teleport Graph Plumbing |
 
 ## Upstream application gates
@@ -270,26 +270,26 @@ Unchanged pinned applications, including their reached source and asset graphs.
 
 | Application | Preview | SDL_GPU | Dawn | Coverage |
 | --- | :---: | ---: | ---: | --- |
-| Ocean | <img src="images/scenes/ocean.png" alt="Ocean rendering" width="160"> | 0.303 / 0.298 | 0.302 / 0.297 | Spectral ocean; compute FFT and mipmaps; procedural sky; buoyancy; retained controls; canvas-only MAD: 0.005 / 0.005 on both backends. |
-| Offscreen (Worker) | <img src="images/scenes/offscreen.png" alt="Offscreen main and worker views" width="160"> | $\color{#1a7f37}{\textsf{0.423}} / \color{#9a6700}{\textsf{0.549}}$ | $\color{#1a7f37}{\textsf{0.423}} / \color{#9a6700}{\textsf{0.549}}$ | Dedicated Worker realms; transferred canvases; retained blocking control. UI and localized lens residuals; canvas-only MAD: 0.001 / 0.002 on both backends. |
-| Tetris | <img src="images/scenes/tetris.png" alt="Tetris rendering" width="160"> | $\color{#cf222e}{\textsf{1.155}} / \color{#9a6700}{\textsf{0.918}}$ | $\color{#cf222e}{\textsf{1.155}} / \color{#9a6700}{\textsf{0.918}}$ | Thin-instance game; audio; retained UI. UI residual; no-UI MAD: 0.093 / 0.101 on both backends. |
+| Ocean | <img src="images/scenes/ocean.png" alt="Ocean rendering" width="160"> | 0.303 / 0.298 | 0.305 / 0.301 | Spectral ocean; compute FFT and mipmaps; procedural sky; buoyancy; retained controls; canvas-only MAD: 0.005 / 0.005 on both backends. |
+| Offscreen (Worker) | <img src="images/scenes/offscreen.png" alt="Offscreen main and worker views" width="160"> | $\color{#1a7f37}{\textsf{0.421}} / \color{#9a6700}{\textsf{0.547}}$ | $\color{#1a7f37}{\textsf{0.421}} / \color{#9a6700}{\textsf{0.547}}$ | Dedicated Worker realms; transferred canvases; retained blocking control. UI and localized lens residuals; canvas-only MAD: 0.000 / 0.000 on both backends. |
+| Tetris | <img src="images/scenes/tetris.png" alt="Tetris rendering" width="160"> | $\color{#cf222e}{\textsf{1.143}} / \color{#9a6700}{\textsf{0.904}}$ | $\color{#cf222e}{\textsf{1.143}} / \color{#9a6700}{\textsf{0.904}}$ | Thin-instance game; audio; retained UI. UI residual; no-UI MAD: 0.080 / 0.086 on both backends, the demo's doubled `devicePixelRatio` supersample (the port renders at the window's size). |
 | Doom | <img src="images/scenes/doom.png" alt="Doom rendering" width="160"> | 0.001 / 0.001 | 0.001 / 0.001 | WAD game; sprites; audio; retained UI. |
 | LibreQuake | <img src="images/scenes/quake.png" alt="LibreQuake rendering" width="160"> | 0.027 / 0.027 | 0.027 / 0.027 | BSP/WAD2/MDL game; audio; Canvas2D HUD. |
 | Torus States | <img src="images/scenes/torus-states.png" alt="Torus States rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Frame graph; offscreen effects; bloom. |
-| Platformer | <img src="images/scenes/platformer.png" alt="Platformer rendering" width="160"> | $\color{#9a6700}{\textsf{0.806}} / \color{#9a6700}{\textsf{0.806}}$ | $\color{#9a6700}{\textsf{0.803}} / \color{#9a6700}{\textsf{0.803}}$ | Sprite game; CRT pass; audio; retained UI. UI residual; no-UI MAD: SDL_GPU 0.004 / 0.004, Dawn 0.000 / 0.000. |
+| Platformer | <img src="images/scenes/platformer.png" alt="Platformer rendering" width="160"> | $\color{#9a6700}{\textsf{0.803}} / \color{#9a6700}{\textsf{0.803}}$ | $\color{#9a6700}{\textsf{0.803}} / \color{#9a6700}{\textsf{0.803}}$ | Sprite game; CRT pass; audio; retained UI. UI residual; no-UI MAD: 0.000 / 0.000 on both backends. |
 | Break Meshes | <img src="images/scenes/break-meshes.png" alt="Break Meshes rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Voronoi fracture; PBR; physics. |
 | Racer | <img src="images/scenes/racer.png" alt="Racer rendering" width="160"> | 0.466 / 0.466 | 0.466 / 0.466 | Driving game; CSM; physics; audio; retained HUD. UI residual; no-UI MAD: 0.004 / 0.004 on both backends. |
 | Antigravity Racer | <img src="images/scenes/antigravity-racer.png" alt="Antigravity Racer rendering" width="160"> | $\color{#cf222e}{\textsf{3.230}} / \color{#cf222e}{\textsf{3.290}}$ | $\color{#cf222e}{\textsf{3.230}} / \color{#cf222e}{\textsf{3.290}}$ | Antigravity racing game; dynamic hierarchy instances; shader storage; CSM; HDR/IBL; gamepads; GPU picking; retained menu. UI residual; canvas-only MAD: 0.000 / 0.000 on both backends. |
-| Littlest Tokyo | <img src="images/scenes/littlest-tokyo.png" alt="Littlest Tokyo rendering" width="160"> | 0.143 / 0.109 | 0.143 / 0.109 | Animated glTF; PBR/IBL; retained chrome. |
-| Bath Day | <img src="images/scenes/bath-day.png" alt="Bath Day rendering" width="160"> | 0.103 / 0.141 | 0.103 / 0.141 | Skinned Draco/WebP glTF; transmission; retained chrome. |
-| Freeciv | <img src="images/scenes/freeciv.png" alt="Freeciv rendering" width="160"> | 0.159 / 0.158 | 0.142 / 0.141 | Strategy map; sprites; picking; retained cursor/tooltips. |
-| The Playroom (`playroom`) | <img src="images/scenes/playroom.png" alt="Playroom gameplay with throw counter and score" width="160"> | $\color{#9a6700}{\textsf{0.746}} / \color{#9a6700}{\textsf{0.815}}$ | $\color{#9a6700}{\textsf{0.746}} / \color{#9a6700}{\textsf{0.815}}$ | Physics game; ragdoll; thin instances; audio; retained HUD. Not qualified: startup parity is above 0.5 on the canvas and the full page; physics performance remains below target; canvas-only MAD: SDL_GPU 1.103 / 1.199, Dawn 1.102 / 1.199. |
+| Littlest Tokyo | <img src="images/scenes/littlest-tokyo.png" alt="Littlest Tokyo rendering" width="160"> | 0.141 / 0.107 | 0.141 / 0.107 | Animated glTF; PBR/IBL; retained chrome. |
+| Bath Day | <img src="images/scenes/bath-day.png" alt="Bath Day rendering" width="160"> | 0.102 / 0.140 | 0.102 / 0.140 | Skinned Draco/WebP glTF; transmission; retained chrome. |
+| Freeciv | <img src="images/scenes/freeciv.png" alt="Freeciv rendering" width="160"> | 0.115 / 0.113 | 0.115 / 0.113 | Strategy map; sprites; picking; retained cursor/tooltips. |
+| The Playroom (`playroom`) | <img src="images/scenes/playroom.png" alt="Playroom gameplay with throw counter and score" width="160"> | $\color{#9a6700}{\textsf{0.746}} / \color{#9a6700}{\textsf{0.815}}$ | $\color{#9a6700}{\textsf{0.746}} / \color{#9a6700}{\textsf{0.815}}$ | Physics game; ragdoll; thin instances; audio; retained HUD. Not qualified: startup parity is above 0.5 on the canvas and the full page; physics performance remains below target; canvas-only MAD: SDL_GPU 1.102 / 1.199, Dawn 1.102 / 1.199. |
 | Sandblox | <img src="images/scenes/sandblox.png" alt="Sandblox rendering" width="160"> | 0.073 / 0.077 | 0.073 / 0.077 | 3D building sandbox; dynamic coloured thin instances; material plugins; property animation; audio; JSON save/load; retained editing UI. UI residual; canvas-only MAD: 0.000 / 0.000 on both backends. |
-| Voxel Sandbox | <img src="images/scenes/minecraft.png" alt="Voxel Sandbox rendering" width="160"> | $\color{#cf222e}{\textsf{1.091}} / \color{#cf222e}{\textsf{1.091}}$ | $\color{#cf222e}{\textsf{1.090}} / \color{#cf222e}{\textsf{1.090}}$ | Procedural voxel world; generated texture atlas; custom shader materials; audio; save/load; retained HUD and crosshair. UI residual; canvas-only MAD: SDL_GPU 0.001 / 0.000, Dawn 0.000 / 0.000. |
+| Voxel Sandbox | <img src="images/scenes/minecraft.png" alt="Voxel Sandbox rendering" width="160"> | $\color{#cf222e}{\textsf{1.090}} / \color{#cf222e}{\textsf{1.090}}$ | $\color{#cf222e}{\textsf{1.090}} / \color{#cf222e}{\textsf{1.090}}$ | Procedural voxel world; generated texture atlas; custom shader materials; audio; save/load; retained HUD and crosshair. UI residual; canvas-only MAD: 0.000 / 0.000 on both backends. |
 | NPE on Sprite2D | <img src="images/scenes/npe-sprite2d.png" alt="NPE on Sprite2D rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Live pure-2D node particles; sprite atlas; pointer-following emitter. |
-| Screen-Space Effects | <img src="images/scenes/screen-space-effects.png" alt="Screen-Space Effects rendering" width="160"> | 0.362 / 0.441 | 0.361 / 0.440 | Contact shadows; one-bounce GI; temporal history; retained controls. UI residual; canvas-only MAD: SDL_GPU 0.001 / 0.002, Dawn 0.000 / 0.000. |
-| Mosquito in Amber | <img src="images/scenes/mosquito-amber.png" alt="Mosquito in Amber rendering" width="160"> | 0.016 / 0.016 | 0.014 / 0.014 | Transmissive glTF (scene 176) as a demo; studio HDR IBL; retained chrome. |
-| Calculator | <img src="images/scenes/calculator.png" alt="Calculator rendering" width="160"> | $\color{#1a7f37}{\textsf{0.196}} / \color{#9a6700}{\textsf{0.896}}$ | $\color{#1a7f37}{\textsf{0.196}} / \color{#9a6700}{\textsf{0.896}}$ | KHR_interactivity flow graph; GPU picking under the selectability filter; retained chrome. UI residual; canvas-only MAD: 0.000 / 0.001 on both backends. |
+| Screen-Space Effects | <img src="images/scenes/screen-space-effects.png" alt="Screen-Space Effects rendering" width="160"> | 0.361 / 0.440 | 0.361 / 0.440 | Contact shadows; one-bounce GI; temporal history; retained controls. UI residual; canvas-only MAD: 0.000 / 0.000 on both backends. |
+| Mosquito in Amber | <img src="images/scenes/mosquito-amber.png" alt="Mosquito in Amber rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Transmissive glTF (scene 176) as a demo; studio HDR IBL; retained chrome. |
+| Calculator | <img src="images/scenes/calculator.png" alt="Calculator rendering" width="160"> | $\color{#1a7f37}{\textsf{0.196}} / \color{#9a6700}{\textsf{0.895}}$ | $\color{#1a7f37}{\textsf{0.196}} / \color{#9a6700}{\textsf{0.895}}$ | KHR_interactivity flow graph; GPU picking under the selectability filter; retained chrome. UI residual; canvas-only MAD: 0.000 / 0.000 on both backends. |
 
 ## Project-owned differential gates
 
@@ -319,5 +319,5 @@ Repository fixtures running against pinned Babylon Lite. These measure contracts
 | glTF-topology | <img src="images/scenes/regression-gltf-topology.png" alt="glTF primitive topology rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | glTF Primitive Topology |
 | glTF-step-animation | <img src="images/scenes/regression-gltf-step-animation.png" alt="glTF STEP animation rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | glTF STEP Animation |
 | node-local-attributes | <img src="images/scenes/regression-node-local-attributes.png" alt="Node local attributes rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Node Local Attributes |
-| morph-ground | <img src="images/scenes/regression-morph-ground.png" alt="Morph storage ground rendering" width="160"> | 0.000 / 0.001 | 0.000 / 0.001 | Morph Storage Ground |
+| morph-ground | <img src="images/scenes/regression-morph-ground.png" alt="Morph storage ground rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Morph Storage Ground |
 | timer-callback-cells | <img src="images/scenes/regression-timer-callback-cells.png" alt="Timer callback cells rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | Timer Callback Cells |

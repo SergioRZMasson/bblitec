@@ -2612,12 +2612,9 @@ ${
                 fragmentUniformSpace: 3,
             },
             textureContract: {
-                baseColor: "sRGB",
-                emissive: "sRGB",
-                normal: "linear",
-                metallicRoughness: "linear",
+                materialTextures: "texture-format",
                 environment: "linear-rgba16f",
-                brdfLut: "linear-rgba32f",
+                brdfLut: "linear-rgba16f",
             },
             invariants: [
                 {

@@ -27,7 +27,7 @@ test("native metadata round trips preserve shared resource identity", () => {
         kind: "texture",
         cpp: "texture",
         textureStorage: "file",
-        textureFile: { srgb: true, source: "texture.png" },
+        textureFile: { source: "texture.png" },
         textureWidth: 32,
         sharedStorageCpp: "storage",
         engineCpp: "engine",

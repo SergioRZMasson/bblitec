@@ -1794,6 +1794,11 @@ struct TextureData {
     // `copyExternalImageToTexture({ premultipliedAlpha: true })` in the pin.
     // `pal::orient_image` applies the same byte transform with the flip.
     bool premultiply_alpha = false;
+    // The `Texture2D`'s own format: `rgba8unorm-srgb` when set, else
+    // `rgba8unorm` (`loadTexture2D`'s `srgb` option, the glTF loader's
+    // `_texture(info, srgb)`). The pin keeps the format on the texture, so
+    // every binding samples it through this encoding whatever slot holds it.
+    bool srgb = false;
     // The texels `loadTexture2D` decoded from `bytes`, oriented, for its
     // first readers (pal_texture_texels.hpp).
     std::shared_ptr<pal::LoadedTexels> loaded_texels;
@@ -1833,7 +1838,6 @@ struct TextureData {
 
 struct FileTexture {
     TextureData data{};
-    bool srgb = false;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     /** JavaScript Texture2D object identity for array search and aliases. */
@@ -1885,6 +1889,19 @@ struct PixelsTexture {
     bool uv_invert_y = false;
 };
 
+/** The texture record a `PixelsTexture` binds as: its texels, sampler, transform and encoding. */
+inline TextureData pixels_texture_data(const PixelsTexture& texture) {
+    TextureData data;
+    data.bytes = texture.rgba;
+    data.rgba_width = texture.width;
+    data.rgba_height = texture.height;
+    data.sampler = texture.sampler;
+    data.uv_transform = texture.uv_transform;
+    data.uv_invert_y = texture.uv_invert_y;
+    data.srgb = texture.srgb;
+    return data;
+}
+
 inline bool operator==(const FileTexture& left, const FileTexture& right) {
     return left.identity == right.identity;
 }
@@ -1902,15 +1919,14 @@ using StoredTexture = std::variant<FileTexture, PixelsTexture>;
  * One texture a `MaterialPlugin` binds (`plugin-bridge-shared.ts`).
  *
  * `getSamplers()` declares the binding pair and `bindTextures(out)` fills
- * it, so what the record has to carry is the texture payload plus the
- * encoding its view takes -- the same two halves every material slot binds
- * through, without the source dimensions a decoded file also reports. Both
- * reached producers land here: `createTexture2DFromPixels` texels (which
+ * it, so what the record has to carry is the texture payload, whose own
+ * encoding its view takes -- what every material slot binds, without the
+ * source dimensions a decoded file also reports. Both reached producers
+ * land here: `createTexture2DFromPixels` texels (which
  * `TextureData::rgba_width`/`rgba_height` mark) and a loaded image.
  */
 struct MaterialPluginTexture {
     TextureData data{};
-    bool srgb = false;
     std::string texture_name{};
     std::string sampler_name{};
 };
@@ -2722,7 +2738,6 @@ struct MaterialRecord {
     float lightmap_level = 1.0f;
     float lightmap_coord_index = 1.0f;
     bool lightmap_shadowmap = false;
-    bool lightmap_texture_srgb = false;
     bool has_iridescence = false;
     float iridescence_intensity{};
     float iridescence_index_of_refraction{};
@@ -2841,8 +2856,6 @@ struct MaterialRecord {
     TextureData base_color_texture;
     /** PBR source slot presence; a factor-baked texture also fills the slot. */
     bool has_public_base_color_texture = false;
-    /** Source Standard diffuse Texture2D format; separate from renderer defaults. */
-    bool diffuse_texture_srgb = false;
     TextureData metallic_roughness_texture;
     TextureData metallic_reflectance_texture;
     TextureData reflectance_texture;
@@ -2883,16 +2896,11 @@ struct MaterialRecord {
     // (uploadBaseColorFactorTexture); the hardware decode of these
     // bytes is the browser's effective base color.
     std::array<std::uint8_t, 4> base_color_fallback{255, 255, 255, 255};
-    // The base-colour slot's own texture FORMAT, which upstream keeps on the
-    // `Texture2D` rather than on the material: `loadTexture2D` picks
-    // `rgba8unorm-srgb` or `rgba8unorm` from its caller's `srgb` option
-    // (texture-2d.ts), and the glTF loader passes true for this slot
-    // (gltf-pbr-builder.ts) as does the texture-less factor bake, which
-    // writes an sRGB texel. False for a scene-code solid texture -- the pin's
-    // createSolidTexture2D writes its rounded texel into a 1x1 rgba8unorm
-    // sampled without decode -- and false for a `loadTexture2D` result the
-    // scene did not ask sRGB for, which is how a gamma-albedo material feeds
-    // the decode to its own fragment instead.
+    // The format of the texture `base_color_fallback` stands for when the
+    // slot holds no image (an image carries its own, TextureData::srgb): the
+    // glTF texture-less factor bake writes an sRGB texel
+    // (gltf-pbr-builder.ts), while a scene-code solid texture is the pin's
+    // createSolidTexture2D, a 1x1 rgba8unorm sampled without decode.
     bool base_color_srgb = true;
     // Texture-less metallic/roughness baked to the pinned 8-bit texel
     // (uploadOrmFactorTexture writes [255, roughness, metallic, 255]) with the
@@ -4216,7 +4224,7 @@ inline FileTexture file_texture_record(Engine& engine, TextureSamplerState sampl
     texture.data.sampler = sampler;
     texture.data.invert_y = invert_y;
     texture.data.premultiply_alpha = premultiply_alpha;
-    texture.srgb = srgb;
+    texture.data.srgb = srgb;
     texture.identity = engine.next_file_texture_identity++;
     return texture;
 }
@@ -4867,14 +4875,13 @@ material_source_texture(const Engine& engine, MaterialHandle material, MaterialT
                 "Reading a Standard diffuse render attachment as a retained file texture is not supported.");
         }
         texture.data = record.base_color_texture;
-        texture.srgb = slot == MaterialTextureSlot::diffuse ? record.diffuse_texture_srgb
-                                                            : record.base_color_srgb;
         if (slot == MaterialTextureSlot::base_color && record.has_public_base_color_texture &&
             !texture.data.has_image()) {
             texture.data.bytes.assign(record.base_color_fallback.begin(),
                                       record.base_color_fallback.end());
             texture.data.rgba_width = 1;
             texture.data.rgba_height = 1;
+            texture.data.srgb = record.base_color_srgb;
         }
         texture.width = texture.data.rgba_width;
         texture.height = texture.data.rgba_height;
@@ -4887,7 +4894,6 @@ material_source_texture(const Engine& engine, MaterialHandle material, MaterialT
         break;
     case MaterialTextureSlot::emissive:
         texture.data = record.emissive_texture;
-        texture.srgb = true;
         break;
     case MaterialTextureSlot::occlusion:
         texture.data = record.occlusion_texture;

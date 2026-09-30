@@ -54,7 +54,8 @@ on a worker thread; SDL waits for submission fences. Promise reactions stay on t
 
 - bblite-tint (`tools/tint-sdl`) drives the pinned Tint's HLSL, MSL and SPIR-V writers with SDL's
   slots as their binding options and writes the `.slots` sidecar from the same assignment; DXC
-  compiles the HLSL to DXIL. Slots cover the resources the lowered entry point reaches.
+  compiles the HLSL to DXIL with the arguments Dawn passes for a default pipeline, IEEE
+  strictness included. Slots cover the resources the lowered entry point reaches.
   Sidecars specify stage visibility, resource kind, slot order and uniform size. Large uniform
   blocks may use read-only storage.
 - Each render stage's `.slots` sidecar opens with `@entry <entry point>` and ends with
@@ -179,5 +180,7 @@ transforms and effects; the backends own uploads, layers and premultiplied compo
 ## Render-target boundaries
 
 Attachments and pipelines must agree on formats, samples and depth state. Single-sample resolves are
-copies; target changes invalidate dependent state. Transmission capture uses resolved color on SDL
-and multisamples on Dawn. GPU initialization/recovery failures are errors, not backend fallback.
+copies; target changes invalidate dependent state. Both backends capture transmission through the
+pin's grab modules (per-sample loads of a multisampled source) and build a cube's mip chain one face
+at a time over 2D levels, as `recordMipmaps` does. GPU initialization/recovery failures are errors,
+not backend fallback.

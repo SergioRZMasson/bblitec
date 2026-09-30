@@ -48,7 +48,10 @@ import {
 import { CompileError } from "./compile-error.js";
 import { httpResponseProperty } from "./http.js";
 import { errorValue, thrownMessage } from "./error-values.js";
-import { renderClosure } from "./closure-captures.js";
+import {
+    renderClosure,
+    type NativeCaptureBinding,
+} from "./closure-captures.js";
 import { cppIdentifierPattern } from "../cpp-literals.js";
 import { pinOperand } from "./evaluation-order.js";
 import { sceneRelativeSourceLabel } from "../source-location.js";
@@ -2039,19 +2042,98 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
      *    itself miss composes its flag into the result's;
      *  - an `optional(T)` left evaluates once into a temporary and
      *    selects natively. Scalar alternatives use the expression's joined
-     *    type. The right side and its preparation stay inside the selection,
-     *    so they are evaluated only when the left is nullish;
+     *    type;
      *  - a left the model already proves non-nullish (a number, boolean,
      *    string, or non-optional data value) IS the result, and the dead
      *    right side is discarded exactly as JavaScript never evaluates
      *    it.
      *
+     * In both selecting arms the right side and its preparation stay inside
+     * the selection, so they are evaluated only when the left is nullish.
      * Anything else returns undefined and the caller's refusal names the
      * routes.
      */
     /** Whether a reference struct spelled `cpp` holds an object: the one presence spelling a leaf derives. */
     private referencePresence(cpp: string): string {
         return `static_cast<bool>(${cpp})`;
+    }
+
+    /**
+     * Compiles one arm of a short circuit (`??`, `||`, `?:`) as runtime
+     * control flow and returns what the arm emitted, so its caller keeps
+     * that preparation (a pinned call result, an element's bounds test)
+     * inside the arm instead of ahead of the select.
+     */
+    public compileArm<T>(compile: () => T): { value: T; lines: string[] } {
+        let value: T | undefined;
+        const lines = this.context.captureEmittedLines(() => {
+            this.context.enterRuntimeControlFlow();
+            try {
+                value = compile();
+            } finally {
+                this.context.leaveRuntimeControlFlow();
+            }
+        });
+        return { value: value as T, lines };
+    }
+
+    /**
+     * An arm's expression evaluated after its preparation: the expression
+     * itself when there is none, else an immediately invoked lambda. Await
+     * belongs to the enclosing coroutine, never a lambda, so a prepared arm
+     * that awaits refuses.
+     */
+    public armExpression(
+        node: ts.Expression,
+        lines: readonly string[],
+        cpp: string,
+        type?: DataType,
+    ): string {
+        if (lines.length === 0) return cpp;
+        if (
+            this.context.options.workers &&
+            someAnalysisNode(node, ts.isAwaitExpression, { functions: "skip" })
+        )
+            this.context.fail(
+                node,
+                "An awaited operand of a short circuit must be bound to its own declaration first.",
+            );
+        const returned =
+            type === undefined
+                ? ""
+                : ` -> ${this.context.dataTypes.cppType(type)}`;
+        return `([&]()${returned} {\n${lines.join("\n")}\nreturn ${cpp};\n}())`;
+    }
+
+    /**
+     * `found ? left : fallback` and its found flag, pinned once as a pair:
+     * `fallback` (the pair's two members, spelled) is prepared by `lines`,
+     * which run only when `found` is false.
+     */
+    private pinNullishPair(
+        node: ts.Expression,
+        left: Value,
+        found: string,
+        fallback: string,
+        lines: readonly string[],
+    ): { name: string; binding: NativeCaptureBinding } {
+        const pair = `std::pair<std::remove_cvref_t<decltype(${left.cpp})>, bool>`;
+        const name = this.context.allocateTemporaryCppName("nullish_selection");
+        this.context.emit({
+            kind: "declaration",
+            type: "const auto",
+            name,
+            initializer: this.armExpression(
+                node,
+                [`if (${found}) return ${pair}{${left.cpp}, true};`, ...lines],
+                `${pair}{${fallback}}`,
+            ),
+            attributes: "[[maybe_unused]] ",
+        });
+        return {
+            name,
+            binding: this.context.registerNativeConstBinding(name),
+        };
     }
 
     public compileNullishCoalesce(
@@ -2094,18 +2176,15 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
             return this.context.compileValue(expression.right);
         }
         const fallbackForSink = (type: DataType): string => {
-            let cpp = "";
-            const lines = this.context.captureEmittedLines(() => {
-                this.context.enterRuntimeControlFlow();
-                try {
-                    cpp = this.compileForSink(expression.right, type);
-                } finally {
-                    this.context.leaveRuntimeControlFlow();
-                }
-            });
-            return lines.length === 0
-                ? cpp
-                : `([&]() -> ${this.context.dataTypes.cppType(type)} {\n${lines.join("\n")}\nreturn ${cpp};\n}())`;
+            const arm = this.compileArm(() =>
+                this.compileForSink(expression.right, type),
+            );
+            return this.armExpression(
+                expression.right,
+                arm.lines,
+                arm.value,
+                type,
+            );
         };
         if (isJsonValue(left)) {
             const value = this.context.bindings.pinValueToTemporary(
@@ -2153,7 +2232,23 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
             if (leftFound === "true") {
                 return left;
             }
-            const fallback = this.context.compileValue(expression.right);
+            // The fallback runs only on a miss, so what it emits (a pinned
+            // call result, say) stays inside the arm the select takes.
+            const { value: fallback, lines: fallbackLines } = this.compileArm(
+                () => this.context.compileValue(expression.right),
+            );
+            const fallbackArm = (
+                type: DataType | undefined,
+                spell: () => string,
+            ): string => {
+                const arm = this.compileArm(spell);
+                return this.armExpression(
+                    expression.right,
+                    [...fallbackLines, ...arm.lines],
+                    arm.value,
+                    type,
+                );
+            };
             // A scalar element a bounds check found (`xs[0] ?? fallback`
             // through a span) selects its value or the fallback.
             if (
@@ -2165,14 +2260,23 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                     left.dataType.kind === "enum") &&
                 fallback.kind !== "json-null"
             ) {
-                const fallbackCpp = this.compileKnownValueForSink(
-                    fallback,
-                    left.dataType,
-                    expression.right,
+                const type = left.dataType;
+                const fallbackCpp = fallbackArm(type, () =>
+                    this.compileKnownValueForSink(
+                        fallback,
+                        type,
+                        expression.right,
+                    ),
                 );
                 return this.leafValue(
                     `(${leftFound} ? ${left.cpp} : ${fallbackCpp})`,
                     left.dataType,
+                );
+            }
+            if (fallback.kind === "json-null" && fallbackLines.length > 0) {
+                this.context.fail(
+                    expression.right,
+                    "A fallback that prepares an absent value must be bound to its own declaration first.",
                 );
             }
             if (fallback.kind === "json-null" && left.dataType !== undefined) {
@@ -2224,11 +2328,12 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                 left.dataType?.kind === "struct" &&
                 fallback.kind === "record"
             ) {
+                const type = left.dataType;
                 return {
                     ...this.leafValue(
                         `(${leftFound} ? ${left.cpp} : ` +
-                            `${this.compileKnownValueForSink(fallback, left.dataType, expression.right)})`,
-                        left.dataType,
+                            `${fallbackArm(type, () => this.compileKnownValueForSink(fallback, type, expression.right))})`,
+                        type,
                     ),
                     freshData: true,
                 };
@@ -2248,7 +2353,7 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                         ...this.leafValue(
                             `(${leftFound} ? ` +
                                 `${this.compileKnownValueForSink(left, common, expression.left)} : ` +
-                                `${this.compileKnownValueForSink(fallback, common, expression.right)})`,
+                                `${fallbackArm(common, () => this.compileKnownValueForSink(fallback, common, expression.right))})`,
                             common,
                         ),
                         freshData: true,
@@ -2266,14 +2371,28 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
             // A fallback that can itself miss (an indexed element) keeps
             // the question open: the composed flag is what a scene's own
             // not-found guard then reads. Both operands are guarded
-            // temporaries, so the select is safe either way.
+            // temporaries, so the select is safe either way. When the
+            // fallback also prepares its search, the handle and its flag
+            // are selected once, as a pair, so the preparation runs only
+            // on a miss.
             const fallbackFound = presenceFlagCpp(fallback);
-            const composedFound =
-                fallbackFound !== undefined
-                    ? `(${leftFound} || ${fallbackFound})`
+            const pair =
+                fallbackFound !== undefined && fallbackLines.length > 0
+                    ? this.pinNullishPair(
+                          expression.right,
+                          left,
+                          leftFound,
+                          `${fallback.cpp}, ${fallbackFound}`,
+                          fallbackLines,
+                      )
                     : undefined;
             return valueForKind(left.kind, {
-                cpp: `(${leftFound} ? ${left.cpp} : ` + `${fallback.cpp})`,
+                cpp: pair
+                    ? `${pair.name}.first`
+                    : `(${leftFound} ? ${left.cpp} : ${fallbackArm(left.dataType, () => fallback.cpp)})`,
+                ...(pair
+                    ? { nativeBinding: true, nativeCaptures: [pair.binding] }
+                    : {}),
                 ...(left.dataType !== undefined
                     ? { dataType: left.dataType }
                     : {}),
@@ -2287,9 +2406,13 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                               : {}),
                       }
                     : {}),
-                ...(composedFound !== undefined
-                    ? { optionalFoundCpp: composedFound }
-                    : {}),
+                ...(pair
+                    ? { optionalFoundCpp: `${pair.name}.second` }
+                    : fallbackFound !== undefined
+                      ? {
+                            optionalFoundCpp: `(${leftFound} || ${fallbackFound})`,
+                        }
+                      : {}),
             });
         }
         if (left.kind === "data" && left.dataType?.kind === "optional") {
@@ -4203,19 +4326,35 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
             return "nullptr";
         }
         if (ts.isConditionalExpression(unwrapped)) {
-            const whenTrue = this.objectIdentity(unwrapped.whenTrue);
-            const whenFalse = this.objectIdentity(unwrapped.whenFalse);
-            if (!whenTrue || !whenFalse) {
+            const whenTrue = this.compileArm(() =>
+                this.objectIdentity(unwrapped.whenTrue),
+            );
+            const whenFalse = this.compileArm(() =>
+                this.objectIdentity(unwrapped.whenFalse),
+            );
+            if (!whenTrue.value || !whenFalse.value) {
+                for (const line of [...whenTrue.lines, ...whenFalse.lines])
+                    this.context.emit(line);
                 return undefined;
             }
             const condition = this.context.conditions.compileCondition(
                 unwrapped.condition,
             );
+            const trueCpp = this.armExpression(
+                unwrapped.whenTrue,
+                whenTrue.lines,
+                whenTrue.value,
+            );
+            const falseCpp = this.armExpression(
+                unwrapped.whenFalse,
+                whenFalse.lines,
+                whenFalse.value,
+            );
             return condition === "true"
-                ? whenTrue
+                ? trueCpp
                 : condition === "false"
-                  ? whenFalse
-                  : `(${condition} ? ${whenTrue} : ${whenFalse})`;
+                  ? falseCpp
+                  : `(${condition} ? ${trueCpp} : ${falseCpp})`;
         }
         const path = this.compileDataPath(unwrapped, "read");
         const computed =
@@ -6208,16 +6347,15 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
             branch: ts.Expression,
             preparation?: { value: Value; lines: string[] },
         ): { cpp: string; lines: string[] } => {
-            let compiled = "";
-            const lines = this.context.captureEmittedLines(() => {
-                compiled = preparation
+            const { value: compiled, lines } = this.compileArm(() =>
+                preparation
                     ? this.compileKnownValueForSink(
                           preparation.value,
                           dataType,
                           branch,
                       )
-                    : this.compileForSink(branch, dataType);
-            });
+                    : this.compileForSink(branch, dataType),
+            );
             return {
                 cpp:
                     dataType.kind === "optional"
@@ -6334,9 +6472,15 @@ ${selectedLines.map((line) => `    ${line}\n`).join("")}    return ${resultCpp};
                 );
                 const empty = this.context.dataTypes.absentValue(dataType);
                 if (condition === "false") return empty;
-                const selected = this.compileForSink(left.right, dataType);
-                if (condition === "true") return selected;
-                return `(${condition} ? ${selected} : ` + `${empty})`;
+                if (condition === "true")
+                    return this.compileForSink(left.right, dataType);
+                const selected = this.compileArm(() =>
+                    this.compileForSink(left.right, dataType),
+                );
+                return (
+                    `(${condition} ? ` +
+                    `${this.armExpression(left.right, selected.lines, selected.value, dataType)} : ${empty})`
+                );
             }
         }
         // A conditional selects between two values of the sink's own

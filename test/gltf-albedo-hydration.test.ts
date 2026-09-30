@@ -86,6 +86,8 @@ int main() {
         record.base_color_texture.sampler.address_u = TextureAddressMode::mirror;
         record.base_color_texture.uv_transform.u_offset = .125;
         record.base_color_texture.uv_invert_y = true;
+        // The glTF loader uploads base colour through the sRGB view.
+        record.base_color_texture.srgb = true;
     }
     const auto document = ts::json_parse(R"({"__bblitecSourceAlbedoIdentities": {
         "materials": [0,0,1,2,3,4],
@@ -98,7 +100,7 @@ int main() {
     const auto first = get(0), shared = get(1), separate = get(2);
     assert(first == shared && first != separate);
     assert(texture_bytes(first) == texture_bytes(separate));
-    assert(first.srgb && first.data.uv_invert_y && first.data.uv_transform.u_offset == .125);
+    assert(first.data.srgb && first.data.uv_invert_y && first.data.uv_transform.u_offset == .125);
     assert(first.data.sampler.address_u == TextureAddressMode::mirror);
     const auto fallback = get(3), equal_fallback = get(4), implicit = get(5);
     assert(fallback != equal_fallback);

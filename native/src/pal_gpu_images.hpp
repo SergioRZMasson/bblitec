@@ -21,7 +21,15 @@
 
 namespace bbl::pal {
 
-inline std::uint16_t float_to_half(float value) {
+/**
+ * A float stored into an `rgba16float` storage texel the way the reference
+ * device's `textureStore` stores it: rounded toward zero, subnormals
+ * included, and a finite value past the range kept at the largest finite
+ * half. WGSL leaves the direction of that conversion to the
+ * implementation; the pin's GPU kernels that produce such texels on the
+ * reference device (the RGBD decode) truncate.
+ */
+inline std::uint16_t float_to_half_toward_zero(float value) {
     std::uint32_t bits = 0;
     std::memcpy(&bits, &value, sizeof(bits));
     const std::uint16_t sign = static_cast<std::uint16_t>((bits >> 16) & 0x8000u);
@@ -32,26 +40,16 @@ inline std::uint16_t float_to_half(float value) {
     }
     const int half_exponent = static_cast<int>(exponent) - 127 + 15;
     if (half_exponent >= 0x1f) {
-        return static_cast<std::uint16_t>(sign | 0x7c00u);
+        return static_cast<std::uint16_t>(sign | 0x7bffu);
     }
     if (half_exponent <= 0) {
         if (half_exponent < -10)
             return sign;
         const std::uint32_t normalized = mantissa | 0x800000u;
-        const int shift = 14 - half_exponent;
-        const std::uint32_t rounded =
-            (normalized + (1u << (shift - 1)) - 1u + ((normalized >> shift) & 1u)) >> shift;
-        return static_cast<std::uint16_t>(sign | rounded);
-    }
-    const std::uint32_t rounded = mantissa + 0xfffu + ((mantissa >> 13) & 1u);
-    if ((rounded & 0x800000u) != 0) {
-        const int next_exponent = half_exponent + 1;
-        return static_cast<std::uint16_t>(
-            next_exponent >= 0x1f ? sign | 0x7c00u
-                                  : sign | static_cast<std::uint16_t>(next_exponent << 10));
+        return static_cast<std::uint16_t>(sign | (normalized >> (14 - half_exponent)));
     }
     return static_cast<std::uint16_t>(sign | static_cast<std::uint16_t>(half_exponent << 10) |
-                                      static_cast<std::uint16_t>(rounded >> 13));
+                                      static_cast<std::uint16_t>(mantissa >> 13));
 }
 
 /**
@@ -112,10 +110,9 @@ const CompressedTexture& select_compressed_texture(const TextureData& data, Supp
     throw std::runtime_error("This device cannot sample any packaged compressed texture variant.");
 }
 
-// The readback inverse of float_to_half above, shared by both backends'
-// screenshot and diagnostic-buffer paths: a half-float channel decoded
-// and quantized to the byte a PNG stores.
-inline std::uint8_t half_to_byte(std::uint16_t value) {
+// The readback inverse of float_to_half_toward_zero above: a half-float
+// channel decoded exactly.
+inline float half_to_float(std::uint16_t value) {
     const bool negative = (value & 0x8000u) != 0;
     const std::uint16_t exponent = (value >> 10) & 0x1fu;
     const std::uint16_t mantissa = value & 0x03ffu;
@@ -129,9 +126,14 @@ inline std::uint8_t half_to_byte(std::uint16_t value) {
         decoded = std::ldexp(1.0f + static_cast<float>(mantissa) / 1024.0f,
                              static_cast<int>(exponent) - 15);
     }
-    if (negative)
-        decoded = -decoded;
-    return static_cast<std::uint8_t>(std::lround(std::clamp(decoded, 0.0f, 1.0f) * 255.0f));
+    return negative ? -decoded : decoded;
+}
+
+// A half-float channel quantized to the byte a PNG stores, shared by both
+// backends' screenshot and diagnostic-buffer paths.
+inline std::uint8_t half_to_byte(std::uint16_t value) {
+    return static_cast<std::uint8_t>(
+        std::lround(std::clamp(half_to_float(value), 0.0f, 1.0f) * 255.0f));
 }
 
 // ---------------------------------------------------------------------------

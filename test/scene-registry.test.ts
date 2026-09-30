@@ -409,8 +409,8 @@ test("registers unique generated scene targets", () => {
     );
     assert.equal(getScene("bath-day").nativeHostUi, "ui/bath-day-host.json");
     assert.equal(getScene("freeciv").parity?.referenceFrame, 180);
-    assert.equal(getScene("freeciv").parity?.maxFullMad, 0.5);
-    assert.equal(getScene("freeciv").parity?.maxForegroundMad, 0.5);
+    assert.equal(getScene("freeciv").parity?.maxFullMad, 0.2);
+    assert.equal(getScene("freeciv").parity?.maxForegroundMad, 0.2);
     assert.equal(getScene("freeciv").parity?.dawnThresholds, undefined);
     assert.equal(
         getScene("freeciv").parity?.nativeEnvironment?.BBLITE_SCREENSHOT_FRAME,

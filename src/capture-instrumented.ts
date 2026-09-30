@@ -28,11 +28,7 @@ import {
     waitForSceneReady,
     withBrowserPage,
 } from "./browser-harness.js";
-import {
-    goldenFixedFrame,
-    usesRetainedUi,
-    usesSeededRandom,
-} from "./parity-scene.js";
+import { goldenFixedFrame, usesSeededRandom } from "./parity-scene.js";
 import {
     artifactDirectory,
     captureBuffersPath,
@@ -96,10 +92,8 @@ export function browserCaptureStaleness(
     if (!existsSync(captureBuffersPath(captureDirectory))) {
         return "missing";
     }
-    // The frame derivation follows the ambient capture mode, exactly as
-    // the capture's writer derived it; a `BBLITE_CAPTURE_UI` flip
-    // between capture and reuse therefore refuses a retained-UI
-    // application's capture and recaptures — the safe direction.
+    // The frame derivation is the capture writer's own, so a capture
+    // taken before the scene's fixed frame moved refuses and recaptures.
     return captureMetaStaleness(
         readCaptureMeta(captureMetaPath(captureDirectory)),
         {
@@ -112,10 +106,7 @@ export function browserCaptureStaleness(
                     scene.source,
                     seekSeconds,
                     scene.parity?.referenceAnimationGroups,
-                    goldenFixedFrame(
-                        scene,
-                        captureUiEnabled() && usesRetainedUi(scene),
-                    ),
+                    goldenFixedFrame(scene),
                 ),
         },
     );
@@ -367,10 +358,7 @@ export async function runInstrumentedCapture(
     // byte-identity check below compares two different conventions,
     // which is how every retained-UI scene once read DIFFERS forever.
     const captureUi = captureUiEnabled();
-    const referenceFrame = goldenFixedFrame(
-        scene,
-        captureUi && usesRetainedUi(scene),
-    );
+    const referenceFrame = goldenFixedFrame(scene);
     const outputDirectory = resolve(
         options.outputDirectory ?? defaultCaptureDirectory(scene.id),
     );

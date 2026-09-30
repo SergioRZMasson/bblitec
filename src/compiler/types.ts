@@ -2135,7 +2135,6 @@ export interface ValueFields {
     /** Borrowed 2D-array depth view returned by getCsmReceiverTexture. */
     csmReceiverGeneratorIndex?: number;
     textureFile?: {
-        readonly srgb: boolean;
         /** Packaged source used only when source dimensions are reached. */
         readonly source?: string;
         readonly entryFileName?: string;

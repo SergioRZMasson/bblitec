@@ -250,9 +250,9 @@ test(
                             ...uv.slice(40, 48),
                         ]);
                         runs.push(`{auto handle=bbl::create_standard_material(engine);bbl::FileTexture texture;texture.data.bytes={1,2,3,4};texture.data.rgba_width=1;texture.data.rgba_height=1;
-            texture.data.uv_transform={1.7,.65,.12,-.2,${angle}};texture.data.uv_invert_y=${inverted};texture.srgb=${inverted};
+            texture.data.uv_transform={1.7,.65,.12,-.2,${angle}};texture.data.uv_invert_y=${inverted};texture.data.srgb=${inverted};
             bbl::set_standard_lightmap_texture(engine,handle,texture);auto& material=engine.materials[handle.value];
-            assert(material.lightmap_texture_srgb==${inverted});assert(material.lightmap_texture.bytes.size()==4);
+            assert(material.lightmap_texture.srgb==${inverted});assert(material.lightmap_texture.bytes.size()==4);
             material.lightmap_level=3.2f;material.lightmap_coord_index=${coord};material.lightmap_shadowmap=${shadowmap};material.diffuse_u_scale=2;material.diffuse_v_scale=.5f;material.standard_uv_offset_x=.3;material.standard_uv_offset_y=-.7;
             auto props=bbl::upstream::standard_material_props(material);bbl::upstream::StandardMaterialUniforms data;bbl::upstream::write_standard_material(props,1,data);
             bbl::upstream::StandardUvTxUniforms uv;bbl::upstream::write_std_uv_transform_data(material,props,uv);

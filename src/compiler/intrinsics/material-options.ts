@@ -395,12 +395,6 @@ export function compileSubsurfaceOptions(
                     "Reached subsurface thickness maps must come from loadTexture2D.",
                 );
             }
-            if (thicknessTexture.textureFile.srgb) {
-                context.fail(
-                    textureExpression,
-                    "Subsurface thickness maps must be linear textures.",
-                );
-            }
         }
         minimum = requiredStaticFiniteNumber(
             context,
@@ -886,12 +880,6 @@ export function compileMetallicReflectanceOptions(
             context.fail(
                 expression,
                 "Reached metallic-reflectance maps must come from loadTexture2D.",
-            );
-        }
-        if (value.textureFile.srgb) {
-            context.fail(
-                expression,
-                "Metallic-reflectance maps must be linear textures; the pinned fragment performs its own RGB decode.",
             );
         }
     }

@@ -5649,37 +5649,36 @@ test("compiles scene17's file ORM and matrix-constructor chain", () => {
     assert.match(result.cpp, /bbl::set_thin_instance_colors\(/);
 });
 
-test("refuses an sRGB file texture in PBR's linear ORM slot", () => {
-    assert.throws(
-        () =>
-            compileSource(
-                `
-                import {
-                    createEngine,
-                    createPbrMaterial,
-                    createSolidTexture2D,
-                    loadTexture2D,
-                } from "@babylonjs/lite";
+test("binds an sRGB file texture in PBR's ORM slot through its own encoding", () => {
+    // The pin keeps the format on the Texture2D, so an ORM map loaded sRGB
+    // is sampled through the sRGB view; the slot takes the texture's own
+    // encoding (TextureData::srgb) rather than a per-slot rule.
+    const result = compileSource(
+        `
+            import {
+                createEngine,
+                createPbrMaterial,
+                createSolidTexture2D,
+                loadTexture2D,
+            } from "@babylonjs/lite";
 
-                async function main() {
-                    const engine = await createEngine({});
-                    const orm = await loadTexture2D(
-                        engine,
-                        "/textures/nme/ebf71b300f43563f.png",
-                        { srgb: true },
-                    );
-                    createPbrMaterial({
-                        baseColorTexture: createSolidTexture2D(engine, 1, 1, 1),
-                        ormTexture: orm,
-                    });
-                }
-            `,
-                labDeployment,
-            ),
-        (error: unknown) =>
-            error instanceof CompileError &&
-            /PBR ORM maps must be linear textures\./.test(error.message),
+            async function main() {
+                const engine = await createEngine({});
+                const orm = await loadTexture2D(
+                    engine,
+                    "/textures/nme/ebf71b300f43563f.png",
+                    { srgb: true },
+                );
+                createPbrMaterial({
+                    baseColorTexture: createSolidTexture2D(engine, 1, 1, 1),
+                    ormTexture: orm,
+                });
+            }
+        `,
+        labDeployment,
     );
+    assert.match(result.cpp, /bbl::load_file_texture\([^;]*, true, false\)/);
+    assert.match(result.cpp, /bbl::set_material_orm_file\(/);
 });
 
 test("reaches scene transmission only from the pin's transmission calls", () => {
@@ -6525,7 +6524,7 @@ test("accumulates repeated metallic-reflectance setter fields", () => {
     );
 });
 
-test("refuses unsupported metallic-reflectance setter inputs", () => {
+test("accepts an sRGB metallic-reflectance map and refuses unsupported setter inputs", () => {
     const compileSetter = (textureSetup: string, options: string) =>
         compileSource(
             `
@@ -6550,17 +6549,18 @@ test("refuses unsupported metallic-reflectance setter inputs", () => {
             labDeployment,
         );
 
-    assert.throws(
-        () =>
-            compileSetter(
-                `const map = await loadTexture2D(
+    // An sRGB map is the pin's own combination: the texture's view decodes
+    // and the pinned fragment raises the sample to 2.2 as well.
+    assert.match(
+        compileSetter(
+            `const map = await loadTexture2D(
                 engine,
                 "/textures/nme/ebf71b300f43563f.png",
                 { srgb: true },
             );`,
-                "texture: map",
-            ),
-        /Metallic-reflectance maps must be linear textures/,
+            "texture: map",
+        ).cpp,
+        /bbl::set_pbr_metallic_reflectance\(/,
     );
     assert.throws(
         () =>
@@ -19431,11 +19431,18 @@ test("a mesh search by name selects at run time, with an indexed fallback and th
         result.cpp,
         /std::string\([^\n]*\.name\) == std::string\("hero"\)/,
     );
-    assert.match(result.cpp, /_found_\d+ \? \w*_match_\d+ : \w*_at_\d+/);
-    // ...and the fallback is the guarded element read whose flag
-    // composes into the scene's own not-found guard.
+    assert.match(
+        result.cpp,
+        /if \(\w*_found_\d+\) return std::pair<[^\n]*>\{\w*_match_\d+, true\};/,
+    );
+    // ...and the fallback is the guarded element read, prepared only on a
+    // miss, whose flag is selected with it for the scene's own guard.
     assert.match(result.cpp, /_present_\d+ = \w+ < v_scene\.meshes\.size\(\)/);
-    assert.match(result.cpp, /_found_\d+ \|\| \w*_present_\d+/);
+    assert.match(
+        result.cpp,
+        /return std::pair<[^\n]*>\{\w*_at_\d+, \w*_present_\d+\};/,
+    );
+    assert.match(result.cpp, /= v_bblite_nullish_selection_\d+\.second;/);
 });
 
 test("fuses a mesh-material map/find and replaces an asset occlusion texture before startup", () => {

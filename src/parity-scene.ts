@@ -88,11 +88,9 @@ export function usesSeededRandom(scene: SceneDefinition): boolean {
     );
 }
 
-/** Whether the compiled scene actually carries the retained native UI.
- *  The instrumented capture reads this to compose the same page the
- *  golden capture composed (`runParity` derives the same predicate from
- *  its already-read manifest at its `retainedUiCapture` binding). */
-export function usesRetainedUi(scene: SceneDefinition): boolean {
+/** Whether the compiled scene actually carries the retained native UI:
+ *  what decides the fixed frame `goldenFixedFrame` pins. */
+function usesRetainedUi(scene: SceneDefinition): boolean {
     return readCompiledSceneManifest(scene.output, scene.id).features.includes(
         "ui:rml",
     );
@@ -100,21 +98,21 @@ export function usesRetainedUi(scene: SceneDefinition): boolean {
 
 /**
  * The fixed browser frame the golden convention pins for a scene: the
- * parity spec's own `referenceFrame`, else — for a full-page capture of a
- * retained-UI scene — the positive `BBLITE_SCREENSHOT_FRAME` the registry
- * derives the native pose from, so the golden and every capture freeze the
- * page on the same deterministic frame. A canvas-only capture takes no
- * derived frame. This is the one home for that rule; the golden capture
- * and the instrumented capture both read it.
+ * parity spec's own `referenceFrame`, else — for a retained-UI scene — the
+ * positive `BBLITE_SCREENSHOT_FRAME` the registry derives the native pose
+ * from, so the golden and every capture, full page or canvas-only, freeze
+ * the page on the frame the native run renders. This is the one home for
+ * that rule; the golden, canvas-lane and instrumented captures all read it.
+ * `retainedUi` defaults to what the compiled manifest records.
  */
 export function goldenFixedFrame(
     scene: SceneDefinition,
-    retainedUiCapture: boolean,
+    retainedUi?: boolean,
 ): number | undefined {
     if (scene.parity?.referenceFrame !== undefined) {
         return scene.parity.referenceFrame;
     }
-    if (!retainedUiCapture) return undefined;
+    if (!(retainedUi ?? usesRetainedUi(scene))) return undefined;
     const configuredNativeFrame = Number.parseInt(
         scene.parity?.nativeEnvironment?.BBLITE_SCREENSHOT_FRAME ?? "",
         10,
@@ -943,8 +941,6 @@ async function runSceneParity(
         pose,
     );
     const compiledManifest = readCompiledSceneManifest(scene.output, scene.id);
-    const retainedUiCapture =
-        captureUi && compiledManifest.features.includes("ui:rml");
     const reference =
         canvasOnly || seekedPose
             ? resolve(
@@ -1003,7 +999,7 @@ async function runSceneParity(
     const recaptureReference =
         run.recaptureReference ||
         ((canvasOnly || seekedPose) && !existsSync(reference));
-    const browserReferenceFrame = goldenFixedFrame(scene, retainedUiCapture);
+    const browserReferenceFrame = goldenFixedFrame(scene);
     validateReferenceCapture(scene, reference, recaptureReference);
     // What both browser captures share: the seeded-random stub, the
     // companion DOM and the registry's pose search. The DOM is present in
@@ -1243,11 +1239,9 @@ async function runSceneParity(
         mkdirSync(canvasDirectory, { recursive: true });
         // The reference reproduces the attribution run exactly — the
         // companion DOM present but hidden, the canvas screenshot
-        // excluding the page, at the pose that run derives
-        // (`referenceFrame` when the registry declares one; tetris
-        // settles onto its ad-hoc native frame) — and follows the
-        // committed golden's lifecycle: captured when missing,
-        // recaptured only with --recapture-reference.
+        // excluding the page, at the golden's own fixed frame — and
+        // follows the committed golden's lifecycle: captured when
+        // missing, recaptured only with --recapture-reference.
         const canvasReference = resolve(canvasDirectory, "browser-canvas.png");
         await withEnvironment("BBLITE_CAPTURE_UI", "0", () =>
             captureSuiteReference(
@@ -1259,8 +1253,8 @@ async function runSceneParity(
                 config.referenceAnimationGroups,
                 {
                     ...sharedCaptureOptions,
-                    ...(config.referenceFrame !== undefined
-                        ? { fixedAnimationFrame: config.referenceFrame }
+                    ...(browserReferenceFrame !== undefined
+                        ? { fixedAnimationFrame: browserReferenceFrame }
                         : {}),
                 },
             ),

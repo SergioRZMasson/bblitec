@@ -1962,6 +1962,39 @@ export class ExpressionLowerer {
      * Both branches must name the same kind of native expression, since
      * the result has to be one expression the caller can use.
      */
+    /**
+     * A conditional branch's resource value with its preparation moved into
+     * the lambda that spells it, so `selectValue` selects it lazily. A
+     * value whose other spellings (members, elements, a found flag) could
+     * name the moved temporaries refuses instead.
+     */
+    private lazyArmValue(
+        arm: { value: Value; lines: string[] },
+        node: ts.Expression,
+    ): Value {
+        if (arm.lines.length === 0) return arm.value;
+        const value =
+            projectAssetContainer(this.context, arm.value, node) ?? arm.value;
+        if (
+            value.kind === "record" ||
+            value.kind === "tuple" ||
+            value.optionalFoundCpp !== undefined ||
+            value.objectIdentityCpp !== undefined
+        )
+            return this.context.fail(
+                node,
+                "A conditional branch that prepares a record, tuple or searched value must be bound to its own declaration first.",
+            );
+        return {
+            ...value,
+            cpp: this.context.dataLowerer.armExpression(
+                node,
+                arm.lines,
+                value.cpp,
+            ),
+        };
+    }
+
     private selectValue(
         condition: string,
         whenTrue: Value,
@@ -3102,27 +3135,48 @@ export class ExpressionLowerer {
             ts.isBinaryExpression(unwrapped) &&
             unwrapped.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
         ) {
-            const optional = this.compileValue(unwrapped.left);
-            if (
-                optional.kind === "data" &&
-                optional.dataType?.kind === "optional" &&
-                (optional.dataType.inner.kind === "string" ||
-                    optional.dataType.inner.kind === "number")
-            ) {
-                const fallback = this.compileNumberConversion(unwrapped.right);
-                const present =
-                    optional.dataType.inner.kind === "string"
-                        ? `bbl::js::number_from_string(*v)`
-                        : `static_cast<double>(*v)`;
-                this.context.reachJsData();
-                return {
-                    kind: "number",
-                    cpp:
-                        `([&]() { const auto& v = ${optional.cpp}; ` +
-                        `return v.has_value() ? ${present} : ${fallback.cpp}; }())`,
-                    dataType: { kind: "number" },
-                };
-            }
+            // The probe keeps the left operand's emission only when this
+            // arm takes it; otherwise the whole `??` compiles once below.
+            const converted = this.context.probeEmission(
+                (): Value | undefined => {
+                    const optional = this.compileValue(unwrapped.left);
+                    if (
+                        optional.kind !== "data" ||
+                        optional.dataType?.kind !== "optional" ||
+                        (optional.dataType.inner.kind !== "string" &&
+                            optional.dataType.inner.kind !== "number")
+                    )
+                        return undefined;
+                    const fallback = this.context.dataLowerer.compileArm(() =>
+                        this.compileNumberConversion(unwrapped.right),
+                    );
+                    const present =
+                        optional.dataType.inner.kind === "string"
+                            ? `bbl::js::number_from_string(*v)`
+                            : `static_cast<double>(*v)`;
+                    this.context.reachJsData();
+                    const dataType = { kind: "number" } as const;
+                    return {
+                        kind: "number",
+                        cpp:
+                            fallback.lines.length === 0
+                                ? `([&]() { const auto& v = ${optional.cpp}; ` +
+                                  `return v.has_value() ? ${present} : ${fallback.value.cpp}; }())`
+                                : this.context.dataLowerer.armExpression(
+                                      unwrapped.right,
+                                      [
+                                          `const auto& v = ${optional.cpp};`,
+                                          `if (v.has_value()) return ${present};`,
+                                          ...fallback.lines,
+                                      ],
+                                      fallback.value.cpp,
+                                      dataType,
+                                  ),
+                        dataType,
+                    };
+                },
+            );
+            if (converted) return converted;
         }
         const value = this.compileValue(unwrapped);
         if (value.kind === "number") return value;
@@ -4231,9 +4285,7 @@ export class ExpressionLowerer {
         );
         if (jsonConditional) return jsonConditional;
         const branch = (expression: ts.Expression, truth: boolean): Value => {
-            const value = this.inRuntimeControlFlow(() =>
-                this.compileValue(expression),
-            );
+            const value = this.compileValue(expression);
             const guard = this.context.unwrap(unwrapped.condition);
             const selected = this.context.unwrap(expression);
             if (
@@ -4272,8 +4324,44 @@ export class ExpressionLowerer {
                   )
                 : value;
         };
-        const whenTrue = branch(unwrapped.whenTrue, true);
-        const whenFalse = branch(unwrapped.whenFalse, false);
+        const trueArm = this.context.dataLowerer.compileArm(() =>
+            branch(unwrapped.whenTrue, true),
+        );
+        const falseArm = this.context.dataLowerer.compileArm(() =>
+            branch(unwrapped.whenFalse, false),
+        );
+        if (trueArm.lines.length > 0 || falseArm.lines.length > 0) {
+            // An arm that prepares its value (a pinned call result, say)
+            // runs that preparation only when selected: the data sink keeps
+            // each arm's lines inside it, and a resource the sink does not
+            // convert selects as itself, its preparation moved into the
+            // lambda that spells it.
+            const sunk =
+                conditionalType &&
+                this.context.probeEmission(() => {
+                    try {
+                        return this.context.dataLowerer.compileConditionalForSink(
+                            unwrapped,
+                            conditionalType,
+                            condition,
+                            { whenTrue: trueArm, whenFalse: falseArm },
+                        );
+                    } catch (error) {
+                        if (error instanceof CompileError) return undefined;
+                        throw error;
+                    }
+                });
+            if (conditionalType && sunk !== undefined)
+                return this.context.dataValue(sunk, conditionalType);
+            return this.selectValue(
+                condition,
+                this.lazyArmValue(trueArm, unwrapped.whenTrue),
+                this.lazyArmValue(falseArm, unwrapped.whenFalse),
+                unwrapped,
+            );
+        }
+        const whenTrue = trueArm.value;
+        const whenFalse = falseArm.value;
         // A tuple value is a compile-time list of element values with
         // no native expression of its own, so selecting between two
         // tuples is selecting element by element. Same arity is the

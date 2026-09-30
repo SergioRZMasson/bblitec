@@ -117,14 +117,14 @@ prepare_scene_textures(const Engine& engine, std::vector<const upstream::RenderP
                     if (slot.slot != upstream::material_texture_no_slot)
                         if (const auto* data =
                                 material_slot_texture(*material, slot.source, standard))
-                            add(*data, material_slot_srgb(slot.srgb, material, standard),
+                            add(*data, material_slot_srgb(data, slot.fallback, material, standard),
                                 material_slot_fallback(slot.fallback, material, standard));
             if (material->shader_material || material->node_material)
                 for (const auto& texture : material->shader_textures)
-                    add(texture.data, texture.srgb, {255, 255, 255, 255});
+                    add(texture.data, texture.data.srgb, {255, 255, 255, 255});
 #if BBLITE_HAS_MATERIAL_PLUGIN_TEXTURES
             for (const auto& texture : material->plugin_textures)
-                add(texture.data, texture.srgb, {255, 255, 255, 255});
+                add(texture.data, texture.data.srgb, {255, 255, 255, 255});
 #endif
         }
     if (!sources.empty()) {

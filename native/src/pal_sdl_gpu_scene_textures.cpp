@@ -69,8 +69,8 @@ SDL_GPUTexture* upload_compressed_texture(SDL_GPUDevice* device,
 SDL_GPUTexture* upload_texture(SDL_GPUDevice* device, const TextureData& texture_data, bool srgb,
                                std::array<std::uint8_t, 4> fallback) {
     // A compressed slot carries its own format and its own chain, so the
-    // table's sRGB rule has nothing to select: the container states which
-    // of the two views its blocks decode through.
+    // encoding flag has nothing to select: the container states which of
+    // the two views its blocks decode through.
     if (!texture_data.compressed.mips.empty()) {
         const auto& compressed =
             select_compressed_texture(texture_data, [&](std::string_view format) {
@@ -126,7 +126,7 @@ SDL_GPUTexture* upload_cube_texture(SDL_GPUDevice* device,
     SDL_GPUTextureCreateInfo texture_info{};
     texture_info.type = SDL_GPU_TEXTURETYPE_CUBE;
     texture_info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-    texture_info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+    texture_info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
     texture_info.width = static_cast<Uint32>(width);
     texture_info.height = static_cast<Uint32>(height);
     texture_info.layer_count_or_depth = 6;
@@ -138,24 +138,35 @@ SDL_GPUTexture* upload_cube_texture(SDL_GPUDevice* device,
     if (!texture)
         gpu_error("SDL_CreateGPUTexture reflection cube");
 
+    // The pinned recordMipmaps builds a cube's chain one face at a time, each
+    // level sampled from the level above through a 2D view of that face. An
+    // SDL blit from a cube source samples through a direction lookup that
+    // filters across the face's edges, so each face's chain is built in a 2D
+    // texture of its own and copied into its face.
+    std::array<OwnedSdlTexture, 6> faces{};
+    for (std::size_t index = 0; index < images.size(); ++index) {
+        faces[index] = OwnedSdlTexture{
+            upload_2d_texture(device, images[index].rgba.data(), images[index].rgba.size(),
+                              texture_info.width, texture_info.height, texture_info.format,
+                              "SDL_CreateGPUTexture reflection cube face", texture_info.num_levels),
+            {device}};
+    }
     SdlGpuCommand command{SDL_AcquireGPUCommandBuffer(device)};
     if (!command) {
         gpu_error("SDL_AcquireGPUCommandBuffer reflection cube");
     }
-    SdlCopyPass copy{SDL_BeginGPUCopyPass(command)};
-    std::vector<OwnedSdlTransfer> transfers;
-    transfers.reserve(images.size());
-    for (std::size_t index = 0; index < images.size(); ++index) {
-        const DecodedImage& image = images[index];
-        const SDL_GPUTextureRegion region{texture, 0, static_cast<Uint32>(index), 0, 0, 0, 0, 0, 1};
-        SdlCopyTextureDestination destination{device, copy, region, transfers};
-        SdlGpuWriteDevice{device}.write_texture(
-            destination, image.rgba, {},
-            {static_cast<Uint32>(width), static_cast<Uint32>(height), 1});
+    SdlCopyPass levels{SDL_BeginGPUCopyPass(command)};
+    for (std::size_t index = 0; index < faces.size(); ++index) {
+        for (Uint32 level = 0; level < texture_info.num_levels; ++level) {
+            const SDL_GPUTextureLocation source{faces[index].get(), level, 0, 0, 0, 0};
+            const SDL_GPUTextureLocation target{texture, level, static_cast<Uint32>(index),
+                                                0,       0,     0};
+            SDL_CopyGPUTextureToTexture(levels, &source, &target,
+                                        std::max(1u, texture_info.width >> level),
+                                        std::max(1u, texture_info.height >> level), 1, false);
+        }
     }
-    copy.end();
-    generate_texture_mipmaps(device, command, texture, texture_info.width, texture_info.height,
-                             texture_info.num_levels, texture_info.layer_count_or_depth);
+    levels.end();
     if (!command.submit()) {
         gpu_error("SDL_SubmitGPUCommandBuffer reflection cube");
     }

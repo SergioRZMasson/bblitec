@@ -485,9 +485,6 @@ function compileCreatePbrMaterial(
     context.expectSameEngine(baseColor, orm, call);
     context.reachFeature("material:pbr", call);
     context.reachFeature("renderer:scene", call);
-    if (orm.textureFile?.srgb) {
-        context.fail(call, "PBR ORM maps must be linear textures.");
-    }
     // Typed Texture2D returns use StoredTexture even when every source return
     // is a solid or file producer. Those producers occupy its FileTexture arm.
     const fileTexture = (texture: Value): string | undefined => {

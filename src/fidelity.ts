@@ -34,12 +34,10 @@ export interface RendererFidelityManifest {
         fragmentUniformSpace: number;
     };
     textureContract: {
-        baseColor: "sRGB";
-        emissive: "sRGB";
-        normal: "linear";
-        metallicRoughness: "linear";
+        /** Every material binding samples its image through the texture's own format. */
+        materialTextures: "texture-format";
         environment: "linear-rgba16f";
-        brdfLut: "linear-rgba32f";
+        brdfLut: "linear-rgba16f";
     };
     invariants: ShaderInvariant[];
 }

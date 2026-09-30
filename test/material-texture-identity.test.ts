@@ -12,7 +12,6 @@ import {
     cppFunction,
     optionalNativeFixtureTools,
     runNativeFixtureCompiler,
-    sharedGpuSource,
 } from "./native-fixture.js";
 
 const scenePath = "corpus/babylon-lite/lab/lite/src/lite/scene149.ts";
@@ -161,8 +160,6 @@ test("native material getters retain producer variants, replacement aliases and 
 #include <cassert>
 #include <cmath>
 namespace bbl {
-namespace upstream { enum class MaterialTextureSrgb { linear, srgb, srgb_unless_standard, base_color, lightmap }; }
-${cppFunction(sharedGpuSource(), "bool material_slot_srgb(")}
 Engine create_engine(EngineOptions) {return {};}
 ${functions}
 PixelsTexture create_texture_2d_from_pixels(Engine& engine,const js::U8Array& pixels,double width,double height,PixelsTextureOptions options) {
@@ -183,7 +180,7 @@ int main() {
     const auto old=bbl::material_source_texture(engine,a,bbl::MaterialTextureSlot::diffuse);
     assert(std::holds_alternative<bbl::PixelsTexture>(old));
     assert(old==bbl::StoredTexture{pixels} && old==bbl::material_source_texture(engine,b,bbl::MaterialTextureSlot::diffuse));
-    bbl::FileTexture file; file.identity=42; file.srgb=true; file.width=1; file.height=1;
+    bbl::FileTexture file; file.identity=42; file.data.srgb=true; file.width=1; file.height=1;
     file.data.bytes=std::vector<std::uint8_t>{44,55,66,255};file.data.rgba_width=1;file.data.rgba_height=1;
     bbl::set_standard_diffuse_file_texture(engine,a,file);
     assert(bbl::material_source_texture(engine,a,bbl::MaterialTextureSlot::diffuse)==bbl::StoredTexture{file});
@@ -193,9 +190,11 @@ int main() {
     assert(bbl::material_source_texture(engine,pbr,bbl::MaterialTextureSlot::base_color)==bbl::StoredTexture{file});
     bbl::set_standard_diffuse_texture(engine,b,bbl::material_source_texture(engine,pbr,bbl::MaterialTextureSlot::base_color));
     assert(bbl::material_source_texture(engine,b,bbl::MaterialTextureSlot::diffuse)==bbl::StoredTexture{file});
-    assert(bbl::material_slot_srgb(bbl::upstream::MaterialTextureSrgb::base_color, &engine.materials[b.value], true));
+    // The diffuse slot samples through the bound texture's own encoding.
+    const auto diffuse_srgb=[&]{ return engine.materials[b.value].base_color_texture.srgb; };
+    assert(diffuse_srgb());
     bbl::set_standard_diffuse_texture(engine,b,old);
-    assert(!bbl::material_slot_srgb(bbl::upstream::MaterialTextureSrgb::base_color, &engine.materials[b.value], true));
+    assert(!diffuse_srgb());
     engine.materials.clear();
     assert(std::get<bbl::PixelsTexture>(old).rgba[2]==33);
 }`,

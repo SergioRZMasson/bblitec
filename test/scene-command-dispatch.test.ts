@@ -190,7 +190,7 @@ test("show prints the registry entry and needs an id", () => {
         parity?: { maxFullMad: number };
     };
     assert.equal(entry.id, "scene1");
-    assert.equal(entry.parity?.maxFullMad, 0.002);
+    assert.equal(entry.parity?.maxFullMad, 0.001);
     const missing = sceneCommand("show");
     assert.equal(missing.status, 1);
     assert.match(missing.stderr, /show needs <id\|source\.ts>/);

@@ -1040,6 +1040,6 @@ function bindBakedTexture(
                   textureHeight: dimensions.height,
               }
             : {}),
-        textureFile: { srgb: upload.srgb },
+        textureFile: {},
     };
 }

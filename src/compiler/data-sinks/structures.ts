@@ -88,16 +88,6 @@ function expressionStruct(
         }
     }
     if (
-        ts.isConditionalExpression(unwrapped) &&
-        lowerer.context.dataTypes.isReferenceStruct(dataType.name)
-    ) {
-        return (
-            `(${lowerer.context.conditions.compileCondition(unwrapped.condition)} ? ` +
-            `${lowerer.compileForSink(unwrapped.whenTrue, dataType)} : ` +
-            `${lowerer.compileForSink(unwrapped.whenFalse, dataType)})`
-        );
-    }
-    if (
         lowerer.context.dataTypes.isReferenceStruct(dataType.name) &&
         isNullishLiteral(lowerer.context.checker, unwrapped)
     ) {

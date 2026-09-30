@@ -109,7 +109,9 @@ pinned builders and writers, lowered and run over the scene's double-width sizes
 scene block is the pass's own.
 Cube orientation, mips, encoding, samplers and pass order follow the reached source. GLTF IBL retains
 Float32 harmonics, RGBD decoding and the 256-square RGBA16F BRDF bake. Local probes execute source
-validation/grid/UBO/copy planning.
+validation/grid/UBO/copy planning. RGBD faces and PNG BRDF LUTs decode through the pinned kernel's
+arithmetic on the CPU; its `rgba16float` store rounds toward zero, as the reference device's storage
+write does (WGSL leaves the direction to the implementation).
 
 ### glTF material inputs
 

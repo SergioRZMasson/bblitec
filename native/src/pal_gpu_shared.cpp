@@ -91,10 +91,11 @@ std::vector<std::uint16_t> decode_rgbd(const TextureData& texture_data, int& wid
     // result type, not a packing step a caller may skip. Returning halves
     // is what keeps every caller on the pin's precision: an RGBA32Float
     // upload on one path beside a half-packed one on another would be a
-    // silent backend delta.
+    // silent backend delta. The halves are the kernel's store, which
+    // rounds toward zero (float_to_half_toward_zero).
     if (texture_data.bytes.empty()) {
         width = height = 1;
-        return {0, 0, 0, float_to_half(1.0f)};
+        return {0, 0, 0, float_to_half_toward_zero(1.0f)};
     }
     const DecodedImage image = decode_image(js::ArrayBuffer(texture_data.bytes));
     width = image.width;
@@ -103,7 +104,7 @@ std::vector<std::uint16_t> decode_rgbd(const TextureData& texture_data, int& wid
     for (std::size_t index = 0; index < image.rgba.size(); index += 4) {
         const auto pixel = upstream::decode_rgbd_pixel(image.rgba.data() + index);
         for (std::size_t channel = 0; channel < pixel.size(); ++channel) {
-            result[index + channel] = float_to_half(pixel[channel]);
+            result[index + channel] = float_to_half_toward_zero(pixel[channel]);
         }
     }
     return result;
@@ -796,27 +797,19 @@ const TextureData* material_slot_texture(const MaterialRecord& material,
     return nullptr;
 }
 
-bool material_slot_srgb(upstream::MaterialTextureSrgb rule, const MaterialRecord* material,
-                        bool standard_material) {
-    switch (rule) {
-    case upstream::MaterialTextureSrgb::linear:
-        return false;
-    case upstream::MaterialTextureSrgb::srgb:
-        return true;
-    case upstream::MaterialTextureSrgb::srgb_unless_standard:
-        return !standard_material;
-    case upstream::MaterialTextureSrgb::lightmap:
-        return material != nullptr && material->lightmap_texture_srgb;
-    case upstream::MaterialTextureSrgb::base_color:
-        // The slot's encoding is its TEXTURE's, which upstream stores as
-        // the `Texture2D`'s own format: the record carries it for the
-        // image and the fallback texel alike, so an image is not assumed
-        // to be sRGB because it is an image. A transferred texture keeps
-        // the same encoding when a Standard diffuse slot takes it.
-        return standard_material ? material != nullptr && material->diffuse_texture_srgb
-                                 : material == nullptr || material->base_color_srgb;
-    }
-    return false;
+bool material_slot_srgb(const TextureData* texture, upstream::MaterialTextureFallback fallback,
+                        const MaterialRecord* material, bool standard_material) {
+    // Upstream keeps the format on the `Texture2D`, so a slot samples its
+    // image through that texture's own encoding whichever slot holds it: a
+    // `setPbrSheen` texture loaded linear stays linear while the glTF
+    // loader's sheen map is sRGB. Of the fallback texels only the PBR base
+    // colour's stands for a texture that may be sRGB: the flat-normal and
+    // ORM texels are linear data, and white and black read the same through
+    // either view.
+    if (texture && texture->has_image())
+        return texture->srgb;
+    return fallback == upstream::MaterialTextureFallback::base_color_record && !standard_material &&
+           material != nullptr && material->base_color_srgb;
 }
 
 std::array<std::uint8_t, 4> material_slot_fallback(upstream::MaterialTextureFallback rule,

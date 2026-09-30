@@ -871,6 +871,11 @@ class Compiler implements LoweringServices {
                     "number_operand",
                 ).cpp,
             this.evaluationOrder,
+            {
+                compileArm: (compile) => this.dataLowerer.compileArm(compile),
+                armExpression: (node, lines, cpp, type) =>
+                    this.dataLowerer.armExpression(node, lines, cpp, type),
+            },
         );
     }
 

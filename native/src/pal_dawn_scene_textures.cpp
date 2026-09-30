@@ -90,8 +90,8 @@ WGPUTexture upload_material_texture(DawnState& state, const TextureData& texture
                                     const std::array<std::uint8_t, 4>& fallback,
                                     std::uint32_t& out_mip_count) {
     // A compressed slot carries its own format and its own chain, so the
-    // table's sRGB rule has nothing to select: the container states which
-    // of the two views its blocks decode through.
+    // encoding flag has nothing to select: the container states which of
+    // the two views its blocks decode through.
     if (!texture_data.compressed.mips.empty()) {
         const auto& compressed =
             select_compressed_texture(texture_data, [&](std::string_view format) {
