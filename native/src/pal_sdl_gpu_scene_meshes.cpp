@@ -560,8 +560,9 @@ GpuMesh upload_sdl_gpu_scene_mesh(GpuState& state, Engine& engine, const upstrea
         gpu_mesh.reflection = state.reflection_fallback;
     }
     // One backend upload per MATERIAL, then one borrowed pointer per
-    // render item. Which record field fills a slot, its sRGB view
-    // and fallback texel remain the generated table's. The cache is
+    // render item. Which record field fills a slot and its fallback
+    // texel remain the generated table's; an image keeps its own
+    // encoding. The cache is
     // essential for fractured meshes: their hundreds of pieces
     // intentionally share a very small material set.
     const bool composed_material = item.material_kind == upstream::RenderMaterialKind::pbr ||
@@ -588,7 +589,8 @@ GpuMesh upload_sdl_gpu_scene_mesh(GpuState& state, Engine& engine, const upstrea
                              : nullptr;
                 const TextureData empty{};
                 const auto& image_data = data ? *data : empty;
-                const bool srgb = material_slot_srgb(slot_row.srgb, material, standard_material);
+                const bool srgb =
+                    material_slot_srgb(data, slot_row.fallback, material, standard_material);
                 const auto fallback =
                     material_slot_fallback(slot_row.fallback, material, standard_material);
                 auto image = state.shared_material_images.acquire(image_data, srgb, fallback, [&] {
@@ -659,10 +661,10 @@ GpuMesh upload_sdl_gpu_scene_mesh(GpuState& state, Engine& engine, const upstrea
             return;
         }
         auto image = state.shared_material_images.acquire(
-            texture.data, texture.srgb, {255, 255, 255, 255}, [&] {
-                return OwnedSdlTexture{
-                    upload_texture(state.device, texture.data, texture.srgb, {255, 255, 255, 255}),
-                    {state.device}};
+            texture.data, texture.data.srgb, {255, 255, 255, 255}, [&] {
+                return OwnedSdlTexture{upload_texture(state.device, texture.data, texture.data.srgb,
+                                                      {255, 255, 255, 255}),
+                                       {state.device}};
             });
         auto& binding = textures.append_shared_texture(std::move(image));
         binding.sampler = create_texture_sampler(state.device, texture.data.sampler);

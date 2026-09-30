@@ -120,7 +120,7 @@ void set_material_orm_file(Engine& engine,MaterialHandle material,FileTexture te
     assert(record.orm_texture_generation==1);
     if(material.value==2){
         const auto& base=std::get<FileTexture>(*record.source_albedo_texture);
-        assert(base.identity==3 && !base.srgb);
+        assert(base.identity==3 && !base.data.srgb);
         const std::array<std::uint8_t,4> albedo{255,128,64,255};
         assert(std::equal(record.base_color_texture.bytes.begin(),record.base_color_texture.bytes.end(),albedo.begin(),albedo.end()));
     }

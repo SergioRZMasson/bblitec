@@ -796,27 +796,19 @@ const TextureData* material_slot_texture(const MaterialRecord& material,
     return nullptr;
 }
 
-bool material_slot_srgb(upstream::MaterialTextureSrgb rule, const MaterialRecord* material,
-                        bool standard_material) {
-    switch (rule) {
-    case upstream::MaterialTextureSrgb::linear:
-        return false;
-    case upstream::MaterialTextureSrgb::srgb:
-        return true;
-    case upstream::MaterialTextureSrgb::srgb_unless_standard:
-        return !standard_material;
-    case upstream::MaterialTextureSrgb::lightmap:
-        return material != nullptr && material->lightmap_texture_srgb;
-    case upstream::MaterialTextureSrgb::base_color:
-        // The slot's encoding is its TEXTURE's, which upstream stores as
-        // the `Texture2D`'s own format: the record carries it for the
-        // image and the fallback texel alike, so an image is not assumed
-        // to be sRGB because it is an image. A transferred texture keeps
-        // the same encoding when a Standard diffuse slot takes it.
-        return standard_material ? material != nullptr && material->diffuse_texture_srgb
-                                 : material == nullptr || material->base_color_srgb;
-    }
-    return false;
+bool material_slot_srgb(const TextureData* texture, upstream::MaterialTextureFallback fallback,
+                        const MaterialRecord* material, bool standard_material) {
+    // Upstream keeps the format on the `Texture2D`, so a slot samples its
+    // image through that texture's own encoding whichever slot holds it: a
+    // `setPbrSheen` texture loaded linear stays linear while the glTF
+    // loader's sheen map is sRGB. Of the fallback texels only the PBR base
+    // colour's stands for a texture that may be sRGB: the flat-normal and
+    // ORM texels are linear data, and white and black read the same through
+    // either view.
+    if (texture && texture->has_image())
+        return texture->srgb;
+    return fallback == upstream::MaterialTextureFallback::base_color_record && !standard_material &&
+           material != nullptr && material->base_color_srgb;
 }
 
 std::array<std::uint8_t, 4> material_slot_fallback(upstream::MaterialTextureFallback rule,

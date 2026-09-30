@@ -161,7 +161,7 @@ test("native material getters retain producer variants, replacement aliases and 
 #include <cassert>
 #include <cmath>
 namespace bbl {
-namespace upstream { enum class MaterialTextureSrgb { linear, srgb, srgb_unless_standard, base_color, lightmap }; }
+namespace upstream { enum class MaterialTextureFallback { white, black, flat_normal, white_or_flat_normal, base_color_record, orm_record, white_or_emissive_factor }; }
 ${cppFunction(sharedGpuSource(), "bool material_slot_srgb(")}
 Engine create_engine(EngineOptions) {return {};}
 ${functions}
@@ -183,7 +183,7 @@ int main() {
     const auto old=bbl::material_source_texture(engine,a,bbl::MaterialTextureSlot::diffuse);
     assert(std::holds_alternative<bbl::PixelsTexture>(old));
     assert(old==bbl::StoredTexture{pixels} && old==bbl::material_source_texture(engine,b,bbl::MaterialTextureSlot::diffuse));
-    bbl::FileTexture file; file.identity=42; file.srgb=true; file.width=1; file.height=1;
+    bbl::FileTexture file; file.identity=42; file.data.srgb=true; file.width=1; file.height=1;
     file.data.bytes=std::vector<std::uint8_t>{44,55,66,255};file.data.rgba_width=1;file.data.rgba_height=1;
     bbl::set_standard_diffuse_file_texture(engine,a,file);
     assert(bbl::material_source_texture(engine,a,bbl::MaterialTextureSlot::diffuse)==bbl::StoredTexture{file});
@@ -193,9 +193,13 @@ int main() {
     assert(bbl::material_source_texture(engine,pbr,bbl::MaterialTextureSlot::base_color)==bbl::StoredTexture{file});
     bbl::set_standard_diffuse_texture(engine,b,bbl::material_source_texture(engine,pbr,bbl::MaterialTextureSlot::base_color));
     assert(bbl::material_source_texture(engine,b,bbl::MaterialTextureSlot::diffuse)==bbl::StoredTexture{file});
-    assert(bbl::material_slot_srgb(bbl::upstream::MaterialTextureSrgb::base_color, &engine.materials[b.value], true));
+    const auto diffuse_srgb=[&]{
+        const auto& record=engine.materials[b.value];
+        return bbl::material_slot_srgb(&record.base_color_texture,bbl::upstream::MaterialTextureFallback::base_color_record,&record,true);
+    };
+    assert(diffuse_srgb());
     bbl::set_standard_diffuse_texture(engine,b,old);
-    assert(!bbl::material_slot_srgb(bbl::upstream::MaterialTextureSrgb::base_color, &engine.materials[b.value], true));
+    assert(!diffuse_srgb());
     engine.materials.clear();
     assert(std::get<bbl::PixelsTexture>(old).rgba[2]==33);
 }`,

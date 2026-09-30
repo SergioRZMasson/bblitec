@@ -79,33 +79,26 @@ test("the base slots carry the rules both backends used to hand-keep", () => {
         ),
     );
     rowOrder(header, [
-        // Slot 0: the base-colour rule (bytes keep sRGB, a bare fallback
-        // takes the record's encoding) and the record's baked texel.
+        // Slot 0: the record's baked base-colour texel.
         `    {0, MaterialTextureSource::base_color, ` +
-            `MaterialTextureSrgb::base_color, ` +
             `MaterialTextureFallback::base_color_record, ` +
             `"baseColorTexture", "baseColorSampler"},`,
-        // Slot 1: Standard specular / PBR ORM, linear, the pinned ORM
-        // factor texel.
+        // Slot 1: Standard specular / PBR ORM, the pinned ORM factor texel.
         `    {1, MaterialTextureSource::specular_or_metallic_roughness, ` +
-            `MaterialTextureSrgb::linear, ` +
             `MaterialTextureFallback::orm_record, ` +
             `"ormTexture", "ormSampler"},`,
-        // Slot 2: Standard opacity / PBR normal, linear, flat normal for
-        // the PBR family only.
+        // Slot 2: Standard opacity / PBR normal, flat normal for the PBR
+        // family only.
         `    {2, MaterialTextureSource::opacity_or_normal, ` +
-            `MaterialTextureSrgb::linear, ` +
             `MaterialTextureFallback::white_or_flat_normal, ` +
             `"normalTexture", "normalSampler_"},`,
-        // Slot 3: Standard ambient / PBR emissive, sRGB only for PBR,
-        // black unless the emissive factor scales the sample.
+        // Slot 3: Standard ambient / PBR emissive, black unless the
+        // emissive factor scales the sample.
         `    {3, MaterialTextureSource::ambient_or_emissive, ` +
-            `MaterialTextureSrgb::srgb_unless_standard, ` +
             `MaterialTextureFallback::white_or_emissive_factor, ` +
             `"emissiveTexture", "emissiveSampler"},`,
         // Slot 4: the Standard emissive slot; no pinned name binds it.
         `    {4, MaterialTextureSource::standard_emissive, ` +
-            `MaterialTextureSrgb::linear, ` +
             `MaterialTextureFallback::black, ` +
             `"", ""},`,
         // Scene-owned rows follow the mesh slots.
@@ -151,65 +144,58 @@ test("extension rows append in the pinned registration order", () => {
     rowOrder(header, [
         // The transmission and thickness maps follow the base five...
         `    {5, MaterialTextureSource::transmission, ` +
-            `MaterialTextureSrgb::linear, MaterialTextureFallback::white, ` +
+            `MaterialTextureFallback::white, ` +
             `"refractionMapTexture", "refractionMapSampler"},`,
         `    {6, MaterialTextureSource::thickness, ` +
-            `MaterialTextureSrgb::linear, MaterialTextureFallback::white, ` +
+            `MaterialTextureFallback::white, ` +
             `"thicknessTexture_", "thicknessSampler_"},`,
         // ...then clearcoat intensity/roughness/normal...
         `    {7, MaterialTextureSource::clearcoat, `,
         `    {8, MaterialTextureSource::clearcoat_roughness, `,
         `    {9, MaterialTextureSource::clearcoat_normal, ` +
-            `MaterialTextureSrgb::linear, ` +
             `MaterialTextureFallback::flat_normal, ` +
             `"ccNormalTexture", "ccNormalSampler_"},`,
-        // ...sheen colour (sRGB) and roughness (linear)...
+        // ...sheen colour and roughness...
         `    {10, MaterialTextureSource::sheen_color, ` +
-            `MaterialTextureSrgb::srgb, MaterialTextureFallback::white, ` +
+            `MaterialTextureFallback::white, ` +
             `"sheenTexture_", "sheenSampler_"},`,
-        `    {11, MaterialTextureSource::sheen_roughness, ` +
-            `MaterialTextureSrgb::linear, `,
-        // ...both iridescence maps sRGB...
-        `    {12, MaterialTextureSource::iridescence, ` +
-            `MaterialTextureSrgb::srgb, `,
-        `    {13, MaterialTextureSource::iridescence_thickness, ` +
-            `MaterialTextureSrgb::srgb, `,
-        // ...the two reflectance maps, whose fragment performs its own RGB
-        // decode and therefore binds linear texture views...
+        `    {11, MaterialTextureSource::sheen_roughness, `,
+        // ...both iridescence maps...
+        `    {12, MaterialTextureSource::iridescence, `,
+        `    {13, MaterialTextureSource::iridescence_thickness, `,
+        // ...the two reflectance maps...
         `    {14, MaterialTextureSource::metallic_reflectance, ` +
-            `MaterialTextureSrgb::linear, MaterialTextureFallback::white, ` +
+            `MaterialTextureFallback::white, ` +
             `"metallicReflectanceMap", "metallicReflectanceMapSampler"},`,
         `    {15, MaterialTextureSource::reflectance, ` +
-            `MaterialTextureSrgb::linear, MaterialTextureFallback::white, ` +
+            `MaterialTextureFallback::white, ` +
             `"reflectanceMap", "reflectanceMapSampler"},`,
         // ...the spec-gloss map, appended after the layered extensions so a
         // scene compiling it shifts no index above...
         `    {16, MaterialTextureSource::spec_gloss, ` +
-            `MaterialTextureSrgb::srgb, MaterialTextureFallback::white, ` +
+            `MaterialTextureFallback::white, ` +
             `"specGlossTexture", "specGlossSampler"},`,
         // ...the dedicated uv2 occlusion...
         `    {17, MaterialTextureSource::occlusion_uv2, ` +
-            `MaterialTextureSrgb::linear, MaterialTextureFallback::white, ` +
+            `MaterialTextureFallback::white, ` +
             `"occlusionTexture", "occlusionSampler_"},`,
-        // ...the opt-in baked lightmap retains its texture's encoding...
+        // ...the opt-in baked lightmap...
         `    {18, MaterialTextureSource::lightmap, ` +
-            `MaterialTextureSrgb::lightmap, MaterialTextureFallback::white, ` +
+            `MaterialTextureFallback::white, ` +
             `"lmTexture", "lmSampler"},`,
         // ...then the Standard bump pair, so no index above moves...
         `    {19, MaterialTextureSource::standard_bump, ` +
-            `MaterialTextureSrgb::linear, ` +
             `MaterialTextureFallback::flat_normal, ` +
             `"", ""},`,
         // ...and the Standard 2D reflection pair after bump, the same
         // append-only contract.
         `    {20, MaterialTextureSource::standard_reflection, ` +
-            `MaterialTextureSrgb::linear, ` +
             `MaterialTextureFallback::white, ` +
             `"", ""},`,
         // The transmission scene-colour grab joins the scene-owned rows.
         `    {material_texture_no_slot, ` +
             `MaterialTextureSource::scene_color, ` +
-            `MaterialTextureSrgb::linear, MaterialTextureFallback::white, ` +
+            `MaterialTextureFallback::white, ` +
             `"refractionTexture", "refractionSampler_"},`,
     ]);
 });
@@ -316,7 +302,7 @@ test("a translucency-only scene binds the thickness map without the grab", () =>
     assert.ok(
         header.includes(
             `    {5, MaterialTextureSource::thickness, ` +
-                `MaterialTextureSrgb::linear, MaterialTextureFallback::white, ` +
+                `MaterialTextureFallback::white, ` +
                 `"thicknessTexture_", "thicknessSampler_"},`,
         ),
     );
@@ -354,7 +340,7 @@ test("a scene-37-shaped scene appends occlusion straight after the base five", (
     assert.ok(
         header.includes(
             `    {5, MaterialTextureSource::occlusion_uv2, ` +
-                `MaterialTextureSrgb::linear, MaterialTextureFallback::white, ` +
+                `MaterialTextureFallback::white, ` +
                 `"occlusionTexture", "occlusionSampler_"},`,
         ),
     );

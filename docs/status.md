@@ -33,7 +33,7 @@ Physics rows measure Bullet against Havok: their residuals are solver deltas, no
 | 18 | <img src="images/scenes/scene18.png" alt="Scene 18 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PCF Spotlight Shadows |
 | 19 | <img src="images/scenes/scene19.png" alt="Scene 19 rendering" width="160"> | 0.000 / 0.000 | 0.000 / 0.000 | PBR Clearcoat |
 | 20 | <img src="images/scenes/scene20.png" alt="Scene 20 rendering" width="160"> | 0.002 / 0.007 | 0.002 / 0.007 | PBR Emissive Sphere Grid |
-| 21 | <img src="images/scenes/scene21.png" alt="Scene 21 rendering" width="160"> | 0.330 / 0.330 | 0.330 / 0.330 | PBR Sheen Cloth |
+| 21 | <img src="images/scenes/scene21.png" alt="Scene 21 rendering" width="160"> | 0.015 / 0.015 | 0.015 / 0.015 | PBR Sheen Cloth |
 | 22 | <img src="images/scenes/scene22.png" alt="Scene 22 rendering" width="160"> | 0.040 / 0.040 | 0.040 / 0.040 | PBR Shadow Receiver |
 | 23 | <img src="images/scenes/scene23.png" alt="Scene 23 rendering" width="160"> | 0.002 / 0.017 | 0.002 / 0.017 | PBR Anisotropy |
 | 24 | <img src="images/scenes/scene24.png" alt="Scene 24 rendering" width="160"> | 0.004 / 0.004 | 0.000 / 0.000 | Hill Valley |

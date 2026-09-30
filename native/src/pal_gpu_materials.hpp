@@ -83,9 +83,9 @@ inline std::size_t esm_keyed_variant(std::size_t variant, std::size_t variant_co
 
 // The generated `material_texture_slots` table's enums, translated against
 // the record once for both backends. Everything a slot *means* — which
-// field, which sRGB view, which fallback texel, which pinned names — is
-// table data; what stays per backend is upload mechanics and the
-// enum→API residue.
+// field, which fallback texel, which pinned names — is table data; the
+// encoding is the texture's own; what stays per backend is upload mechanics
+// and the enum→API residue.
 
 /** The record field one slot reads, or nullptr when the family has none. */
 #if BBLITE_HAS_PBR_RENDERER
@@ -93,9 +93,12 @@ const TextureData* material_slot_texture(const MaterialRecord& material,
                                          upstream::MaterialTextureSource source,
                                          bool standard_material);
 
-/** Whether one slot uploads through an sRGB view, per the table's rule. */
-bool material_slot_srgb(upstream::MaterialTextureSrgb rule, const MaterialRecord* material,
-                        bool standard_material);
+/**
+ * Whether one slot uploads through an sRGB view: its image's own format
+ * (TextureData::srgb), or for an image-less slot its fallback texel's.
+ */
+bool material_slot_srgb(const TextureData* texture, upstream::MaterialTextureFallback fallback,
+                        const MaterialRecord* material, bool standard_material);
 
 /** The 1x1 texel an image-less slot uploads, per the table's rule. */
 std::array<std::uint8_t, 4> material_slot_fallback(upstream::MaterialTextureFallback rule,

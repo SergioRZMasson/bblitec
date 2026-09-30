@@ -2602,9 +2602,9 @@ const sceneInputs: readonly SceneInput[] = [
         parity: {
             // The frame is a photographic HDR skybox behind a cloth, so
             // almost every pixel is foreground and the two figures track each
-            // other. Both sit with the other environment-backed scenes.
-            maxFullMad: 0.34,
-            maxForegroundMad: 0.34,
+            // other.
+            maxFullMad: 0.02,
+            maxForegroundMad: 0.02,
             backgroundColor: [51, 51, 77],
             backgroundThreshold: 30,
         },

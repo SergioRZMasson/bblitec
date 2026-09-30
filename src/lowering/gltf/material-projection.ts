@@ -335,7 +335,6 @@ export const gltfMaterialTextureFields = [
         key: "baseColorTexture",
         data: "base_color_texture",
         transform: "base_color_transform",
-        srgb: true,
     },
     {
         owner: "props",
@@ -343,7 +342,6 @@ export const gltfMaterialTextureFields = [
         key: "ormTexture",
         data: "metallic_roughness_texture",
         transform: "orm_transform",
-        srgb: false,
     },
     {
         owner: "props",
@@ -351,7 +349,6 @@ export const gltfMaterialTextureFields = [
         key: "normalTexture",
         data: "normal_texture",
         transform: "normal_transform",
-        srgb: false,
     },
     {
         owner: "props",
@@ -359,7 +356,6 @@ export const gltfMaterialTextureFields = [
         key: "emissiveTexture",
         data: "emissive_texture",
         transform: "emissive_transform",
-        srgb: true,
     },
     {
         owner: "props",
@@ -367,7 +363,6 @@ export const gltfMaterialTextureFields = [
         key: "_metallicReflectanceTexture",
         data: "metallic_reflectance_texture",
         transform: "metallic_reflectance_transform",
-        srgb: false,
     },
     {
         owner: "props",
@@ -375,7 +370,6 @@ export const gltfMaterialTextureFields = [
         key: "_reflectanceTexture",
         data: "reflectance_texture",
         transform: "reflectance_transform",
-        srgb: false,
     },
     {
         owner: "refraction",
@@ -383,7 +377,6 @@ export const gltfMaterialTextureFields = [
         key: "texture",
         data: "transmission_texture",
         transform: "transmission_transform",
-        srgb: false,
     },
     {
         owner: "thickness",
@@ -391,7 +384,6 @@ export const gltfMaterialTextureFields = [
         key: "texture",
         data: "thickness_texture",
         transform: "thickness_transform",
-        srgb: false,
     },
     {
         owner: "translucency",
@@ -399,7 +391,6 @@ export const gltfMaterialTextureFields = [
         key: "colorTexture",
         data: "translucency_color_texture",
         transform: "translucency_color_transform",
-        srgb: true,
     },
     {
         owner: "translucency",
@@ -407,7 +398,6 @@ export const gltfMaterialTextureFields = [
         key: "intensityTexture",
         data: "translucency_intensity_texture",
         transform: "translucency_intensity_transform",
-        srgb: false,
     },
     {
         owner: "coat",
@@ -415,7 +405,6 @@ export const gltfMaterialTextureFields = [
         key: "texture",
         data: "clearcoat_texture",
         transform: "clearcoat_transform",
-        srgb: false,
     },
     {
         owner: "coat",
@@ -423,7 +412,6 @@ export const gltfMaterialTextureFields = [
         key: "roughnessTexture",
         data: "clearcoat_roughness_texture",
         transform: "clearcoat_roughness_transform",
-        srgb: false,
     },
     {
         owner: "coat",
@@ -431,7 +419,6 @@ export const gltfMaterialTextureFields = [
         key: "bumpTexture",
         data: "clearcoat_normal_texture",
         transform: "clearcoat_normal_transform",
-        srgb: false,
     },
     {
         owner: "sheen",
@@ -439,7 +426,6 @@ export const gltfMaterialTextureFields = [
         key: "texture",
         data: "sheen_color_texture",
         transform: "sheen_transform",
-        srgb: true,
     },
     {
         owner: "sheen",
@@ -447,7 +433,6 @@ export const gltfMaterialTextureFields = [
         key: "roughnessTexture",
         data: "sheen_roughness_texture",
         transform: "sheen_roughness_transform",
-        srgb: false,
     },
     {
         owner: "iri",
@@ -455,7 +440,6 @@ export const gltfMaterialTextureFields = [
         key: "texture",
         data: "iridescence_texture",
         transform: "iridescence_transform",
-        srgb: true,
     },
     {
         owner: "iri",
@@ -463,7 +447,6 @@ export const gltfMaterialTextureFields = [
         key: "thicknessTexture",
         data: "iridescence_thickness_texture",
         transform: "iridescence_thickness_transform",
-        srgb: true,
     },
     {
         owner: "anisotropy",
@@ -471,7 +454,6 @@ export const gltfMaterialTextureFields = [
         key: "texture",
         data: "anisotropy_texture",
         transform: "anisotropy_transform",
-        srgb: false,
     },
     {
         owner: "props",
@@ -479,7 +461,6 @@ export const gltfMaterialTextureFields = [
         key: "occlusionTexture",
         data: "occlusion_texture",
         transform: "occlusion_transform",
-        srgb: false,
     },
 ] as const;
 
@@ -488,7 +469,7 @@ function materialTexture(field: string): string {
         (value) => value.transform === field,
     );
     if (!value) throw new Error(`Unknown glTF texture field ${field}.`);
-    return `project_texture(${value.owner}, "${value.key}", material.${value.data}, material.${value.transform}, ${value.srgb});`;
+    return `project_texture(${value.owner}, "${value.key}", material.${value.data}, material.${value.transform});`;
 }
 
 /** Project source-built options and texture descriptors into native renderer storage. */
@@ -656,10 +637,9 @@ ${pbrMaterialRecordSeedCpp("material", "    ")}
         : gltf_pbr_build_material(core_value, features, context, GltfPbrValue{extended_material}, GltfPbrValue{sampled_material});
     material.source_pbr_group_builder = props.get("_buildGroup").truthy();
     material.source_gamma_albedo = props.get("_gammaAlbedo").truthy();
-    const auto stage = [&](const GltfPbrValue& value, bool srgb) {
+    const auto stage = [&](const GltfPbrValue& value) {
         if (value.nullish()) return TextureData{};
         const auto& texture = value.texture();
-        if (texture.srgb != srgb) throw std::runtime_error("Unsupported glTF texture color space for material slot.");
         TextureData result;
         if (texture.image) {
             if (texture.image->decoded) {
@@ -674,11 +654,13 @@ ${pbrMaterialRecordSeedCpp("material", "    ")}
             }
         }
         result.sampler = texture.sampler ? *texture.sampler : *sampler_context->default_sampler;
+        // The format the pinned loader's own _texture(info, srgb) call chose.
+        result.srgb = texture.srgb;
         return result;
     };
-    const auto project_texture = [&](const GltfPbrValue& object, const char* key, TextureData& data, TextureTransform& transform, bool srgb) {
+    const auto project_texture = [&](const GltfPbrValue& object, const char* key, TextureData& data, TextureTransform& transform) {
         const auto value = object.get(key, true);
-        data = stage(value, srgb);
+        data = stage(value);
         gltf_pbr_transform(transform, value);
     };
     ${materialTexture("base_color_transform")}
@@ -731,13 +713,13 @@ ${
             throw std::runtime_error("Reached glTF occlusion texture on TEXCOORD_1 composes an occlusion binding with no texture.");
         material.has_occlusion_transform = occlusion.truthy();
         gltf_pbr_transform(material.occlusion_transform, occlusion);
-        if (uv == 1) material.occlusion_texture = stage(occlusion, false);
+        if (uv == 1) material.occlusion_texture = stage(occlusion);
         material.occlusion_texture_uv2 = uv == 1;
     }
     const auto spec_gloss = props.get("specGlossTexture");
     if (!spec_gloss.nullish() && texture_transform_value(spec_gloss.texture().info))
         throw std::runtime_error("Reached KHR_materials_pbrSpecularGlossiness supports an untransformed specular-glossiness texture only.");
-    material.spec_gloss_texture = stage(spec_gloss, true);
+    material.spec_gloss_texture = stage(spec_gloss);
     ${materialTexture("metallic_reflectance_transform")}
     ${materialTexture("reflectance_transform")}
     ${materialProperty("metallic_f0_factor")}

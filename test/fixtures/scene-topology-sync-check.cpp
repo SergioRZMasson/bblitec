@@ -559,7 +559,7 @@ void check_image_preparation() {
         assert(image_thread != std::this_thread::get_id());
         assert(decoded_images == 1);
         for (const auto& texture : material.shader_textures) {
-            auto image = images.find(texture.data, texture.srgb, {255, 255, 255, 255});
+            auto image = images.find(texture.data, texture.data.srgb, {255, 255, 255, 255});
             assert(image && image->width == 1 && image->height == 2);
             assert(image->rgba == std::vector<std::uint8_t>({20, 40, 80, 255, 40, 20, 10, 128}));
             bindings.push_back(std::move(image));

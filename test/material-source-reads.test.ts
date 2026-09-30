@@ -182,10 +182,10 @@ int main() {
     assert(!material_texture_present(engine, standard_image, MaterialTextureSlot::base_color));
     assert(material_texture_present(engine, standard_image, MaterialTextureSlot::diffuse));
     const auto diffuse = material_texture(engine, standard_image, MaterialTextureSlot::diffuse);
-    assert(!diffuse.srgb && diffuse.data.bytes.size() == 4);
+    assert(!diffuse.data.srgb && diffuse.data.bytes.size() == 4);
     const auto a = material_texture(engine, baked, MaterialTextureSlot::base_color);
     const auto b = material_texture(engine, baked, MaterialTextureSlot::base_color);
-    assert(a.identity == b.identity && a.width == 1 && a.height == 1 && a.srgb);
+    assert(a.identity == b.identity && a.width == 1 && a.height == 1 && a.data.srgb);
     const std::vector<std::uint8_t> expected{${uploads[0]!.join(",")}};
     assert(std::equal(a.data.bytes.begin(), a.data.bytes.end(), expected.begin(), expected.end()));
     const auto c = material_texture(engine, image, MaterialTextureSlot::base_color);

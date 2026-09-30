@@ -77,7 +77,7 @@ int main() {
         bbl::register_scene(scene);
         assert(engine.materials[a.value].shader_textures[0].identity == solid.identity);
         const auto& bound = engine.materials[b.value].shader_textures[0];
-        assert(bound.identity == 19 && bound.srgb && bound.data.uv_invert_y);
+        assert(bound.identity == 19 && bound.data.srgb && bound.data.uv_invert_y);
         assert(bound.data.uv_transform.u_offset == .125 &&
                bound.data.sampler.address_u == bbl::TextureAddressMode::mirror);
         assert(bound.data.bytes.size() == 4 && bound.data.bytes[2] == 3);

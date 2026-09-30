@@ -188,7 +188,7 @@ static FileTexture bound_node_texture(const StoredTexture& texture) {
             normalized.data.sampler = stored.sampler;
             normalized.data.uv_transform = stored.uv_transform;
             normalized.data.uv_invert_y = stored.uv_invert_y;
-            normalized.srgb = stored.srgb;
+            normalized.data.srgb = stored.srgb;
             normalized.width = stored.width;
             normalized.height = stored.height;
             normalized.identity = stored.identity;
@@ -585,7 +585,7 @@ void set_shader_pixels_texture(
     normalized.data.sampler = texture.sampler;
     normalized.data.uv_transform = texture.uv_transform;
     normalized.data.uv_invert_y = texture.uv_invert_y;
-    normalized.srgb = texture.srgb;
+    normalized.data.srgb = texture.srgb;
     set_shader_texture(engine, material, slot, std::move(normalized));
 }
 
@@ -1097,16 +1097,16 @@ namespace bbl {
 
 ${lowerPbrGammaAlbedo(this.context)}
 // Attaches a loaded base-color image to a created PBR material. The slot's
-// encoding travels with the image, because upstream keeps the format on the
-// Texture2D its caller loaded: loadTexture2D's own srgb option picked
-// rgba8unorm-srgb or plain rgba8unorm, and a material that decodes the
-// albedo in its own fragment (setPbrGammaAlbedo) loads the second.
+// encoding travels with the image (TextureData::srgb), because upstream
+// keeps the format on the Texture2D its caller loaded: loadTexture2D's own
+// srgb option picked rgba8unorm-srgb or plain rgba8unorm, and a material
+// that decodes the albedo in its own fragment (setPbrGammaAlbedo) loads the
+// second.
 void set_material_base_color_file(
     Engine& engine,
     MaterialHandle material,
     FileTexture texture) {
     MaterialRecord& record = ${recordAt("engine.materials", "material")};
-    record.base_color_srgb = texture.srgb;
     record.source_albedo_texture = texture;
     record.base_color_texture = std::move(texture.data);
     record.has_public_base_color_texture = true;
@@ -1289,7 +1289,6 @@ void set_pbr_lightmap(
     float level) {
     MaterialRecord& record = ${recordAt("engine.materials", "material")};
     record.lightmap_texture = std::move(texture.data);
-    record.lightmap_texture_srgb = texture.srgb;
     record.lightmap_level = level;
 }
 
@@ -1525,7 +1524,6 @@ TextureData& take_standard_diffuse_slot(
     MaterialRecord& record = standard_slot_material(engine, material);
     record.has_diffuse_render_texture = false;
     record.base_color_texture = TextureData{};
-    record.diffuse_texture_srgb = false;
     record.source_albedo_texture.reset();
     return record.base_color_texture;
 }
@@ -1592,7 +1590,7 @@ void set_standard_diffuse_pixels_texture(
     slot.sampler = texture.sampler;
     slot.uv_transform = texture.uv_transform;
     slot.uv_invert_y = texture.uv_invert_y;
-    standard_slot_material(engine, material).diffuse_texture_srgb = texture.srgb;
+    slot.srgb = texture.srgb;
     standard_slot_material(engine, material).source_albedo_texture = texture;
 }
 `
@@ -1633,7 +1631,6 @@ void set_standard_diffuse_file_texture(
     MaterialHandle material,
     const FileTexture& texture) {
     take_standard_diffuse_slot(engine, material) = texture.data;
-    standard_slot_material(engine, material).diffuse_texture_srgb = texture.srgb;
     standard_slot_material(engine, material).source_albedo_texture = texture;
 }
 `
@@ -1664,7 +1661,6 @@ void set_standard_lightmap_texture(Engine& engine, MaterialHandle material, cons
     auto& record = standard_slot_material(engine, material);
     if (!record.standard_material) throw std::runtime_error("Standard lightmap requires a Standard material.");
     record.lightmap_texture = texture.data;
-    record.lightmap_texture_srgb = texture.srgb;
 }
 `
                     : ""
@@ -1742,7 +1738,7 @@ void add_material_plugin_pixels_texture(
     entry.data.sampler = texture.sampler;
     entry.data.uv_transform = texture.uv_transform;
     entry.data.uv_invert_y = texture.uv_invert_y;
-    entry.srgb = texture.srgb;
+    entry.data.srgb = texture.srgb;
     entry.texture_name = std::move(texture_name);
     entry.sampler_name = std::move(sampler_name);
     standard_slot_material(engine, material)
@@ -1759,7 +1755,7 @@ void add_material_plugin_file_texture(
     std::string texture_name,
     std::string sampler_name) {
     standard_slot_material(engine, material).plugin_textures.push_back(
-        MaterialPluginTexture{texture.data, texture.srgb, std::move(texture_name), std::move(sampler_name)});
+        MaterialPluginTexture{texture.data, std::move(texture_name), std::move(sampler_name)});
 }
 `
                     : ""

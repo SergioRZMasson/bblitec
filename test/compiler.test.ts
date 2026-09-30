@@ -5649,37 +5649,36 @@ test("compiles scene17's file ORM and matrix-constructor chain", () => {
     assert.match(result.cpp, /bbl::set_thin_instance_colors\(/);
 });
 
-test("refuses an sRGB file texture in PBR's linear ORM slot", () => {
-    assert.throws(
-        () =>
-            compileSource(
-                `
-                import {
-                    createEngine,
-                    createPbrMaterial,
-                    createSolidTexture2D,
-                    loadTexture2D,
-                } from "@babylonjs/lite";
+test("binds an sRGB file texture in PBR's ORM slot through its own encoding", () => {
+    // The pin keeps the format on the Texture2D, so an ORM map loaded sRGB
+    // is sampled through the sRGB view; the slot takes the texture's own
+    // encoding (TextureData::srgb) rather than a per-slot rule.
+    const result = compileSource(
+        `
+            import {
+                createEngine,
+                createPbrMaterial,
+                createSolidTexture2D,
+                loadTexture2D,
+            } from "@babylonjs/lite";
 
-                async function main() {
-                    const engine = await createEngine({});
-                    const orm = await loadTexture2D(
-                        engine,
-                        "/textures/nme/ebf71b300f43563f.png",
-                        { srgb: true },
-                    );
-                    createPbrMaterial({
-                        baseColorTexture: createSolidTexture2D(engine, 1, 1, 1),
-                        ormTexture: orm,
-                    });
-                }
-            `,
-                labDeployment,
-            ),
-        (error: unknown) =>
-            error instanceof CompileError &&
-            /PBR ORM maps must be linear textures\./.test(error.message),
+            async function main() {
+                const engine = await createEngine({});
+                const orm = await loadTexture2D(
+                    engine,
+                    "/textures/nme/ebf71b300f43563f.png",
+                    { srgb: true },
+                );
+                createPbrMaterial({
+                    baseColorTexture: createSolidTexture2D(engine, 1, 1, 1),
+                    ormTexture: orm,
+                });
+            }
+        `,
+        labDeployment,
     );
+    assert.match(result.cpp, /bbl::load_file_texture\([^;]*, true, false\)/);
+    assert.match(result.cpp, /bbl::set_material_orm_file\(/);
 });
 
 test("reaches scene transmission only from the pin's transmission calls", () => {
@@ -6550,17 +6549,18 @@ test("refuses unsupported metallic-reflectance setter inputs", () => {
             labDeployment,
         );
 
-    assert.throws(
-        () =>
-            compileSetter(
-                `const map = await loadTexture2D(
+    // An sRGB map is the pin's own combination: the texture's view decodes
+    // and the pinned fragment raises the sample to 2.2 as well.
+    assert.match(
+        compileSetter(
+            `const map = await loadTexture2D(
                 engine,
                 "/textures/nme/ebf71b300f43563f.png",
                 { srgb: true },
             );`,
-                "texture: map",
-            ),
-        /Metallic-reflectance maps must be linear textures/,
+            "texture: map",
+        ).cpp,
+        /bbl::set_pbr_metallic_reflectance\(/,
     );
     assert.throws(
         () =>

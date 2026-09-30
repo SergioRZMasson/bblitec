@@ -194,7 +194,7 @@ constexpr std::uint32_t mesh_world_uniform_binding = 2;
 constexpr std::uint32_t mesh_world_uniform_binding = 1;
 #endif
 
-// The mesh-owned slot order, the per-slot sRGB rules and fallback texels,
+// The mesh-owned slot order, the per-slot fallback texels,
 // and the pinned binding names all live in the generated
 // `material_texture_slots` table (material_texture_slots.hpp) both
 // backends execute; the constants below only size this backend's arrays,

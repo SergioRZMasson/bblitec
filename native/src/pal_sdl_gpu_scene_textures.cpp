@@ -69,8 +69,8 @@ SDL_GPUTexture* upload_compressed_texture(SDL_GPUDevice* device,
 SDL_GPUTexture* upload_texture(SDL_GPUDevice* device, const TextureData& texture_data, bool srgb,
                                std::array<std::uint8_t, 4> fallback) {
     // A compressed slot carries its own format and its own chain, so the
-    // table's sRGB rule has nothing to select: the container states which
-    // of the two views its blocks decode through.
+    // encoding flag has nothing to select: the container states which of
+    // the two views its blocks decode through.
     if (!texture_data.compressed.mips.empty()) {
         const auto& compressed =
             select_compressed_texture(texture_data, [&](std::string_view format) {

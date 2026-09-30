@@ -527,9 +527,10 @@ DawnMesh upload_dawn_scene_mesh(DawnState& state, Engine& engine,
 
     // Per-slot texture selection reads the generated
     // `material_texture_slots` table -- the same rows the SDL_GPU
-    // backend executes -- so which record field a slot takes, its
-    // sRGB view and its fallback texel are decided once, at
-    // generation; this backend keeps only the upload mechanics.
+    // backend executes -- so which record field a slot takes and
+    // its fallback texel are decided once, at generation, and its
+    // image keeps its own encoding; this backend keeps only the
+    // upload mechanics.
     const bool standard_material = item.material_kind == upstream::RenderMaterialKind::standard;
     const bool composed_material =
         item.material_kind == upstream::RenderMaterialKind::pbr || standard_material;
@@ -567,7 +568,8 @@ DawnMesh upload_dawn_scene_mesh(DawnState& state, Engine& engine,
                              : nullptr;
                 const TextureData empty{};
                 const TextureData& data = slot_data ? *slot_data : empty;
-                const bool srgb = material_slot_srgb(slot_row.srgb, material, standard_material);
+                const bool srgb =
+                    material_slot_srgb(slot_data, slot_row.fallback, material, standard_material);
                 const auto fallback =
                     material_slot_fallback(slot_row.fallback, material, standard_material);
                 auto image = state.shared_material_images.acquire(data, srgb, fallback, [&] {
@@ -615,11 +617,11 @@ DawnMesh upload_dawn_scene_mesh(DawnState& state, Engine& engine,
             }
             const auto upload = [&] {
                 std::uint32_t mip_count = 1;
-                return DawnTexture{upload_material_texture(state, texture.data, texture.srgb,
+                return DawnTexture{upload_material_texture(state, texture.data, texture.data.srgb,
                                                            {255, 255, 255, 255}, mip_count)};
             };
             if (leases) {
-                auto image = state.shared_material_images.acquire(texture.data, texture.srgb,
+                auto image = state.shared_material_images.acquire(texture.data, texture.data.srgb,
                                                                   {255, 255, 255, 255}, upload);
                 leases->push_back(image);
                 sampled.texture = image->retain();
