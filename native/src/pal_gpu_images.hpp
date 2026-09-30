@@ -55,6 +55,37 @@ inline std::uint16_t float_to_half(float value) {
 }
 
 /**
+ * A float stored into an `rgba16float` storage texel the way the reference
+ * device's `textureStore` stores it: rounded toward zero, subnormals
+ * included, and a finite value past the range kept at the largest finite
+ * half. WGSL leaves the direction of that conversion to the
+ * implementation; the pin's GPU kernels that produce such texels on the
+ * reference device (the RGBD decode) truncate.
+ */
+inline std::uint16_t float_to_half_toward_zero(float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    const std::uint16_t sign = static_cast<std::uint16_t>((bits >> 16) & 0x8000u);
+    const std::uint32_t exponent = (bits >> 23) & 0xffu;
+    const std::uint32_t mantissa = bits & 0x7fffffu;
+    if (exponent == 0xffu) {
+        return static_cast<std::uint16_t>(sign | (mantissa == 0 ? 0x7c00u : 0x7e00u));
+    }
+    const int half_exponent = static_cast<int>(exponent) - 127 + 15;
+    if (half_exponent >= 0x1f) {
+        return static_cast<std::uint16_t>(sign | 0x7bffu);
+    }
+    if (half_exponent <= 0) {
+        if (half_exponent < -10)
+            return sign;
+        const std::uint32_t normalized = mantissa | 0x800000u;
+        return static_cast<std::uint16_t>(sign | (normalized >> (14 - half_exponent)));
+    }
+    return static_cast<std::uint16_t>(sign | static_cast<std::uint16_t>(half_exponent << 10) |
+                                      static_cast<std::uint16_t>(mantissa >> 13));
+}
+
+/**
  * The RGBA texels a texture uploads, with the pinned upload transforms
  * (`orient_image`): its encoded image's (`texture_image_texels`), its
  * caller-supplied texels, or a 1x1 fallback texel when the scene carries

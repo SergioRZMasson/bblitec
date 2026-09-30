@@ -91,7 +91,8 @@ std::vector<std::uint16_t> decode_rgbd(const TextureData& texture_data, int& wid
     // result type, not a packing step a caller may skip. Returning halves
     // is what keeps every caller on the pin's precision: an RGBA32Float
     // upload on one path beside a half-packed one on another would be a
-    // silent backend delta.
+    // silent backend delta. The halves are the kernel's store, which
+    // rounds toward zero (float_to_half_toward_zero).
     if (texture_data.bytes.empty()) {
         width = height = 1;
         return {0, 0, 0, float_to_half(1.0f)};
@@ -103,7 +104,7 @@ std::vector<std::uint16_t> decode_rgbd(const TextureData& texture_data, int& wid
     for (std::size_t index = 0; index < image.rgba.size(); index += 4) {
         const auto pixel = upstream::decode_rgbd_pixel(image.rgba.data() + index);
         for (std::size_t channel = 0; channel < pixel.size(); ++channel) {
-            result[index + channel] = float_to_half(pixel[channel]);
+            result[index + channel] = float_to_half_toward_zero(pixel[channel]);
         }
     }
     return result;
